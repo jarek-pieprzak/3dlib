@@ -283,7 +283,10 @@ const Viewer = {
 
     // Multi-part assembly setup
     const modelFiles = (meta?.modelFiles || []).filter(f => f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step');
-    let activePartVal = meta?.activeFileId ? String(meta.activeFileId) : (modelFiles.length > 1 ? 'all' : (modelFiles[0] ? String(modelFiles[0].id) : null));
+    // "All parts" loads every file into one scene; project folders can hold hundreds of parts
+    const MAX_ALL_PARTS = 40;
+    const canShowAllParts = modelFiles.length > 1 && modelFiles.length <= MAX_ALL_PARTS;
+    let activePartVal = meta?.activeFileId ? String(meta.activeFileId) : (canShowAllParts ? 'all' : (modelFiles[0] ? String(modelFiles[0].id) : null));
     const partPalette = [0x00ccee, 0xf97316, 0x10b981, 0x8b5cf6, 0xeab308, 0xec4899, 0x38bdf8, 0xa855f7];
 
     // Interactive Overlay DOM Structure
@@ -301,7 +304,7 @@ const Viewer = {
             <div class="viewer-pill" style="display:inline-flex;align-items:center;gap:5px">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
               <select id="${containerId}-part-select" style="background:transparent;border:none;color:var(--text-primary);font-size:0.75rem;font-weight:600;cursor:pointer;outline:none;padding-right:2px">
-                <option value="all" ${activePartVal === 'all' ? 'selected' : ''} style="background:#181829;color:#fff">✦ All Parts on Build Plate (${modelFiles.length})</option>
+                ${canShowAllParts ? `<option value="all" ${activePartVal === 'all' ? 'selected' : ''} style="background:#181829;color:#fff">✦ All Parts on Build Plate (${modelFiles.length})</option>` : ''}
                 ${modelFiles.map(f => `<option value="${f.id}" ${String(f.id) === activePartVal ? 'selected' : ''} style="background:#181829;color:#fff">${f.original_name || f.filename}</option>`).join('')}
               </select>
             </div>
@@ -787,7 +790,7 @@ const Viewer = {
       setStatus(null);
 
       try {
-        if (selection === 'all' && modelFiles.length > 1) {
+        if (selection === 'all' && canShowAllParts) {
           // Combined Multi-part Assembly
           const group = new THREE.Group();
           let combinedRawSize = new THREE.Vector3();
@@ -953,7 +956,10 @@ const Viewer = {
         setStatus(null);
       } catch (err) {
         console.error('Part loading error:', err);
-        setStatus((err && err.message) ? err.message : 'This file could not be displayed', true);
+        const missing = /\b404\b/.test(String(err && err.message));
+        setStatus(missing
+          ? 'This file is no longer in the library folder. Re-scan the library to refresh the model.'
+          : ((err && err.message) ? err.message : 'This file could not be displayed'), true);
       }
     };
 

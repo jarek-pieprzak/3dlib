@@ -169,7 +169,6 @@ async function scanLibrary(libraryPath) {
 
   const results = { modelsAdded: 0, filesAdded: 0, skipped: 0 };
   let processedSinceSave = 0;
-  const resolvedLibraryRoot = path.resolve(libraryPath);
 
   // If deep ZIP scanning is disabled, purge any leftover virtual archive entries (#78)
   const initialZipSetting = db.get("SELECT value FROM system_settings WHERE key = 'scan_zip_archives'");
@@ -185,7 +184,7 @@ async function scanLibrary(libraryPath) {
 
     if (ext === '.zip') {
       try {
-        const existingZip = db.get('SELECT id, model_id FROM files WHERE library_path = ?', [filePath]);
+        const existingZip = db.get('SELECT id, model_id, original_name FROM files WHERE library_path = ?', [filePath]);
         const stat = await fsPromises.stat(filePath);
 
         if (!existingZip) {
@@ -199,6 +198,8 @@ async function scanLibrary(libraryPath) {
           results.filesAdded++;
           processedSinceSave++;
           scanStatus.filesAdded = results.filesAdded;
+        } else if (existingZip.original_name !== displayName) {
+          db.run('UPDATE files SET original_name = ? WHERE id = ?', [displayName, existingZip.id], true);
         }
 
         // Check if user enabled or disabled deep ZIP inspection (defaults to true)
@@ -272,7 +273,7 @@ async function scanLibrary(libraryPath) {
       } catch (e) { return; }
 
       const ft = getFileType(filename);
-      const existingFile = db.get('SELECT id, model_id, thumbnail FROM files WHERE library_path = ?', [filePath]);
+      const existingFile = db.get('SELECT id, model_id, thumbnail, original_name FROM files WHERE library_path = ?', [filePath]);
       const thumbRelValue = displayName;
 
       if (!existingFile) {
@@ -341,6 +342,11 @@ async function scanLibrary(libraryPath) {
         processedSinceSave++;
         scanStatus.filesAdded = results.filesAdded;
       } else {
+        // Files merged in from an older, deeper model still carry a name relative to that
+        // folder; give them their path relative to the project folder
+        if (existingFile.original_name !== displayName) {
+          db.run('UPDATE files SET original_name = ? WHERE id = ?', [displayName, existingFile.id], true);
+        }
         if (ft === 'image' && !model.thumbnail) {
           db.run('UPDATE models SET thumbnail = ? WHERE id = ?', [thumbRelValue, model.id], true);
           model.thumbnail = thumbRelValue;
@@ -357,124 +363,136 @@ async function scanLibrary(libraryPath) {
     }
   }
 
-  async function walk(currentPath) {
-    if (shouldCancel) {
-      console.log('[Scanner] Scan aborted early by cancellation request.');
-      return;
+  // ── Library layout ──────────────────────────────────────────────────────────
+  // Everything directly in the library root is a project, file or folder alike:
+  //  * a model file (STL, 3MF, G-code, archive, ...) in the root is one model, together with
+  //    images / documents next to it that share its name ("Benchy.3mf" + "Benchy.jpg");
+  //    its library_path is the file itself
+  //  * a folder in the root is one model with its whole subfolder tree; file names keep their
+  //    path relative to the folder ("Gantry Adapters/3DFused/spacer.stl") and the model page
+  //    shows them as a collapsible tree
+  // Models that earlier scans created deeper inside a project folder are merged into it.
+
+  function getOrCreateModel(modelPath, modelName) {
+    let model = db.get('SELECT id, thumbnail FROM models WHERE library_path = ?', [modelPath]);
+    if (!model) {
+      const r = db.run('INSERT INTO models (name, library_path) VALUES (?, ?)', [modelName, modelPath], true);
+      model = { id: r.lastId, thumbnail: null };
+      results.modelsAdded++;
+      processedSinceSave++;
+      scanStatus.modelsAdded = results.modelsAdded;
     }
+    return model;
+  }
 
+  // Merge models that earlier scans created below `modelPath` into `model` (#78). Their tags,
+  // collections and print history move along; share links of the merged models end.
+  function consolidateChildModels(model, modelPath) {
+    const childPrefix = modelPath + path.sep;
+    // LIKE treats "_" and "%" in folder names as wildcards, so confirm the real prefix in JS
+    const childModels = db.all('SELECT id, thumbnail, library_path FROM models WHERE id != ? AND library_path LIKE ?', [model.id, childPrefix + '%'])
+      .filter(child => child.library_path && child.library_path.startsWith(childPrefix));
+    for (const child of childModels) {
+      if (child.thumbnail && !model.thumbnail) {
+        db.run('UPDATE models SET thumbnail = ? WHERE id = ?', [child.thumbnail, model.id], true);
+        model.thumbnail = child.thumbnail;
+      }
+      db.run('UPDATE files SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
+      db.run('UPDATE OR IGNORE model_tags SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
+      db.run('UPDATE OR IGNORE project_models SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
+      db.run('UPDATE print_history SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
+      db.run('DELETE FROM model_tags WHERE model_id = ?', [child.id], true);
+      db.run('DELETE FROM project_models WHERE model_id = ?', [child.id], true);
+      db.run('DELETE FROM shares WHERE model_id = ?', [child.id], true);
+      db.run('DELETE FROM models WHERE id = ?', [child.id], true);
+    }
+  }
+
+  // "Benchy.gcode.3mf" -> "Benchy", "Bracket v2.stl" -> "Bracket v2"
+  function projectNameFromFile(filename) {
+    return filename.replace(/(\.gcode)?\.[^.]+$/i, '') || filename;
+  }
+
+  async function scanProjectFolder(projectPath) {
     await new Promise(setImmediate);
+    scanStatus.foldersScanned++;
+    scanStatus.currentFolder = path.basename(projectPath);
 
+    const allFiles = await collectAllFilesInModelDir(projectPath);
+    if (!allFiles.some(f => MODEL_TRIGGER_EXTENSIONS.includes(path.extname(f.filename).toLowerCase()))) {
+      return; // only documents / images, nothing to print
+    }
+    const model = getOrCreateModel(projectPath, path.basename(projectPath));
+    consolidateChildModels(model, projectPath);
+    for (const fileObj of allFiles) {
+      if (shouldCancel) return;
+      await indexModelFile(model, fileObj);
+    }
+  }
+
+  async function walk(rootPath) {
     let items;
     try {
-      items = await fsPromises.readdir(currentPath, { withFileTypes: true });
+      items = await fsPromises.readdir(rootPath, { withFileTypes: true });
     } catch (e) {
-      console.warn(`[Scanner] Could not read directory: ${currentPath}`);
+      console.warn(`[Scanner] Could not read directory: ${rootPath}`);
       return;
     }
-
     scanStatus.foldersScanned++;
-    scanStatus.currentFolder = path.basename(currentPath) || currentPath;
+    scanStatus.currentFolder = path.basename(rootPath) || rootPath;
 
-    const resolvedCurrent = path.resolve(currentPath);
-    const isLibraryRoot = resolvedCurrent === resolvedLibraryRoot;
+    const resolvedRoot = path.resolve(rootPath);
+    const extOf = (name) => path.extname(name).toLowerCase();
+    const looseFiles = items.filter(item => item.isFile());
+    const companions = looseFiles.filter(item => !MODEL_TRIGGER_EXTENSIONS.includes(extOf(item.name)));
 
-    // 1. Check if this directory directly contains any 3D/archive files (not just .txt/.pdf/.md docs)
-    const hasDirectModelFiles = items.some(item => {
-      if (item.isDirectory()) return false;
-      const ext = path.extname(item.name).toLowerCase();
-      return MODEL_TRIGGER_EXTENSIONS.includes(ext);
-    });
-
-    // 2. Check if this directory (when not library root) contains generic model-internal subfolders
-    // like "stl files", "Version 1", "Version 2", "files", "supported", etc. with 3D files (#78)
-    let hasInternalModelSubfolders = false;
-    if (!isLibraryRoot && !hasDirectModelFiles) {
-      for (const item of items) {
-        if (item.isDirectory() && isModelInternalSubfolder(item.name)) {
-          if (await directoryContainsModelFiles(path.join(currentPath, item.name), 3)) {
-            hasInternalModelSubfolders = true;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!isLibraryRoot && (hasDirectModelFiles || hasInternalModelSubfolders)) {
-      const modelPath = resolvedCurrent;
-      const modelName = path.basename(currentPath);
-
-      let model = db.get('SELECT id, thumbnail FROM models WHERE library_path = ?', [modelPath]);
-      if (!model) {
-        const r = db.run('INSERT INTO models (name, library_path) VALUES (?, ?)', [modelName, modelPath], true);
-        model = { id: r.lastId, thumbnail: null };
-        results.modelsAdded++;
-        processedSinceSave++;
-        scanStatus.modelsAdded = results.modelsAdded;
-      }
-
-      // Consolidate and remove any previously created child models under this model folder (e.g. "stl files", "Version 1") (#78)
-      const childPrefix = modelPath + path.sep;
-      const childModels = db.all('SELECT id, thumbnail FROM models WHERE id != ? AND library_path LIKE ?', [model.id, childPrefix + '%']);
-      for (const child of childModels) {
-        if (child.thumbnail && !model.thumbnail) {
-          db.run('UPDATE models SET thumbnail = ? WHERE id = ?', [child.thumbnail, model.id], true);
-          model.thumbnail = child.thumbnail;
-        }
-        db.run('UPDATE files SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
-        db.run('DELETE FROM model_tags WHERE model_id = ?', [child.id], true);
-        db.run('DELETE FROM project_models WHERE model_id = ?', [child.id], true);
-        db.run('DELETE FROM print_history WHERE model_id = ?', [child.id], true);
-        db.run('DELETE FROM shares WHERE model_id = ?', [child.id], true);
-        db.run('DELETE FROM models WHERE id = ?', [child.id], true);
-      }
-
-      // Collect and index all files in this model directory and its internal subdirectories
-      const allModelFiles = await collectAllFilesInModelDir(modelPath);
-      for (const fileObj of allModelFiles) {
-        if (shouldCancel) return;
-        await indexModelFile(model, fileObj);
-      }
-
-      // Do NOT walk subdirectories as separate models since this directory is already a model (#78)
-      return;
-    }
-
-    // If loose 3D files exist directly at the root of LIBRARY_PATH, index only the direct files
-    if (isLibraryRoot && hasDirectModelFiles) {
-      const modelPath = resolvedCurrent;
-      const modelName = path.basename(currentPath);
-      let model = db.get('SELECT id, thumbnail FROM models WHERE library_path = ?', [modelPath]);
-      if (!model) {
-        const r = db.run('INSERT INTO models (name, library_path) VALUES (?, ?)', [modelName, modelPath], true);
-        model = { id: r.lastId, thumbnail: null };
-        results.modelsAdded++;
-        processedSinceSave++;
-        scanStatus.modelsAdded = results.modelsAdded;
-      }
-      for (const item of items) {
-        if (shouldCancel) return;
-        if (item.isDirectory()) continue;
-        await indexModelFile(model, {
-          filename: item.name,
-          filePath: path.join(modelPath, item.name),
-          relName: item.name
-        });
-      }
-    }
-
-    // Continue walking subdirectories for category / organizational folders
-    for (const item of items) {
+    // Loose model files: one project each
+    for (const item of looseFiles) {
       if (shouldCancel) return;
-      if (item.isDirectory()) {
-        await walk(path.join(currentPath, item.name));
+      if (!MODEL_TRIGGER_EXTENSIONS.includes(extOf(item.name))) continue;
+      const filePath = path.join(resolvedRoot, item.name);
+      const name = projectNameFromFile(item.name);
+      const model = getOrCreateModel(filePath, name);
+      await indexModelFile(model, { filename: item.name, filePath, relName: item.name });
+      for (const extra of companions) {
+        if (projectNameFromFile(extra.name).toLowerCase() !== name.toLowerCase()) continue;
+        await indexModelFile(model, { filename: extra.name, filePath: path.join(resolvedRoot, extra.name), relName: extra.name });
       }
+    }
+
+    // Folders: one project each, subfolders included
+    for (const item of items) {
+      if (shouldCancel) {
+        console.log('[Scanner] Scan aborted early by cancellation request.');
+        return;
+      }
+      if (item.isDirectory()) await scanProjectFolder(path.join(resolvedRoot, item.name));
+    }
+  }
+
+  // Files that were moved or deleted on disk since they were indexed. Without this, models of
+  // folders that were moved keep pointing at files that no longer exist until the hourly sync.
+  async function purgeMissingFiles() {
+    const rows = db.all('SELECT id, library_path FROM files WHERE library_path IS NOT NULL AND (is_archive_entry IS NULL OR is_archive_entry = 0)');
+    for (let i = 0; i < rows.length; i += 200) {
+      const batch = rows.slice(i, i + 200);
+      const checks = await Promise.allSettled(batch.map(r => fsPromises.access(r.library_path)));
+      checks.forEach((c, k) => {
+        if (c.status === 'rejected') db.run('DELETE FROM files WHERE id = ?', [batch[k].id], true);
+      });
+      await new Promise(setImmediate);
+    }
+    // Archive entries whose archive is gone
+    const entries = db.all("SELECT id, library_path FROM files WHERE is_archive_entry = 1 AND library_path LIKE '%::%'");
+    for (const e of entries) {
+      try { await fsPromises.access(e.library_path.split('::')[0]); } catch (err) { db.run('DELETE FROM files WHERE id = ?', [e.id], true); }
     }
   }
 
   try {
     console.log(`[Scanner] Start library scan: ${libraryPath}`);
     await walk(libraryPath);
+    if (!shouldCancel) await purgeMissingFiles();
 
     // Clean up any scanner-created models that only contain documents/images and zero 3D/archive files (#78)
     const docOnlyModels = db.all(`

@@ -534,6 +534,17 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .file-item{display:flex;align-items:center;gap:12px}
 .file-item:last-child, .file-item-card:last-child{border-bottom:none}
 .file-item:hover, .file-item-card:hover{background:var(--bg-card-hover)}
+/* Folder tree for project models whose files live in subfolders */
+.file-folder{border-bottom:1px solid var(--border)}
+.file-folder:last-child{border-bottom:none}
+.file-folder>summary{display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;list-style:none;user-select:none;font-weight:600;font-size:.82rem;color:var(--text-secondary);transition:background var(--transition)}
+.file-folder>summary::-webkit-details-marker{display:none}
+.file-folder>summary:hover{background:var(--bg-card-hover)}
+.file-folder-chevron{flex-shrink:0;transition:transform var(--transition)}
+.file-folder[open]>summary .file-folder-chevron{transform:rotate(90deg)}
+.file-folder-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-folder-count{margin-left:auto;font-size:.7rem;font-weight:500;color:var(--text-muted)}
+.file-folder-body{margin-left:20px;border-left:1px dashed var(--border);border-top:1px solid var(--border)}
 .glass-panel{overflow:visible}
 .file-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid transparent}
 .file-icon.stl{background:rgba(59,130,246,0.12);color:#38bdf8;border-color:rgba(56,189,248,0.25)}

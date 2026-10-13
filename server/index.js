@@ -152,6 +152,9 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 if (fs.existsSync(LIBRARY_PATH)) {
   app.use('/library-files', express.static(LIBRARY_PATH));
 }
+// A library file that is no longer on disk must be a real 404, not the SPA page below:
+// the 3D viewer would otherwise try to parse index.html as an STL ("Invalid typed array length")
+app.use('/library-files', (req, res) => res.status(404).type('text/plain').send('File not found in library'));
 
 // Direct file access fallback for uploads
 app.get('/uploads/:filename', (req, res) => {

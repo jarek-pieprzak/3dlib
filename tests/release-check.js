@@ -772,7 +772,8 @@ async function runE2ETests() {
     });
 
     await check('Library Scanner indexes nested folders, ZIP+cover folders (with deep ZIP scan off), and re-scans cleanly after DB delete (Issue #74 guard)', async () => {
-      // 1. Nested subfolder with STL
+      // 1. Nested subfolder with STL: the top-level "Toolbox" folder is the project model,
+      //    the subfolder survives in the file's relative name
       const nestedFolder = path.join(tmpLibDir, 'Toolbox', 'Scanned Cable Clip');
       fs.mkdirSync(nestedFolder, { recursive: true });
       const stlContent = 'solid clip\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid clip\n';
@@ -800,10 +801,13 @@ async function runE2ETests() {
 
       await runScanAndWait();
 
-      const searchScanned = await apiReq('/api/models?search=Scanned%20Cable%20Clip', { session: adminSession });
-      const scannedModel = (searchScanned.data.models || []).find(m => m.name === 'Scanned Cable Clip');
-      assert(scannedModel, 'Scanner did not index nested "Scanned Cable Clip" folder');
-      assert(scannedModel.file_count === 1, `Expected nested scanned model to have 1 file, got ${scannedModel.file_count}`);
+      const searchScanned = await apiReq('/api/models?search=Toolbox', { session: adminSession });
+      const scannedModel = (searchScanned.data.models || []).find(m => m.name === 'Toolbox');
+      assert(scannedModel, 'Scanner did not index the "Toolbox" project folder');
+      assert(scannedModel.file_count === 1, `Expected the Toolbox project model to have 1 file, got ${scannedModel.file_count}`);
+      const scannedDetail = await apiReq(`/api/models/${scannedModel.id}`, { session: adminSession });
+      assert((scannedDetail.data.files || []).some(f => f.original_name === 'Scanned Cable Clip/cable_clip.stl'),
+        `Expected the nested file to keep its subfolder path, got ${JSON.stringify((scannedDetail.data.files || []).map(f => f.original_name))}`);
 
       const searchZipModel = await apiReq('/api/models?search=Zip%20Only%20Model', { session: adminSession });
       const zipModel = (searchZipModel.data.models || []).find(m => m.name === 'Zip Only Model');
@@ -818,8 +822,8 @@ async function runE2ETests() {
 
       await runScanAndWait();
 
-      const rescan1 = await apiReq('/api/models?search=Scanned%20Cable%20Clip', { session: adminSession });
-      const rescannedModel = (rescan1.data.models || []).find(m => m.name === 'Scanned Cable Clip');
+      const rescan1 = await apiReq('/api/models?search=Toolbox', { session: adminSession });
+      const rescannedModel = (rescan1.data.models || []).find(m => m.name === 'Toolbox');
       assert(rescannedModel && rescannedModel.file_count === 1, `After DB delete + re-scan, expected file_count=1, got ${rescannedModel?.file_count} (Issue #74)`);
 
       const rescan2 = await apiReq('/api/models?search=Zip%20Only%20Model', { session: adminSession });
@@ -922,6 +926,81 @@ async function runE2ETests() {
       const pDetailAfterDisable = await apiReq(`/api/models/${pModel.id}`, { session: adminSession });
       const remainingArchiveEntries = (pDetailAfterDisable.data.files || []).filter(f => f.is_archive_entry === 1);
       assert(remainingArchiveEntries.length === 0, `Expected 0 virtual archive entries after disabling scan_zip_archives, got ${remainingArchiveEntries.length} (Issue #78)`);
+    });
+
+    await check('Library layout: every file or folder in the library root is one project; folders keep their subfolder tree; moved files are purged', async () => {
+      const { meshTo3mf } = require(path.join(ROOT_DIR, 'server/utils/3mf'));
+      const tri = { verts: [[0, 0, 0], [10, 0, 0], [0, 10, 0]], tris: [[0, 1, 2]] };
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      const put = (rel, data) => {
+        const full = path.join(tmpLibDir, rel);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, data);
+      };
+      put('Loose Benchy.3mf', meshTo3mf(tri));                     // loose files in the root: one project each
+      put('Loose Benchy.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9])); // same name: belongs to that project
+      put('Loose Bracket.stl', stl);
+      put('Ready Prints/Chess Set.3mf', meshTo3mf(tri));            // folders: one project with their tree
+      put('Ready Prints/Games/Poker Chips.gcode.3mf', meshTo3mf(tri));
+      put('Hero_Me/Hero Me Gen7.3mf', meshTo3mf(tri));
+      put('Hero_Me/Gantry Adapters/3DFused/spacer.stl', stl);
+      put('Hero_Me/Part Cooling Ducts/Standard Ducts/5015 fans/duct.stl', stl);
+      put('HeroXMe/other.stl', stl);                                 // LIKE "_" wildcard guard
+
+      const scan = async () => {
+        const st = await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+        assert(st.status === 200, `Scan start failed (${st.status})`);
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const s = await apiReq('/api/library/scan/status', { session: adminSession });
+          if (s.status === 200 && !s.data.isScanning) return;
+        }
+        throw new Error('Library scanner did not complete within 6s');
+      };
+      const byName = async (name) => {
+        const r = await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession });
+        return (r.data.models || []).filter(m => m.name === name);
+      };
+      const filesOf = async (model) => {
+        const d = await apiReq(`/api/models/${model.id}`, { session: adminSession });
+        return (d.data.files || []).map(f => f.original_name).sort();
+      };
+
+      await scan();
+      await scan(); // a re-scan must not duplicate or reshuffle anything
+
+      const benchy = await byName('Loose Benchy');
+      assert(benchy.length === 1 && JSON.stringify(await filesOf(benchy[0])) === JSON.stringify(['Loose Benchy.3mf', 'Loose Benchy.jpg']),
+        `Expected "Loose Benchy" with its 3MF and same-named image, got ${JSON.stringify(benchy.length ? await filesOf(benchy[0]) : [])}`);
+      const bracket = await byName('Loose Bracket');
+      assert(bracket.length === 1 && bracket[0].file_count === 1, 'A loose STL in the root must be its own project');
+
+      const ready = await byName('Ready Prints');
+      assert(ready.length === 1 && JSON.stringify(await filesOf(ready[0])) === JSON.stringify(['Chess Set.3mf', 'Games/Poker Chips.gcode.3mf']),
+        'A folder of 3MFs must stay one project with its subfolder tree');
+      assert((await byName('Chess Set')).length === 0, '3MFs inside a project folder must not become separate models');
+
+      const hero = await byName('Hero_Me');
+      assert(hero.length === 1, `Expected one "Hero_Me" project, got ${hero.length}`);
+      const heroNames = await filesOf(hero[0]);
+      assert(JSON.stringify(heroNames) === JSON.stringify(['Gantry Adapters/3DFused/spacer.stl', 'Hero Me Gen7.3mf', 'Part Cooling Ducts/Standard Ducts/5015 fans/duct.stl']),
+        `Hero_Me files should keep their subfolder paths, got ${JSON.stringify(heroNames)}`);
+      for (const sub of ['Gantry Adapters', '3DFused', '5015 fans']) {
+        assert((await byName(sub)).length === 0, `Subfolder "${sub}" must not become a model`);
+      }
+      const other = await byName('HeroXMe');
+      assert(other.length === 1 && other[0].file_count === 1, 'A sibling folder whose name matches the LIKE pattern must stay its own project');
+
+      // Moving a folder on disk: the next scan drops the stale files instead of serving index.html for them
+      fs.renameSync(path.join(tmpLibDir, 'Hero_Me', 'Gantry Adapters'), path.join(tmpLibDir, 'HeroXMe', 'Gantry Adapters'));
+      await scan();
+      const heroAfter = await filesOf((await byName('Hero_Me'))[0]);
+      assert(!heroAfter.some(n => n.startsWith('Gantry Adapters/')), `Moved files must leave the old project, got ${JSON.stringify(heroAfter)}`);
+      const otherAfter = await filesOf((await byName('HeroXMe'))[0]);
+      assert(otherAfter.includes('Gantry Adapters/3DFused/spacer.stl'), `Moved files must show up in the new project, got ${JSON.stringify(otherAfter)}`);
+
+      const missing = await fetch(`${baseUrl}/library-files/Hero_Me/Gantry%20Adapters/3DFused/spacer.stl`);
+      assert(missing.status === 404, `A missing library file must return 404, got ${missing.status}`);
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

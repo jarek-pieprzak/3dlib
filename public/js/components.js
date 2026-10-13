@@ -11,6 +11,50 @@ const UI = {
       .replace(/'/g, '&#39;');
   },
 
+  // Files of a project folder keep their path relative to it ("Gantry adapters/Creality/mount.stl").
+  // Show them as a collapsible folder tree (top level open, bigger subfolders collapsed);
+  // models without subfolders stay a flat list.
+  fileTree(files, renderFile) {
+    const nameOf = (f) => String(f.original_name || f.filename || '');
+    if (!files.some(f => nameOf(f).includes('/'))) return files.map(f => renderFile(f, nameOf(f))).join('');
+
+    const newNode = () => ({ folders: new Map(), files: [] });
+    const root = newNode();
+    for (const f of files) {
+      const parts = nameOf(f).split('/').filter(Boolean);
+      const base = parts.pop() || nameOf(f);
+      let node = root;
+      for (const part of parts) {
+        if (!node.folders.has(part)) node.folders.set(part, newNode());
+        node = node.folders.get(part);
+      }
+      node.files.push({ f, base });
+    }
+
+    const countOf = (node) => node.files.length + [...node.folders.values()].reduce((n, child) => n + countOf(child), 0);
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const render = (node, depth) => {
+      const filesHtml = node.files.map(({ f, base }) => renderFile(f, base)).join('');
+      const foldersHtml = [...node.folders.entries()]
+        .sort((a, b) => collator.compare(a[0], b[0]))
+        .map(([name, child]) => {
+          const count = countOf(child);
+          return `
+          <details class="file-folder"${depth === 0 || count <= 6 ? ' open' : ''}>
+            <summary>
+              <svg class="file-folder-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent-cyan)"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span class="file-folder-name">${this.escapeHtml(name)}</span>
+              <span class="file-folder-count">${count}</span>
+            </summary>
+            <div class="file-folder-body">${render(child, depth + 1)}</div>
+          </details>`;
+        }).join('');
+      return filesHtml + foldersHtml;
+    };
+    return render(root, 0);
+  },
+
   // Safe URL protocol validator (only http, https, mailto allowed)
   safeUrl(url) {
     if (!url || typeof url !== 'string') return '';
@@ -646,7 +690,7 @@ const UI = {
       `;
     }
 
-    const filesHtml = (model.files || []).filter(f => f.file_type !== 'document').map(f => {
+    const renderFileCard = (f, displayName = f.original_name) => {
       let metaHtml = '';
       const isPreview = Boolean(f.is_preview || f.id === model.preview_file_id);
       const is3D = f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step';
@@ -707,7 +751,7 @@ const UI = {
             ${this.fileTypeIcon(f.file_type)}
             <div style="min-width:0;flex:1">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                <span class="file-name" style="font-weight:600;font-size:0.85rem;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%" title="${f.original_name}">${f.original_name}</span>
+                <span class="file-name" style="font-weight:600;font-size:0.85rem;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%" title="${this.escapeHtml(f.original_name)}">${this.escapeHtml(displayName)}</span>
                 ${isPreview ? `<span class="badge badge-primary badge-xs" style="font-size:0.65rem;padding:2px 6px;background:rgba(0,212,255,0.15);color:var(--accent-cyan);border:1px solid rgba(0,212,255,0.3);display:inline-flex;align-items:center;gap:3px"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${isImage ? 'Cover Image' : 'Primary 3D'}</span>` : ''}
               </div>
               <div class="file-meta" style="font-size:0.72rem;color:var(--text-muted);display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
@@ -737,7 +781,8 @@ const UI = {
           ${slicerBtnHtml}
         </div>` : ''}
       </div>`;
-    }).join('');
+    };
+    const filesHtml = this.fileTree((model.files || []).filter(f => f.file_type !== 'document'), renderFileCard);
 
     const docsHtml = (model.files || []).filter(f => f.file_type === 'document').map(f => {
       return `

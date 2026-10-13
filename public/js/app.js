@@ -13,6 +13,15 @@ const App = {
   // ── Init ──
   async init() {
     this.el = document.getElementById('app');
+    // The 3D Studio part selector switched files: follow it in the file list
+    document.addEventListener('gv:preview-file', (e) => this.highlightPreviewFile(e.detail && e.detail.fileId));
+    // Slicer menus inside the scrolling file list open upwards when there is no room below
+    document.addEventListener('mouseover', (e) => {
+      const dd = e.target.closest && e.target.closest('.detail-files-body .dropdown');
+      if (!dd) return;
+      const list = dd.closest('.detail-files-body');
+      dd.classList.toggle('drop-up', list.getBoundingClientRect().bottom - dd.getBoundingClientRect().bottom < 200);
+    });
     const savedUser = localStorage.getItem('pv_user');
     if (savedUser) {
       try { this.currentUser = JSON.parse(savedUser); } catch(e) { localStorage.removeItem('pv_user'); }
@@ -2160,6 +2169,7 @@ const App = {
       try { if (config.printers) printers = JSON.parse(config.printers); } catch(e){}
       const hasPrinters = printers.length > 0;
 
+      this.currentModel = model;
       this.el.innerHTML = `
         ${UI.modelDetail(model, hasPrinters)}`;
       // Initialize 3D viewer using chosen 3D preview file or first stl/3mf
@@ -2176,6 +2186,7 @@ const App = {
             activeFileId: previewCadFile.id,
             modelFiles: cadFiles
           });
+          this.highlightPreviewFile(previewCadFile.id);
           if (v && !model.thumbnail_url && !model.thumbnail) {
             Promise.resolve(v.ready).then(() => {
               setTimeout(() => Viewer.takeSnapshot(model.id, v.renderer, v.scene, v.camera), 2500);
@@ -2455,6 +2466,58 @@ const App = {
       document.removeEventListener('keydown', this.previewKeyHandler);
       this.previewKeyHandler = null;
     }
+  },
+
+  // Show a file of the current model in the 3D Studio (clicking a row in the file list)
+  previewFile(modelId, fileId) {
+    const model = this.currentModel && this.currentModel.id === modelId ? this.currentModel : null;
+    const file = model && (model.files || []).find(f => f.id === fileId);
+    const container = document.getElementById(`stl-viewer-${modelId}`);
+    if (!file || !container || typeof Viewer === 'undefined') return;
+
+    const isGcode = file.file_type === 'gcode' || file.file_type === 'bgcode';
+    const cadFiles = (model.files || []).filter(f => f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step');
+    const url = `${file.url || '/uploads/' + file.filename}?t=${Date.now()}`;
+
+    Viewer.cleanup();
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading...</div>';
+    container.dataset.stlUrl = url;
+    setTimeout(() => {
+      Viewer.create(`stl-viewer-${modelId}`, url, file.file_type,
+        isGcode ? {} : { modelId, activeFileId: file.id, modelFiles: cadFiles });
+    }, 50);
+    this.highlightPreviewFile(file.id);
+
+    // On narrow screens the viewer sits above the list: bring the 3D Studio back into view
+    const r = container.getBoundingClientRect();
+    if (r.top < 56 || r.bottom > window.innerHeight) {
+      (container.closest('.glass-panel') || container).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  },
+
+  // Mark the row of the file that is on screen, open the folders around it and keep it
+  // visible inside the scrolling file list (without moving the page)
+  highlightPreviewFile(fileId) {
+    document.querySelectorAll('.file-item-card.is-active').forEach(el => el.classList.remove('is-active'));
+    if (fileId === null || fileId === undefined) return;
+    const row = document.querySelector(`.file-item-card[data-file-id="${fileId}"]`);
+    if (!row) return;
+    row.classList.add('is-active');
+    for (let d = row.parentElement && row.parentElement.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) {
+      d.open = true;
+    }
+    const list = row.closest('.detail-files-body');
+    if (list) {
+      const lr = list.getBoundingClientRect();
+      const rr = row.getBoundingClientRect();
+      if (rr.top < lr.top || rr.bottom > lr.bottom) list.scrollTop += rr.top - lr.top - lr.height / 3;
+    }
+  },
+
+  showPrintHistory(modelId) {
+    const model = this.currentModel && this.currentModel.id === modelId ? this.currentModel : null;
+    if (!model) return;
+    this.openModal(`Print History · ${model.name}`, UI.printHistoryModal(model));
   },
 
   previewStl(modelId, url, fileType = null) {
@@ -3092,7 +3155,9 @@ const App = {
     try {
       await API.deletePrint(printId);
       this.toast('Print entry deleted');
-      this.renderModelDetail(modelId);
+      const historyOpen = !!document.querySelector('#modal-overlay.active .print-history-modal');
+      await this.renderModelDetail(modelId);
+      if (historyOpen) this.showPrintHistory(modelId); // refresh the open list
     } catch (e) { this.toast(e.message, 'error'); }
   },
 

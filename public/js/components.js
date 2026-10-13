@@ -536,7 +536,7 @@ const UI = {
     const cat = model.category_name
       ? `<span class="badge badge-category" style="background:${model.category_color}20;color:${model.category_color};border:1px solid ${model.category_color}33">${model.category_name}</span>`
       : '';
-    const tags = (model.tags || []).map(t => `<span class="badge badge-tag" style="cursor:pointer" onclick="App.navigate('/models?tag=${t.id}')" title="Filter by tag: ${this.escapeHtml(t.name)}">${t.name}</span>`).join('');
+    const tags = (model.tags || []).map(t => `<span class="badge badge-tag" style="cursor:pointer" onclick="App.navigate('/models?tag=${t.id}')" title="Filter by tag: ${this.escapeHtml(t.name)}">${this.escapeHtml(t.name)}</span>`).join('');
     const printed = model.has_printed
       ? '<span class="badge badge-printed">✓ Printed</span>'
       : '<span class="badge badge-not-printed">Not printed</span>';
@@ -551,7 +551,7 @@ const UI = {
 
     if (stlFile) {
       viewerHtml = `
-      <div class="glass-panel" style="margin-bottom:24px;overflow:visible">
+      <div class="glass-panel detail-viewer-panel" style="overflow:visible">
         <div class="panel-header">
           <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>3D Studio</div>
         </div>
@@ -559,24 +559,24 @@ const UI = {
           <div class="viewer-container" id="stl-viewer-${model.id}" data-stl-url="${stlFile.url || '/uploads/'+stlFile.filename}" data-fallback-thumbnail="${model.thumbnail_url || ''}">
             <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading 3D preview...</div>
           </div>
-          <div style="padding:12px 16px;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);background:rgba(0,0,0,0.1)">
+          <div class="detail-viewer-hint" style="padding:12px 16px;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);background:rgba(0,0,0,0.1)">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Drag to rotate · Scroll to zoom · Right-click to pan
           </div>
         </div>
       </div>`;
     } else if (model.thumbnail_url) {
       viewerHtml = `
-      <div class="glass-panel" style="margin-bottom:24px;overflow:hidden">
+      <div class="glass-panel detail-viewer-panel" style="overflow:hidden">
         <div class="panel-header">
           <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>Model Preview</div>
         </div>
-        <div class="panel-body no-pad" style="height:400px;background:var(--bg-dark);display:flex;align-items:center;justify-content:center">
+        <div class="panel-body no-pad detail-thumb-body" style="height:400px;background:var(--bg-dark);display:flex;align-items:center;justify-content:center">
           <img src="${model.thumbnail_url}" style="max-width:100%;max-height:100%;object-fit:contain">
         </div>
       </div>`;
     } else {
       viewerHtml = `
-      <div class="glass-panel" style="margin-bottom:24px;overflow:visible">
+      <div class="glass-panel detail-viewer-panel" style="overflow:visible">
         <div class="panel-header">
           <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>3D Studio</div>
         </div>
@@ -742,9 +742,14 @@ const UI = {
       }
 
       const hasBottomBar = (canEdit && !isPreview && canBePreview) || is3D;
+      // 3D and G-code rows open in the viewer when clicked anywhere on the row
+      const canOpen = is3D || isGcode;
+      const openAttrs = canOpen
+        ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in 3D Studio" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
+        : ` data-file-id="${f.id}"`;
 
       return `
-      <div class="file-item-card" style="padding:10px 14px;border-bottom:1px solid var(--border);transition:background var(--transition)">
+      <div class="file-item-card${canOpen ? ' is-openable' : ''}"${openAttrs} style="padding:10px 14px;border-bottom:1px solid var(--border);transition:background var(--transition)">
         <!-- Top Row: Icon, File Details, Quick Action Buttons -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
@@ -768,15 +773,14 @@ const UI = {
           </div>
           <!-- Quick Actions: 3D Preview Eye, Download, Delete -->
           <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
-            ${(is3D || isGcode) ? `<button class="file-action-btn preview" onclick="event.stopPropagation();App.previewStl(${model.id},'${f.url || '/uploads/'+f.filename}', '${f.file_type}')" title="Preview 3D / G-Code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>` : ''}
-            <a href="/api/files/${f.id}/download" class="file-action-btn" title="Download file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
+            <a href="/api/files/${f.id}/download" class="file-action-btn" title="Download file" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
             ${canEdit ? `<button class="file-action-btn delete" onclick="event.stopPropagation();App.confirmDeleteFile(${f.id},'${(f.original_name || f.filename).replace(/'/g, "\\'")}',${model.id})" title="Delete file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}
           </div>
         </div>
 
         <!-- Optional Bottom Action Bar (Slicer / Set Preview / Set Cover) -->
         ${hasBottomBar ? `
-        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.06);flex-wrap:wrap">
+        <div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.06);flex-wrap:wrap;cursor:default">
           ${(canEdit && !isPreview && canBePreview) ? `<button class="btn btn-ghost btn-xs" style="color:var(--text-secondary);font-size:0.7rem;border:1px solid var(--border);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:4px;transition:all var(--transition)" onclick="event.stopPropagation();App.setPreviewFile(${model.id}, ${f.id})" title="${isImage ? 'Set this image as model cover thumbnail' : 'Use this file as model 3D preview'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${isImage ? 'Set as Cover' : 'Set as Preview'}</button>` : ''}
           ${slicerBtnHtml}
         </div>` : ''}
@@ -808,18 +812,6 @@ const UI = {
       </div>`;
     }).join('');
 
-    const printsHtml = (model.prints || []).map(p => `
-      <div class="print-item">
-        <div class="print-status ${p.successful ? 'success' : 'failed'}"></div>
-        <div class="print-info">
-          <div class="print-material">${p.material_name || 'Unknown material'} ${p.successful ? '' : '<span style="color:var(--error);font-size:.75rem"> — Failed</span>'}</div>
-          <div class="print-date">${this.formatDate(p.printed_at)}</div>
-          ${p.notes ? `<div class="print-notes">${p.notes}</div>` : ''}
-        </div>
-        ${canEdit ? `<button class="btn btn-ghost" style="padding:6px;color:var(--error)" onclick="App.deletePrint(${p.id},${model.id})" title="Delete"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
-      </div>
-    `).join('');
-
     const breadcrumbs = `
       <div class="breadcrumbs">
         <a href="#/models">Library</a>
@@ -830,6 +822,7 @@ const UI = {
     `;
 
     return `
+      <div class="detail-page">
       ${breadcrumbs}
       <div class="detail-header">
         <div>
@@ -855,6 +848,14 @@ const UI = {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New Version
           </button>
+          ` : ''}
+          ${App.currentUser ? `
+          <button class="btn btn-secondary btn-sm" onclick="App.showPrintHistory(${model.id})" title="Print history">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            Print History${(model.prints || []).length ? ` (${model.prints.length})` : ''}
+          </button>
+          ` : ''}
+          ${canEdit ? `
           <button class="btn btn-secondary btn-sm" onclick="App.showEditModel(${model.id})">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Edit
@@ -868,40 +869,28 @@ const UI = {
       </div>
 
       <div class="detail-layout">
-        <div>
+        <div class="detail-main">
           ${viewerHtml}
-          ${model.description ? `
-          <div class="glass-panel" style="margin-bottom:24px">
-            <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Description</div></div>
-            <div class="panel-body"><div class="detail-description">${this.renderMarkdown(model.description)}</div></div>
-          </div>` : ''}
-          ${(tags || sourceLink) ? `
-          <div class="glass-panel" style="margin-bottom:24px">
-            <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Tags & Links</div></div>
-            <div class="panel-body">
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${tags}
-                ${sourceLink}
-              </div>
-            </div>
+          ${(model.description || tags || sourceLink || model.versions?.length || model.print_tips) ? `
+          <div class="glass-panel detail-info">
+            ${model.description ? `<div class="detail-description">${this.renderMarkdown(model.description)}</div>` : ''}
+            ${(tags || sourceLink) ? `<div class="detail-info-row">${tags}${sourceLink}</div>` : ''}
+            ${model.print_tips ? `
+            <div class="detail-info-row detail-tips">
+              <span class="detail-info-label"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5.76.76 1.23 1.52 1.41 2.5"/></svg>Print tips</span>
+              <span>${this.escapeHtml(model.print_tips)}</span>
+            </div>` : ''}
+            ${model.versions?.length ? `
+            <div class="detail-info-row">
+              <span class="detail-info-label"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>Other versions</span>
+              ${model.versions.map(v => `<a class="detail-version-chip" href="#/models/${v.id}" title="${this.formatDateShort(v.created_at)} · ${v.file_count} files">${this.escapeHtml(v.name)}</a>`).join('')}
+            </div>` : ''}
           </div>` : ''}
         </div>
 
-        <div>
-          ${gcodeHtml}
-          <div class="glass-panel">
-            <div class="panel-header">
-              <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>Print History</div>
-              ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="App.showLogPrint(${model.id})">+ Log Print</button>` : ''}
-            </div>
-            <div class="panel-body">
-              <div class="print-history-list">
-                ${printsHtml || '<div style="color:var(--text-muted);font-size:.875rem;text-align:center;padding:16px 0">No prints recorded yet</div>'}
-              </div>
-            </div>
-          </div>
-
-          <div class="glass-panel" style="margin-top:16px">
+        <div class="detail-side">
+          ${gcodeHtml ? `<div class="detail-gcode">${gcodeHtml}</div>` : ''}
+          <div class="glass-panel detail-files-panel">
             <div class="panel-header" style="border-bottom:1px solid var(--border-color);padding:0">
               <div style="display:flex;width:100%;align-items:center;">
                 <div style="display:flex;gap:20px;padding:16px 16px 0 16px;flex:1">
@@ -919,7 +908,7 @@ const UI = {
                 </div>
               </div>
             </div>
-            <div class="panel-body no-pad" style="overflow:visible">
+            <div class="panel-body no-pad detail-files-body">
               <div id="tab-content-files">
                 ${filesHtml || '<div class="empty-state" style="padding:30px"><div class="empty-state-text">No files yet</div><div class="empty-state-sub">Upload STL, Gcode, or 3MF files</div></div>'}
               </div>
@@ -930,25 +919,30 @@ const UI = {
             </div>
           </div>
 
-          ${model.versions?.length ? `
-          <div class="glass-panel" style="margin-top:16px">
-            <div class="panel-header"><div class="panel-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>Other Versions</div></div>
-            <div class="panel-body no-pad">
-              ${model.versions.map(v => `
-                <div class="activity-item" style="cursor:pointer;padding:12px" onclick="App.navigate('/models/${v.id}')">
-                  <div style="flex:1">
-                    <div style="font-weight:600;font-size:.85rem">${v.name}</div>
-                    <div style="font-size:.7rem;color:var(--text-muted)">${this.formatDateShort(v.created_at)} · ${v.file_count} files</div>
-                  </div>
-                  <div style="color:var(--accent-cyan);font-size:.8rem">View →</div>
-                </div>`).join('')}
-            </div>
-          </div>` : ''}
-          ${model.print_tips ? `
-          <div class="glass-panel" style="margin-top:16px">
-            <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5.76.76 1.23 1.52 1.41 2.5"/></svg>Print Tips</div></div>
-            <div class="panel-body"><div class="detail-tips">${this.escapeHtml(model.print_tips)}</div></div>
-          </div>` : ''}
+        </div>
+      </div>
+      </div>`;
+  },
+
+  // ── Print History (modal opened from the model header) ──
+  printHistoryModal(model) {
+    const canEdit = App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id);
+    const printsHtml = (model.prints || []).map(p => `
+      <div class="print-item">
+        <div class="print-status ${p.successful ? 'success' : 'failed'}"></div>
+        <div class="print-info">
+          <div class="print-material">${this.escapeHtml(p.material_name || 'Unknown material')} ${p.successful ? '' : '<span style="color:var(--error);font-size:.75rem"> — Failed</span>'}</div>
+          <div class="print-date">${this.formatDate(p.printed_at)}</div>
+          ${p.notes ? `<div class="print-notes">${this.escapeHtml(p.notes)}</div>` : ''}
+        </div>
+        ${canEdit ? `<button class="btn btn-ghost" style="padding:6px;color:var(--error)" onclick="App.deletePrint(${p.id},${model.id})" title="Delete"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
+      </div>
+    `).join('');
+    return `
+      <div class="print-history-modal">
+        ${canEdit ? `<div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-primary btn-sm" onclick="App.showLogPrint(${model.id})">+ Log Print</button></div>` : ''}
+        <div class="print-history-list">
+          ${printsHtml || '<div style="color:var(--text-muted);font-size:.875rem;text-align:center;padding:16px 0">No prints recorded yet</div>'}
         </div>
       </div>`;
   },
@@ -1898,7 +1892,8 @@ const UI = {
     escaped = escaped.replace(/^\s*[-*+]\s+(.*)$/gim, '<li style="margin-left:20px">$1</li>');
     escaped = escaped.replace(/^\s*\d+\.\s+(.*)$/gim, '<li style="margin-left:20px">$1</li>');
 
-    // Newlines to BR
+    // Newlines to BR (not after block elements, which already break the line)
+    escaped = escaped.replace(/(<\/li>|<\/h[1-4]>|<\/blockquote>|<hr>|<\/pre>)\n/g, '$1');
     escaped = escaped.replace(/\n/gim, '<br>');
 
     return `<div class="markdown-body">${escaped}</div>`;

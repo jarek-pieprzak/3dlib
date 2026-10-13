@@ -968,6 +968,10 @@ const Viewer = {
     if (partSelectEl) {
       partSelectEl.onchange = (e) => {
         renderPartSelection(e.target.value);
+        // Let the file list highlight the file that is now on screen
+        document.dispatchEvent(new CustomEvent('gv:preview-file', {
+          detail: { modelId, fileId: e.target.value === 'all' ? null : Number(e.target.value) }
+        }));
       };
     }
 

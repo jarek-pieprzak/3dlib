@@ -591,6 +591,62 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .detail-meta{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
 .detail-tips{font-size:.875rem;color:var(--text-secondary);line-height:1.6}
 
+/* Model page columns */
+.detail-main{display:flex;flex-direction:column;gap:24px;min-width:0}
+/* Description, tags, print tips and versions share one compact panel */
+.detail-info{display:flex;flex-direction:column;gap:12px;padding:14px 18px;min-width:0}
+.detail-info .detail-description{font-size:.85rem;line-height:1.55}
+.detail-info .markdown-body>:is(h1,h2,h3,h4){margin:4px 0 2px;line-height:1.3}
+.detail-info .markdown-body>h1{font-size:1.05rem}
+.detail-info .markdown-body>h2{font-size:1rem}
+.detail-info .markdown-body>:is(h3,h4){font-size:.9rem}
+.detail-info-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.8rem;color:var(--text-secondary)}
+.detail-info-row+.detail-info-row,.detail-description+.detail-info-row{padding-top:10px;border-top:1px dashed var(--border)}
+.detail-info-label{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
+.detail-tips{line-height:1.5}
+.detail-version-chip{font-size:.75rem;padding:2px 9px;border:1px solid var(--border);border-radius:999px;color:var(--accent-cyan);background:var(--bg-tertiary)}
+.detail-version-chip:hover{border-color:var(--accent-cyan)}
+.detail-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+.detail-side>.detail-gcode>.glass-panel{margin-bottom:0 !important}
+.detail-files-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.detail-files-body{overflow-y:auto !important;overscroll-behavior:contain;max-height:70vh}
+/* Wide screens: the model page is exactly one window tall. The 3D Studio takes the height
+   left over by the header and the info panels, only the file list scrolls. */
+@media(min-width:1025px) and (min-height:600px){
+  .app-main-wrapper:has(.detail-page){height:100vh;min-height:0;overflow:hidden}
+  .main-content:has(> .detail-page){display:flex;flex-direction:column;min-height:0;padding-top:20px;padding-bottom:20px}
+  .detail-page{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  .detail-page>.breadcrumbs{align-self:flex-start;flex:none;margin-bottom:12px}
+  .detail-page>.detail-header{flex:none;margin-bottom:16px}
+  .detail-page>.detail-layout{flex:1 1 auto;min-height:0;grid-template-rows:minmax(0,1fr);align-items:stretch;gap:20px}
+  .detail-page .detail-main{min-height:0;gap:16px}
+  .detail-page .detail-viewer-panel{flex:1 0 auto;min-height:max(280px, 50%);display:flex;flex-direction:column}
+  .detail-page .detail-viewer-panel>.panel-header{flex:none;padding-top:12px;padding-bottom:12px}
+  .detail-page .detail-viewer-panel>.panel-body{flex:1 1 auto;min-height:0;height:auto !important;display:flex;flex-direction:column}
+  .detail-page .detail-viewer-panel .viewer-container{flex:1 1 auto;height:auto;min-height:0}
+  .detail-page .detail-viewer-hint{flex:none}
+  /* The info panel takes what it needs; only a description too long to fit next to a
+     half-height viewer scrolls inside its own box */
+  .detail-page .detail-info{flex:0 1 auto;min-height:0;overflow-y:auto}
+  .detail-page .detail-side{min-height:0}
+  .detail-page .detail-gcode{flex:0 1 auto;max-height:38%;overflow-y:auto;border-radius:var(--radius-md)}
+  .detail-page .detail-files-panel{flex:1 1 auto}
+  .detail-page .detail-files-body{flex:1 1 auto;max-height:none}
+}
+/* Rows that open in the viewer */
+.file-item-card.is-openable{cursor:pointer}
+.file-item-card.is-openable:focus-visible{outline:2px solid var(--accent-cyan);outline-offset:-2px}
+.file-item-card.is-active{background:rgba(0,212,255,0.08);box-shadow:inset 3px 0 0 var(--accent-cyan)}
+.file-item-card.is-active:hover{background:rgba(0,212,255,0.12)}
+.file-item-card.is-active .file-name{color:var(--accent-cyan) !important}
+/* Slicer menus near the bottom of the scrolling list open upwards */
+.dropdown.drop-up .dropdown-content{top:auto;bottom:100%}
+.detail-layout .glass-panel{scroll-margin-top:72px}
+/* Long file paths in the part selector must not push the Spin / Cover / Fullscreen pill out */
+.viewer-overlay-top>div:first-child{min-width:0;flex:1 1 auto}
+.viewer-overlay-top>div:first-child>.viewer-pill{max-width:100%;min-width:0}
+.viewer-overlay-top select[id$="-part-select"]{min-width:0;max-width:100%;text-overflow:ellipsis;overflow:hidden}
+.viewer-overlay-top>.viewer-pill:last-child{flex-shrink:0}
 @media(max-width: 1024px){
   .detail-header{display:flex;flex-direction:column;align-items:flex-start;gap:16px}
   .detail-actions{justify-content:flex-start;flex-wrap:wrap;width:auto}

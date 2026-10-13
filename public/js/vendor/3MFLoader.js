@@ -65,6 +65,7 @@
 
 			const scope = this;
 			const textureLoader = new THREE.TextureLoader( this.manager );
+			const objectsByPart = {}; // GyroidVault: model part name -> { objectId: Object3D }
 
 			function loadDocument( data ) {
 
@@ -184,8 +185,75 @@
 					modelRels: modelRels,
 					model: modelParts,
 					printTicket: printTicketParts,
-					texture: texturesParts
+					texture: texturesParts,
+					plates: parsePlateConfig( zip )
 				};
+
+			}
+
+			// GyroidVault: BambuStudio / OrcaSlicer projects record which object instances sit on
+			// which build plate in Metadata/model_settings.config. Other producers don't write it,
+			// in which case there are no plates and the file renders as before.
+			function parsePlateConfig( zip ) {
+
+				const view = zip && zip[ 'Metadata/model_settings.config' ];
+				if ( ! view ) return [];
+
+				let xml;
+
+				try {
+
+					xml = new DOMParser().parseFromString( THREE.LoaderUtils.decodeText( view ), 'application/xml' );
+
+				} catch ( e ) {
+
+					return [];
+
+				}
+
+				if ( ! xml || ! xml.documentElement || xml.getElementsByTagName( 'parsererror' ).length ) return [];
+
+				// <metadata key="..." value="..."/> elements that are direct children of `node`.
+				const readMetadata = ( node ) => {
+
+					const out = {};
+
+					for ( const child of node.children ) {
+
+						if ( child.nodeName === 'metadata' ) out[ child.getAttribute( 'key' ) ] = child.getAttribute( 'value' );
+
+					}
+
+					return out;
+
+				};
+
+				const plates = [];
+
+				for ( const plateNode of xml.documentElement.children ) {
+
+					if ( plateNode.nodeName !== 'plate' ) continue;
+
+					const meta = readMetadata( plateNode );
+					const instances = [];
+
+					for ( const instanceNode of plateNode.getElementsByTagName( 'model_instance' ) ) {
+
+						const im = readMetadata( instanceNode );
+						if ( im.object_id === undefined || im.object_id === null ) continue;
+						instances.push( { objectId: String( im.object_id ), instanceId: parseInt( im.instance_id || '0', 10 ) || 0 } );
+
+					}
+
+					plates.push( {
+						id: parseInt( meta.plater_id, 10 ) || plates.length + 1,
+						name: meta.plater_name || '',
+						instances: instances
+					} );
+
+				}
+
+				return plates;
 
 			}
 
@@ -465,6 +533,18 @@
 
 				const componentData = {};
 				componentData[ 'objectId' ] = componentNode.getAttribute( 'objectid' ); // required
+
+				// GyroidVault: 3MF Production extension. A component may reference an object that
+				// lives in another model part (p:path), which is how BambuStudio / OrcaSlicer store
+				// every mesh in its own 3D/Objects/*.model file.
+				const partPath = componentNode.getAttribute( 'p:path' ) ||
+					componentNode.getAttributeNS( 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06', 'path' );
+
+				if ( partPath ) {
+
+					componentData[ 'path' ] = partPath;
+
+				}
 
 				const transform = componentNode.getAttribute( 'transform' );
 
@@ -1183,7 +1263,18 @@
 				for ( let j = 0; j < compositeData.length; j ++ ) {
 
 					const component = compositeData[ j ];
-					let build = objects[ component.objectId ];
+					let build;
+
+					if ( component.path ) {
+
+						// Resolve against the referenced model part first: object ids are only
+						// unique within one part, and that part may not have been built yet.
+						const partObjects = getPartObjects( component.path );
+						if ( partObjects ) build = partObjects[ component.objectId ];
+
+					}
+
+					if ( build === undefined ) build = objects[ component.objectId ];
 
 					if ( build === undefined ) {
 
@@ -1272,22 +1363,58 @@
 				} // start build
 
 
+				// GyroidVault: build the referenced model parts before the root model part, so
+				// components that point into another part (p:path) find real meshes instead of
+				// empty placeholders. BambuStudio writes 3D/3dmodel.model first in the archive.
+				const rootRel = fetch3DModelPart( data3mf[ 'rels' ] );
+				const rootKey = rootRel ? rootRel[ 'target' ].substring( 1 ) : null;
+				modelsKeys.sort( ( a, b ) => ( a === rootKey ) - ( b === rootKey ) );
+
 				for ( let i = 0; i < modelsKeys.length; i ++ ) {
 
 					const modelsKey = modelsKeys[ i ];
 					const modelData = modelsData[ modelsKey ];
 					const objectIds = Object.keys( modelData[ 'resources' ][ 'object' ] );
+					const partObjects = objectsByPart[ modelsKey ] = {};
 
 					for ( let j = 0; j < objectIds.length; j ++ ) {
 
 						const objectId = objectIds[ j ];
 						buildObject( objectId, objects, modelData, textureData );
+						partObjects[ objectId ] = objects[ objectId ];
 
 					}
 
 				}
 
 				return objects;
+
+			}
+
+			// Objects built from one model part, looked up by a p:path value such as
+			// "/3D/Objects/Cube_1.model". Tolerates URI-encoded names and case differences.
+			function getPartObjects( partPath ) {
+
+				let key = String( partPath ).replace( /^\//, '' );
+				if ( objectsByPart[ key ] ) return objectsByPart[ key ];
+
+				try {
+
+					key = decodeURIComponent( key );
+
+				} catch ( e ) { /* keep the raw value */ }
+
+				if ( objectsByPart[ key ] ) return objectsByPart[ key ];
+
+				const lower = key.toLowerCase();
+
+				for ( const k in objectsByPart ) {
+
+					if ( k.toLowerCase() === lower ) return objectsByPart[ k ];
+
+				}
+
+				return null;
 
 			}
 
@@ -1308,6 +1435,7 @@
 				const group = new THREE.Group();
 				const relationship = fetch3DModelPart( data3mf[ 'rels' ] );
 				const buildData = data3mf.model[ relationship[ 'target' ].substring( 1 ) ][ 'build' ];
+				const instanceCounts = {};
 
 				for ( let i = 0; i < buildData.length; i ++ ) {
 
@@ -1321,6 +1449,15 @@
 						object3D.applyMatrix4( transform );
 
 					}
+
+					// GyroidVault: remember which object / instance this build item is, so it can be
+					// matched against the plate assignments in model_settings.config. BambuStudio
+					// writes one build item per instance, in instance order.
+					const objectId = String( buildItem[ 'objectId' ] );
+					const instanceId = instanceCounts[ objectId ] === undefined ? 0 : instanceCounts[ objectId ] + 1;
+					instanceCounts[ objectId ] = instanceId;
+					object3D.userData.objectId = objectId;
+					object3D.userData.instanceId = instanceId;
 
 					group.add( object3D );
 
@@ -1340,9 +1477,45 @@
 							if (objHasMesh) group.add(obj.clone());
 						}
 					}
+				} else {
+					assignPlates( group, data3mf.plates );
 				}
 
 				return group;
+
+			}
+
+			// GyroidVault: tag every build item with the index of the plate it belongs to and expose
+			// the plate list as group.userData.plates = [{ id, name, items: [childIndex, ...] }].
+			// Items that are on no plate get plateIndex -1. BambuStudio stores plate N's objects at
+			// world positions offset from plate 1, so each plate has to be framed on its own.
+			function assignPlates( group, plates ) {
+
+				if ( ! plates || plates.length === 0 ) return;
+
+				const plateOf = {};
+
+				plates.forEach( ( plate, plateIndex ) => {
+
+					plate.instances.forEach( ( inst ) => {
+
+						plateOf[ inst.objectId + ':' + inst.instanceId ] = plateIndex;
+
+					} );
+
+				} );
+
+				const result = plates.map( ( plate ) => ( { id: plate.id, name: plate.name, items: [] } ) );
+
+				group.children.forEach( ( child, childIndex ) => {
+
+					const plateIndex = plateOf[ child.userData.objectId + ':' + child.userData.instanceId ];
+					child.userData.plateIndex = plateIndex === undefined ? - 1 : plateIndex;
+					if ( plateIndex !== undefined ) result[ plateIndex ].items.push( childIndex );
+
+				} );
+
+				group.userData.plates = result;
 
 			}
 

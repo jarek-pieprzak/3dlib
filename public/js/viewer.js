@@ -293,6 +293,10 @@ const Viewer = {
           <div class="viewer-pill" id="${containerId}-dims" style="display:none;font-weight:600">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg> <span class="dims-text">-- × -- × -- mm</span>
           </div>
+          <div class="viewer-pill" id="${containerId}-plate-pill" style="display:none;align-items:center;gap:5px" title="Build plate">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <select id="${containerId}-plate-select" aria-label="Build plate" style="background:transparent;border:none;color:var(--text-primary);font-size:0.75rem;font-weight:600;cursor:pointer;outline:none;padding-right:2px"></select>
+          </div>
           ${modelFiles.length > 1 ? `
             <div class="viewer-pill" style="display:inline-flex;align-items:center;gap:5px">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
@@ -624,17 +628,11 @@ const Viewer = {
           (object) => {
             const rawSize = new THREE.Vector3();
             if (is3D3MF) {
-              object.traverse(child => {
-                if (child.isMesh && child.geometry) {
-                  smoothGeometryNormals(child.geometry);
-                  if (child.material) {
-                    child.material.flatShading = false;
-                    child.material.needsUpdate = true;
-                  }
-                }
-              });
+              Viewer.prepare3MFGeometry(object, smoothGeometryNormals);
               const box = new THREE.Box3().setFromObject(object);
               box.getSize(rawSize);
+              // 3MF is Z-up (print bed coordinates); turn it Y-up like the STL path does.
+              object.rotation.x = -Math.PI / 2;
               resolve({ object, rawSize, is3MF: true });
             } else {
               const geometry = object;
@@ -660,20 +658,129 @@ const Viewer = {
       });
     };
 
-    // Render Part(s) Function
     let viewer = null;
+
+    // Multi-plate 3MF projects (Bambu Studio / OrcaSlicer) are shown one build plate at a time.
+    // plateState keeps every build item of the loaded file while only one plate is in the scene.
+    let plateState = null;
+    const platePill = container.querySelector(`#${containerId}-plate-pill`);
+    const plateSelectEl = container.querySelector(`#${containerId}-plate-select`);
+
+    const setDims = (size) => {
+      const dimsEl = container.querySelector(`#${containerId}-dims`);
+      if (!dimsEl || !size || !(size.x > 0 || size.y > 0 || size.z > 0)) return;
+      const dimsText = dimsEl.querySelector('.dims-text');
+      if (dimsText) {
+        const fmt = (n) => (Math.round(n * 10) / 10).toFixed(1);
+        dimsText.innerText = `${fmt(size.x)} × ${fmt(size.y)} × ${fmt(size.z)} mm`;
+      }
+      dimsEl.style.display = 'inline-flex';
+    };
+
+    // Scale a (Y-up) 3MF display object to the viewer's normalised size and rest it on the grid.
+    // Bounds are measured on the vertices (precise): build items are often rotated, and the
+    // loose box of a rotated part would leave it floating above or sunk into the grid.
+    const fit3MF = (object) => {
+      const box = new THREE.Box3().setFromObject(object, true);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+
+      const maxDim = Math.max(size.x, size.y, size.z, 1);
+      const scale = 60 / maxDim;
+      object.scale.set(scale, scale, scale);
+
+      object.position.x = -center.x * scale;
+      object.position.y = (-center.y * scale) + (size.y * scale) / 2;
+      object.position.z = -center.z * scale;
+    };
+
+    // Collect the build items of one plate (or 'all') into a fresh display group. Build items
+    // keep the world positions Bambu Studio gave them, where plate N sits next to plate 1, so
+    // each plate is re-centred on its own.
+    const buildPlateView = (plateValue) => {
+      const group = new THREE.Group();
+      group.rotation.x = -Math.PI / 2; // 3MF is Z-up
+      plateState.items.forEach(item => {
+        if (plateValue === 'all' || item.userData.plateIndex === plateValue) group.add(item);
+      });
+      const size = new THREE.Box3().setFromObject(group, true).getSize(new THREE.Vector3());
+      plateState.rawSize = new THREE.Vector3(size.x, size.z, size.y); // back to W × D × H in mm
+      fit3MF(group);
+      return group;
+    };
+
+    const populatePlateSelect = (plates) => {
+      if (!plateSelectEl || !platePill) return;
+      plateSelectEl.innerHTML = '';
+      const addOption = (value, label) => {
+        const opt = document.createElement('option');
+        opt.value = String(value);
+        opt.textContent = label; // plate names come from the file, never inject them as HTML
+        opt.style.cssText = 'background:#181829;color:#fff';
+        plateSelectEl.appendChild(opt);
+      };
+      plates.forEach(p => addOption(p.index, p.name ? `Plate ${p.id} · ${p.name}` : `Plate ${p.id}`));
+      addOption('all', `✦ All plates (${plates.length})`);
+      plateSelectEl.value = String(plates[0].index);
+      platePill.style.display = 'inline-flex';
+    };
+
+    // Point the camera at the current target object
+    const frameCamera = () => {
+      if (!targetObject) return;
+      const finalBox = new THREE.Box3().setFromObject(targetObject);
+      finalBox.getCenter(modelCenter);
+      const finalSize = new THREE.Vector3();
+      finalBox.getSize(finalSize);
+
+      const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z, 1);
+      const fov = camera.fov * (Math.PI / 180);
+      let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+      cameraZ *= 2.2;
+      initialCameraDist = cameraZ;
+
+      camera.position.set(modelCenter.x + cameraZ * 0.65, modelCenter.y + cameraZ * 0.55, modelCenter.z + cameraZ * 0.95);
+      controls.target.copy(modelCenter);
+      controls.update();
+
+      if (viewer) viewer.targetObject = targetObject;
+    };
+
+    if (plateSelectEl) {
+      plateSelectEl.onchange = (e) => {
+        if (!plateState) return;
+        const value = e.target.value === 'all' ? 'all' : Number(e.target.value);
+        if (targetObject) scene.remove(targetObject); // meshes are reused, don't dispose them
+        targetObject = buildPlateView(value);
+        scene.add(targetObject);
+        setShadingMode(currentShadingMode);
+        setDims(plateState.rawSize);
+        frameCamera();
+      };
+    }
+
+    // Render Part(s) Function
     const renderPartSelection = async (selection) => {
       // Clean previous object
+      const disposeTree = (obj) => obj.traverse(child => {
+        if (child.isMesh) {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) child.material.dispose();
+        }
+      });
       if (targetObject) {
         scene.remove(targetObject);
-        targetObject.traverse(child => {
-          if (child.isMesh) {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) child.material.dispose();
-          }
-        });
+        disposeTree(targetObject);
         targetObject = null;
       }
+      if (plateState) {
+        // Build items of the plates that were not on screen
+        plateState.items.forEach(disposeTree);
+        plateState = null;
+      }
+      if (platePill) platePill.style.display = 'none';
 
       const dimsEl = container.querySelector(`#${containerId}-dims`);
       const footerEl = container.parentElement.querySelector('.detail-stage-footer');
@@ -801,20 +908,16 @@ const Viewer = {
           const loaded = await loadGeometryPromise(singleUrl, singleType, new THREE.Color(currentColorHex).getHex());
           
           if (loaded.is3MF) {
-            const box = new THREE.Box3().setFromObject(loaded.object);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-            const center = new THREE.Vector3();
-            box.getCenter(center);
-
-            const maxDim = Math.max(size.x, size.y, size.z, 1);
-            const scale = 60 / maxDim;
-            loaded.object.scale.set(scale, scale, scale);
-
-            loaded.object.position.x = -center.x * scale;
-            loaded.object.position.y = (-center.y * scale) + (size.y * scale) / 2;
-            loaded.object.position.z = -center.z * scale;
-            targetObject = loaded.object;
+            const plates = Viewer.platesOf(loaded.object);
+            if (plates.length > 1) {
+              plateState = { items: loaded.object.children.slice(), plates };
+              populatePlateSelect(plates);
+              targetObject = buildPlateView(plates[0].index);
+              loaded.rawSize = plateState.rawSize;
+            } else {
+              fit3MF(loaded.object);
+              targetObject = loaded.object;
+            }
           } else {
             const box = new THREE.Box3().setFromObject(loaded.object);
             const size = new THREE.Vector3();
@@ -829,16 +932,7 @@ const Viewer = {
           scene.add(targetObject);
 
           // Update Dimensions
-          if (dimsEl && (loaded.rawSize.x > 0 || loaded.rawSize.y > 0 || loaded.rawSize.z > 0)) {
-            const dimsText = dimsEl.querySelector('.dims-text');
-            if (dimsText) {
-              const dx = (Math.round(loaded.rawSize.x * 10) / 10).toFixed(1);
-              const dy = (Math.round(loaded.rawSize.y * 10) / 10).toFixed(1);
-              const dz = (Math.round(loaded.rawSize.z * 10) / 10).toFixed(1);
-              dimsText.innerText = `${dx} × ${dy} × ${dz} mm`;
-            }
-            dimsEl.style.display = 'inline-flex';
-          }
+          setDims(loaded.rawSize);
 
           if (footerEl && singleFile) {
             footerEl.innerHTML = `
@@ -855,24 +949,7 @@ const Viewer = {
         setShadingMode(currentShadingMode);
 
         // Auto-frame camera
-        if (targetObject) {
-          const finalBox = new THREE.Box3().setFromObject(targetObject);
-          finalBox.getCenter(modelCenter);
-          const finalSize = new THREE.Vector3();
-          finalBox.getSize(finalSize);
-
-          const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z, 1);
-          const fov = camera.fov * (Math.PI / 180);
-          let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-          cameraZ *= 2.2;
-          initialCameraDist = cameraZ;
-
-          camera.position.set(modelCenter.x + cameraZ * 0.65, modelCenter.y + cameraZ * 0.55, modelCenter.z + cameraZ * 0.95);
-          controls.target.copy(modelCenter);
-          controls.update();
-
-          if (viewer) viewer.targetObject = targetObject;
-        }
+        frameCamera();
         setStatus(null);
       } catch (err) {
         console.error('Part loading error:', err);
@@ -924,6 +1001,44 @@ const Viewer = {
 
     this.activeViewers.push(viewer);
     return { ...viewer, scene, camera, targetObject };
+  },
+
+  // Non-empty build plates of a loaded 3MF (Bambu Studio / OrcaSlicer projects), each with its
+  // index in the loader's plate list. Empty for files that don't describe plates.
+  platesOf(object) {
+    const plates = (object && object.userData && object.userData.plates) || [];
+    return plates
+      .map((plate, index) => ({ id: plate.id, name: plate.name, items: plate.items, index }))
+      .filter(plate => plate.items.length > 0);
+  },
+
+  // Prepare the meshes of a loaded 3MF for smooth shading. smoothGeometryNormals() walks the
+  // position buffer three vertices at a time, which only works on non-indexed geometry, while
+  // the 3MF loader produces indexed meshes (smoothing them as-is gives black, faceted faces).
+  // Build items are clones sharing one geometry, so each geometry is converted only once.
+  prepare3MFGeometry(object, smoothFn) {
+    const SMOOTH_LIMIT = 250000; // same vertex budget smoothGeometryNormals() works with
+    const converted = new Map();
+    object.traverse(child => {
+      if (!child.isMesh || !child.geometry) return;
+      let geometry = converted.get(child.geometry);
+      if (!geometry) {
+        const source = child.geometry;
+        if (source.index && source.index.count > SMOOTH_LIMIT) {
+          geometry = source;
+          geometry.computeVertexNormals();
+        } else {
+          geometry = source.index ? source.toNonIndexed() : source;
+          if (smoothFn) smoothFn(geometry); else geometry.computeVertexNormals();
+        }
+        converted.set(source, geometry);
+      }
+      child.geometry = geometry;
+      if (child.material) {
+        child.material.flatShading = false;
+        child.material.needsUpdate = true;
+      }
+    });
   },
 
   async takeSnapshot(modelId, renderer, scene, camera) {
@@ -1000,7 +1115,15 @@ const Viewer = {
         let modelCenterY = 0;
 
         if (is3MF) {
-          const box = new THREE.Box3().setFromObject(object);
+          // Thumbnail shows the first build plate of multi-plate projects, turned Z-up -> Y-up.
+          const plates = Viewer.platesOf(object);
+          const display = new THREE.Group();
+          display.rotation.x = -Math.PI / 2;
+          object.children.slice().forEach(child => {
+            if (plates.length < 2 || child.userData.plateIndex === plates[0].index) display.add(child);
+          });
+
+          const box = new THREE.Box3().setFromObject(display);
           const size = new THREE.Vector3();
           box.getSize(size);
           const center = new THREE.Vector3();
@@ -1008,14 +1131,14 @@ const Viewer = {
           
           const maxDim = Math.max(size.x, size.y, size.z);
           const scale = 60 / maxDim;
-          object.scale.set(scale, scale, scale);
+          display.scale.set(scale, scale, scale);
           
-          object.position.x = -center.x * scale;
-          object.position.y = (-center.y * scale) + (size.y * scale) / 2;
-          object.position.z = -center.z * scale;
+          display.position.x = -center.x * scale;
+          display.position.y = (-center.y * scale) + (size.y * scale) / 2;
+          display.position.z = -center.z * scale;
           
           modelCenterY = (size.y * scale) / 2;
-          scene.add(object);
+          scene.add(display);
         } else {
           const geometry = object;
           if (!geometry.attributes.normal || geometry.attributes.normal.count === 0) geometry.computeVertexNormals();

@@ -57,6 +57,12 @@ router.get('/:id/stream', (req, res, next) => {
           '.jpg': 'image/jpeg',
           '.jpeg': 'image/jpeg',
           '.webp': 'image/webp',
+          '.gif': 'image/gif',
+          '.mp4': 'video/mp4',
+          '.m4v': 'video/mp4',
+          '.webm': 'video/webm',
+          '.mov': 'video/quicktime',
+          '.scad': 'text/plain',
           '.pdf': 'application/pdf',
           '.txt': 'text/plain',
           '.md': 'text/markdown'

@@ -16,7 +16,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const ALLOWED_EXTENSIONS = ['.stl', '.gcode', '.bgcode', '.3mf', '.obj', '.step', '.stp', '.f3d', '.scad', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.txt', '.md', '.zip'];
+const ALLOWED_EXTENSIONS = ['.stl', '.gcode', '.bgcode', '.3mf', '.obj', '.step', '.stp', '.f3d', '.scad', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.txt', '.md', '.zip', '.mp4', '.webm', '.mov', '.m4v'];
 
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -41,7 +41,8 @@ const getFileType = (filename) => {
     '.stl': 'stl', '.gcode': 'gcode', '.bgcode': 'gcode', '.3mf': '3mf', '.obj': 'obj',
     '.step': 'step', '.stp': 'step', '.f3d': 'f3d', '.scad': 'scad', '.zip': 'zip',
     '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.gif': 'image', '.webp': 'image',
-    '.pdf': 'document', '.txt': 'document', '.md': 'document'
+    '.pdf': 'document', '.txt': 'document', '.md': 'document',
+    '.mp4': 'video', '.webm': 'video', '.mov': 'video', '.m4v': 'video'
   };
   return typeMap[ext] || 'other';
 };

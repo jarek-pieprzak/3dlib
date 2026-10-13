@@ -281,8 +281,10 @@ const Viewer = {
     const grid = new THREE.GridHelper(200, 30, 0x252545, 0x1a1a35);
     scene.add(grid);
 
+    const escapeText = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
     // Multi-part assembly setup
-    const modelFiles = (meta?.modelFiles || []).filter(f => f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step');
+    const modelFiles = (meta?.modelFiles || []).filter(f => ['stl', '3mf', 'step', 'obj'].includes(f.file_type));
     // "All parts" loads every file into one scene; project folders can hold hundreds of parts
     const MAX_ALL_PARTS = 40;
     const canShowAllParts = modelFiles.length > 1 && modelFiles.length <= MAX_ALL_PARTS;
@@ -305,7 +307,7 @@ const Viewer = {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
               <select id="${containerId}-part-select" style="background:transparent;border:none;color:var(--text-primary);font-size:0.75rem;font-weight:600;cursor:pointer;outline:none;padding-right:2px">
                 ${canShowAllParts ? `<option value="all" ${activePartVal === 'all' ? 'selected' : ''} style="background:#181829;color:#fff">✦ All Parts on Build Plate (${modelFiles.length})</option>` : ''}
-                ${modelFiles.map(f => `<option value="${f.id}" ${String(f.id) === activePartVal ? 'selected' : ''} style="background:#181829;color:#fff">${f.original_name || f.filename}</option>`).join('')}
+                ${modelFiles.map(f => `<option value="${f.id}" ${String(f.id) === activePartVal ? 'selected' : ''} style="background:#181829;color:#fff">${escapeText(f.original_name || f.filename)}</option>`).join('')}
               </select>
             </div>
           ` : ''}
@@ -619,6 +621,30 @@ const Viewer = {
       if (type === 'step' || /\.(step|stp)(\?|$)/i.test(url)) {
         return Viewer.loadStepGeometry(url, colorHex, setStatus)
           .then(({ object, rawSize }) => ({ object, rawSize, is3MF: false }));
+      }
+      if (type === 'obj' || /\.obj(\?|$)/i.test(url)) {
+        return new Promise((resolve, reject) => {
+          if (!THREE.OBJLoader) return reject(new Error('OBJ loader not found'));
+          new THREE.OBJLoader().load(url, (group) => {
+            const material = new THREE.MeshPhongMaterial({ color: colorHex, specular: 0x333355, shininess: 35, flatShading: false, side: THREE.DoubleSide });
+            let meshes = 0;
+            group.traverse((child) => {
+              if (!child.isMesh) return;
+              meshes++;
+              child.material = material;
+              if (!child.geometry.attributes.normal) child.geometry.computeVertexNormals();
+            });
+            if (!meshes) return reject(new Error('No displayable geometry in this OBJ file'));
+            // OBJ files are normally Y-up already, the viewer world is Y-up too
+            const rawSize = new THREE.Vector3();
+            const box = new THREE.Box3().setFromObject(group);
+            box.getSize(rawSize);
+            group.position.sub(box.getCenter(new THREE.Vector3()));
+            const object = new THREE.Group();
+            object.add(group);
+            resolve({ object, rawSize, is3MF: false });
+          }, undefined, reject);
+        });
       }
       return new Promise((resolve, reject) => {
         const is3D3MF = type === '3mf' || url.toLowerCase().includes('.3mf');

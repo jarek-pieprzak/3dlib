@@ -14,6 +14,42 @@ const UI = {
   // Files of a project folder keep their path relative to it ("Gantry adapters/Creality/mount.stl").
   // Show them as a collapsible folder tree (top level open, bigger subfolders collapsed);
   // models without subfolders stay a flat list.
+  // How a file can be shown in the model page's preview area (null = info only)
+  previewKind(f) {
+    const t = f && f.file_type;
+    if (['stl', '3mf', 'step', 'obj'].includes(t)) return '3d';
+    if (t === 'gcode' || t === 'bgcode') return 'gcode';
+    if (t === 'image') return 'image';
+    if (t === 'video') return 'video';
+    if (t === 'document') return /\.pdf$/i.test(f.filename || f.original_name || '') ? 'pdf' : 'text';
+    if (t === 'scad') return 'text';
+    return null;
+  },
+
+  // README / README.md / README.txt in the project folder itself (not in a subfolder)
+  readmeFile(model) {
+    const found = (model.files || []).filter(f => /^readme(\.(md|markdown|txt))?$/i.test(String(f.original_name || '')));
+    return found.find(f => /\.(md|markdown)$/i.test(f.original_name)) || found[0] || null;
+  },
+
+  // What the preview area opens with: the chosen 3D preview, else the first 3D file, else the
+  // chosen cover / first image, G-code, video or document
+  defaultPreviewFile(model) {
+    const readme = this.readmeFile(model);
+    const files = (model.files || []).filter(f => this.previewKind(f) && f !== readme);
+    const chosen = files.find(f => f.id === model.preview_file_id);
+    const order = ['3d', 'image', 'gcode', 'video', 'pdf', 'text'];
+    if (chosen && this.previewKind(chosen) === '3d') return chosen;
+    const first3d = files.find(f => this.previewKind(f) === '3d');
+    if (first3d) return first3d;
+    if (chosen) return chosen;
+    for (const kind of order) {
+      const f = files.find(x => this.previewKind(x) === kind);
+      if (f) return f;
+    }
+    return null;
+  },
+
   fileTree(files, renderFile) {
     const nameOf = (f) => String(f.original_name || f.filename || '');
     if (!files.some(f => nameOf(f).includes('/'))) return files.map(f => renderFile(f, nameOf(f))).join('');
@@ -102,10 +138,13 @@ const UI = {
       '3mf': '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>',
       step: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11.5 2.1-4.8 1.4c-.6.2-1 .6-1.1 1.2l-.7 4.2c-.1.5.1 1 .5 1.3l3.2 2.7c.4.3.9.4 1.4.2l4.8-1.4c.6-.2 1-.6 1.1-1.2l.7-4.2c.1-.5-.1-1-.5-1.3L12.9 2.3c-.4-.3-.9-.4-1.4-.2Z"></path><path d="M6 15v4a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-4"></path><path d="m12 11 4 3"></path><path d="m12 11-4 3"></path><path d="M12 11v6"></path></svg>',
       f3d: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><path d="M3.27 6.96L12 12.01l8.73-5.05"></path><path d="M12 22.08V12"></path></svg>',
-      obj: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>'
+      obj: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>',
+      video: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2"></rect><polygon points="22 7 17 11 17 13 22 17 22 7"></polygon></svg>',
+      document: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>'
     };
-    const icon = icons[type] || `<span style="font-size:.65rem">${type.toUpperCase().substring(0,3)}</span>`;
-    return `<div class="file-icon ${type}">${icon}</div>`;
+    const label = String(type || '').replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 4) || '?';
+    const icon = icons[type] || `<span style="font-size:.6rem;font-weight:700">${label}</span>`;
+    return `<div class="file-icon ${String(type).replace(/[^a-z0-9]/gi, '')}">${icon}</div>`;
   },
 
   // dashboard stats 
@@ -545,18 +584,20 @@ const UI = {
       ? `<a href="${this.escapeHtml(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer" class="badge badge-category" style="background:var(--bg-tertiary);color:var(--accent-cyan);text-decoration:none;border:1px solid var(--border)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Source</a>`
       : '';
 
-    // Find first STL or 3MF file for 3D preview
-    const stlFile = (model.files || []).find(f => f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step');
+    // A README in the project folder is shown in the description section
+    const readme = this.readmeFile(model);
+    // File shown in the preview area when the page opens (3D model, image, video, document)
+    const stlFile = this.defaultPreviewFile(model);
     let viewerHtml;
 
     if (stlFile) {
       viewerHtml = `
       <div class="glass-panel detail-viewer-panel" style="overflow:visible">
         <div class="panel-header">
-          <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>3D Studio</div>
+          <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">3D Studio</span></div>
         </div>
         <div class="panel-body no-pad">
-          <div class="viewer-container" id="stl-viewer-${model.id}" data-stl-url="${stlFile.url || '/uploads/'+stlFile.filename}" data-fallback-thumbnail="${model.thumbnail_url || ''}">
+          <div class="viewer-container" id="stl-viewer-${model.id}" data-stl-url="${this.escapeHtml(stlFile.url || '/uploads/'+stlFile.filename)}" data-fallback-thumbnail="${model.thumbnail_url || ''}">
             <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading 3D preview...</div>
           </div>
           <div class="detail-viewer-hint" style="padding:12px 16px;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);background:rgba(0,0,0,0.1)">
@@ -678,7 +719,7 @@ const UI = {
                   ` : ''}
                 </div>
                 <div style="margin-top:12px; display:flex; gap:8px">
-                  <button class="btn btn-ghost btn-sm" style="color:var(--accent-cyan);border:1px solid rgba(0,212,255,0.4);" onclick="App.previewStl(${model.id}, '${f.url || '/uploads/'+f.filename}', 'gcode')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Preview G-Code</button>
+                  <button class="btn btn-ghost btn-sm" style="color:var(--accent-cyan);border:1px solid rgba(0,212,255,0.4);" onclick="App.previewFile(${model.id}, ${f.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Preview G-Code</button>
                   ${hasPrinters ? `<button class="btn btn-primary btn-sm" style="flex:1" onclick="App.sendToPrinter(${f.id})">Send to Printer</button>` : ''}
                   <a href="/api/files/${f.id}/download/${encodeURIComponent(f.filename)}" class="btn btn-secondary btn-sm" download>Download</a>
                 </div>
@@ -693,7 +734,7 @@ const UI = {
     const renderFileCard = (f, displayName = f.original_name) => {
       let metaHtml = '';
       const isPreview = Boolean(f.is_preview || f.id === model.preview_file_id);
-      const is3D = f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step';
+      const is3D = ['stl', '3mf', 'step', 'obj'].includes(f.file_type);
       const isImage = f.file_type === 'image';
       const isGcode = f.file_type === 'gcode' || f.file_type === 'bgcode';
       const canBePreview = is3D || isImage;
@@ -742,18 +783,21 @@ const UI = {
       }
 
       const hasBottomBar = (canEdit && !isPreview && canBePreview) || is3D;
-      // 3D and G-code rows open in the viewer when clicked anywhere on the row
-      const canOpen = is3D || isGcode;
+      // Rows of files the preview area can show open there when clicked anywhere on the row;
+      // other files are listed for information only
+      const canOpen = Boolean(this.previewKind(f)) || f === readme;
       const openAttrs = canOpen
-        ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in 3D Studio" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
-        : ` data-file-id="${f.id}"`;
+        ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in preview" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
+        : ` data-file-id="${f.id}" title="No preview for this file type"`;
+      const ext = (String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '';
+      const iconType = ['other', 'zip', 'f3d', 'scad'].includes(f.file_type) ? (ext.toLowerCase() || f.file_type) : f.file_type;
 
       return `
-      <div class="file-item-card${canOpen ? ' is-openable' : ''}"${openAttrs} style="padding:10px 14px;border-bottom:1px solid var(--border);transition:background var(--transition)">
+      <div class="file-item-card${canOpen ? ' is-openable' : ' is-info'}"${openAttrs} style="padding:10px 14px;border-bottom:1px solid var(--border);transition:background var(--transition)">
         <!-- Top Row: Icon, File Details, Quick Action Buttons -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
-            ${this.fileTypeIcon(f.file_type)}
+            ${this.fileTypeIcon(iconType)}
             <div style="min-width:0;flex:1">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <span class="file-name" style="font-weight:600;font-size:0.85rem;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%" title="${this.escapeHtml(f.original_name)}">${this.escapeHtml(displayName)}</span>
@@ -786,31 +830,11 @@ const UI = {
         </div>` : ''}
       </div>`;
     };
-    const filesHtml = this.fileTree((model.files || []).filter(f => f.file_type !== 'document'), renderFileCard);
-
-    const docsHtml = (model.files || []).filter(f => f.file_type === 'document').map(f => {
-      return `
-      <div class="file-item">
-        <div class="file-type-icon" style="background:rgba(255,165,0,0.2);color:#ffa500;width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.7rem">DOC</div>
-        <div class="file-info">
-          <div class="file-name">${f.original_name}</div>
-          <div class="file-meta" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
-            <span>${this.formatSize(f.file_size)}</span>
-            <span>·</span>
-            <span>${this.formatDate(f.uploaded_at)}</span>
-            <span>·</span>
-            <span style="display:inline-flex;align-items:center;gap:3px">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-              ${f.uploader_name || 'System'}
-            </span>
-          </div>
-        </div>
-        <div class="file-actions" style="display:flex;gap:4px;align-items:center">
-          <a href="/api/files/${f.id}/download" target="_blank" class="btn btn-ghost" style="padding:6px;color:var(--accent-cyan)" title="View Document"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></a>
-          ${canEdit ? `<button class="btn btn-ghost" style="padding:6px;color:var(--error)" onclick="event.stopPropagation();App.confirmDeleteFile(${f.id},'${(f.original_name || f.filename).replace(/'/g, "\\'")}',${model.id})" title="Delete"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>` : ''}
-        </div>
-      </div>`;
-    }).join('');
+    // Files: every file of the project; Documentation: only the text documents (PDF, TXT, MD).
+    // Both keep the folder structure and open the clicked file in the preview area.
+    const filesHtml = this.fileTree(model.files || [], renderFileCard);
+    const docFiles = (model.files || []).filter(f => f.file_type === 'document');
+    const docsHtml = docFiles.length ? this.fileTree(docFiles, renderFileCard) : '';
 
     const breadcrumbs = `
       <div class="breadcrumbs">
@@ -871,9 +895,10 @@ const UI = {
       <div class="detail-layout">
         <div class="detail-main">
           ${viewerHtml}
-          ${(model.description || tags || sourceLink || model.versions?.length || model.print_tips) ? `
-          <div class="glass-panel detail-info">
-            ${model.description ? `<div class="detail-description">${this.renderMarkdown(model.description)}</div>` : ''}
+          ${(model.description || readme || tags || sourceLink || model.versions?.length || model.print_tips) ? `
+          <div class="glass-panel detail-info-panel">
+            <button type="button" class="detail-info-toggle" onclick="App.toggleInfoExpand(${model.id})" hidden></button>
+            <div class="detail-info">
             ${(tags || sourceLink) ? `<div class="detail-info-row">${tags}${sourceLink}</div>` : ''}
             ${model.print_tips ? `
             <div class="detail-info-row detail-tips">
@@ -885,6 +910,13 @@ const UI = {
               <span class="detail-info-label"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>Other versions</span>
               ${model.versions.map(v => `<a class="detail-version-chip" href="#/models/${v.id}" title="${this.formatDateShort(v.created_at)} · ${v.file_count} files">${this.escapeHtml(v.name)}</a>`).join('')}
             </div>` : ''}
+            ${model.description ? `<div class="detail-description">${this.renderMarkdown(model.description)}</div>` : ''}
+            ${readme ? `
+            <div class="detail-readme" data-readme-id="${readme.id}">
+              <span class="detail-info-label"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${this.escapeHtml(readme.original_name)}</span>
+              <div class="detail-description detail-readme-body"><span style="color:var(--text-muted)">Loading...</span></div>
+            </div>` : ''}
+            </div>
           </div>` : ''}
         </div>
 
@@ -896,11 +928,11 @@ const UI = {
                 <div style="display:flex;gap:20px;padding:16px 16px 0 16px;flex:1">
                   <div onclick="App.switchFilesTab(event, 'files')" style="font-size:0.95rem;font-weight:600;line-height:1.4;padding-bottom:12px;cursor:pointer;border-bottom:2px solid var(--accent-cyan);color:var(--text);display:inline-flex;align-items:center;gap:6px">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
-                    Files (${model.files?.filter(f => f.file_type !== 'document').length || 0})
+                    Files (${model.files?.length || 0})
                   </div>
                   ${docsHtml ? `<div onclick="App.switchFilesTab(event, 'docs')" style="font-size:0.95rem;font-weight:600;line-height:1.4;padding-bottom:12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    Documentation (${model.files?.filter(f => f.file_type === 'document').length || 0})
+                    Documentation (${docFiles.length})
                   </div>` : ''}
                 </div>
                 <div style="padding:12px 16px;display:flex;gap:8px;align-items:center">

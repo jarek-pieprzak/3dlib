@@ -946,6 +946,10 @@ async function runE2ETests() {
       put('Hero_Me/Gantry Adapters/3DFused/spacer.stl', stl);
       put('Hero_Me/Part Cooling Ducts/Standard Ducts/5015 fans/duct.stl', stl);
       put('HeroXMe/other.stl', stl);                                 // LIKE "_" wildcard guard
+      put('Hero_Me/Media/timelapse.mp4', Buffer.from('fake mp4'));   // videos are listed as "video"
+      put('Hero_Me/source.blend', Buffer.from('BLENDER'));          // unsupported: listed for information
+      put('Hero_Me/.DS_Store', Buffer.from([0]));                   // system clutter: never listed
+      put('Hero_Me/Thumbs.db', Buffer.from([0]));
 
       const scan = async () => {
         const st = await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
@@ -983,8 +987,11 @@ async function runE2ETests() {
       const hero = await byName('Hero_Me');
       assert(hero.length === 1, `Expected one "Hero_Me" project, got ${hero.length}`);
       const heroNames = await filesOf(hero[0]);
-      assert(JSON.stringify(heroNames) === JSON.stringify(['Gantry Adapters/3DFused/spacer.stl', 'Hero Me Gen7.3mf', 'Part Cooling Ducts/Standard Ducts/5015 fans/duct.stl']),
-        `Hero_Me files should keep their subfolder paths, got ${JSON.stringify(heroNames)}`);
+      assert(JSON.stringify(heroNames) === JSON.stringify(['Gantry Adapters/3DFused/spacer.stl', 'Hero Me Gen7.3mf', 'Media/timelapse.mp4', 'Part Cooling Ducts/Standard Ducts/5015 fans/duct.stl', 'source.blend']),
+        `Hero_Me files should keep their subfolder paths, list every file and skip system files, got ${JSON.stringify(heroNames)}`);
+      const heroTypes = Object.fromEntries(((await apiReq(`/api/models/${hero[0].id}`, { session: adminSession })).data.files || []).map(f => [f.original_name, f.file_type]));
+      assert(heroTypes['Media/timelapse.mp4'] === 'video' && heroTypes['source.blend'] === 'other',
+        `Expected video / other file types, got ${JSON.stringify(heroTypes)}`);
       for (const sub of ['Gantry Adapters', '3DFused', '5015 fans']) {
         assert((await byName(sub)).length === 0, `Subfolder "${sub}" must not become a model`);
       }

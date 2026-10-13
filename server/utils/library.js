@@ -10,6 +10,13 @@ const MODEL_TRIGGER_EXTENSIONS = ['.stl', '.gcode', '.bgcode', '.3mf', '.step', 
 const DOCUMENT_EXTENSIONS = ['.pdf', '.txt', '.md'];
 const SUPPORTED_EXTENSIONS = [...MODEL_TRIGGER_EXTENSIONS, ...DOCUMENT_EXTENSIONS];
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'];
+// System clutter that is never shown in a project's file list
+const IGNORED_FILE_NAMES = ['.ds_store', 'thumbs.db', 'desktop.ini', '.gitkeep'];
+function isIgnoredFile(filename) {
+  const lower = String(filename).toLowerCase();
+  return lower.startsWith('.') || lower.startsWith('~$') || IGNORED_FILE_NAMES.includes(lower);
+}
 
 function getFileType(filename) {
   const ext = path.extname(filename).toLowerCase();
@@ -23,6 +30,7 @@ function getFileType(filename) {
   if (ext === '.zip' || ext === '.7z' || ext === '.rar') return 'zip';
   if (ext === '.pdf' || ext === '.txt' || ext === '.md') return 'document';
   if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
   return 'other';
 }
 
@@ -91,7 +99,7 @@ async function collectAllFilesInModelDir(rootModelPath) {
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
         await gather(fullPath);
-      } else {
+      } else if (!isIgnoredFile(entry.name)) {
         collected.push({
           filename: entry.name,
           filePath: fullPath,
@@ -266,7 +274,8 @@ async function scanLibrary(libraryPath) {
       } catch (zipErr) {
         console.warn(`[Scanner] Could not inspect ZIP archive ${filename}:`, zipErr.message);
       }
-    } else if (SUPPORTED_EXTENSIONS.includes(ext) || IMAGE_EXTENSIONS.includes(ext)) {
+    } else if (!isIgnoredFile(filename)) {
+      // Every file of a project is listed; ones the app cannot preview show up as "other"
       let stat;
       try {
         stat = await fsPromises.stat(filePath);
@@ -553,5 +562,7 @@ module.exports = {
   MODEL_TRIGGER_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
   SUPPORTED_EXTENSIONS,
-  IMAGE_EXTENSIONS
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  isIgnoredFile
 };

@@ -2174,10 +2174,15 @@ const App = {
         ${UI.modelDetail(model, hasPrinters)}`;
       // Initialize 3D viewer using chosen 3D preview file or first stl/3mf
       const files = model.files || [];
-      const cadFiles = files.filter(f => f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step');
-      const previewCadFile = (model.preview_file_id && cadFiles.find(f => f.id === model.preview_file_id)) ||
-        cadFiles[0];
+      const cadFiles = files.filter(f => UI.previewKind(f) === '3d');
+      const firstPreview = UI.defaultPreviewFile(model);
+      const previewCadFile = firstPreview && UI.previewKind(firstPreview) === '3d' ? firstPreview : null;
 
+      this.loadReadme(model);
+      // Images, videos, documents and G-code open through the same path as a row click
+      if (firstPreview && !previewCadFile) {
+        setTimeout(() => this.previewFile(model.id, firstPreview.id, { initial: true }), 100);
+      }
       if (previewCadFile && typeof Viewer !== 'undefined') {
         const stlUrl = `${previewCadFile.url || '/uploads/'+previewCadFile.filename}?t=${Date.now()}`;
         setTimeout(async () => {
@@ -2468,45 +2473,263 @@ const App = {
     }
   },
 
-  // Show a file of the current model in the 3D Studio (clicking a row in the file list)
-  previewFile(modelId, fileId) {
+  // Show a file of the current model in the preview area (clicking a row in the file list):
+  // 3D models and G-code in the 3D Studio, images / videos / PDFs / text in their own viewer
+  previewFile(modelId, fileId, opts = {}) {
     const model = this.currentModel && this.currentModel.id === modelId ? this.currentModel : null;
     const file = model && (model.files || []).find(f => f.id === fileId);
     const container = document.getElementById(`stl-viewer-${modelId}`);
-    if (!file || !container || typeof Viewer === 'undefined') return;
+    // The README lives in the description section: its row expands that section instead
+    if (file && file === UI.readmeFile(model)) return this.toggleInfoExpand(modelId, true);
+    const kind = file && UI.previewKind(file);
+    if (!file || !kind || !container || typeof Viewer === 'undefined') return;
+    const main = container.closest('.detail-main');
+    if (main && main.classList.contains('is-info-expanded')) {
+      main.classList.remove('is-info-expanded');
+      this.updateInfoToggle();
+    }
 
-    const isGcode = file.file_type === 'gcode' || file.file_type === 'bgcode';
-    const cadFiles = (model.files || []).filter(f => f.file_type === 'stl' || f.file_type === '3mf' || f.file_type === 'step');
-    const url = `${file.url || '/uploads/' + file.filename}?t=${Date.now()}`;
-
+    const baseUrl = file.url || '/uploads/' + file.filename;
     Viewer.cleanup();
-    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading...</div>';
-    container.dataset.stlUrl = url;
-    setTimeout(() => {
-      Viewer.create(`stl-viewer-${modelId}`, url, file.file_type,
-        isGcode ? {} : { modelId, activeFileId: file.id, modelFiles: cadFiles });
-    }, 50);
+    container.dataset.previewToken = String(Date.now() + Math.random());
+    this.setPreviewHint(container, file, kind, baseUrl);
+
+    if (kind === '3d' || kind === 'gcode') {
+      const cadFiles = (model.files || []).filter(f => UI.previewKind(f) === '3d');
+      const url = `${baseUrl}?t=${Date.now()}`;
+      container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading...</div>';
+      container.dataset.stlUrl = url;
+      setTimeout(() => {
+        Viewer.create(`stl-viewer-${modelId}`, url, file.file_type,
+          kind === 'gcode' ? {} : { modelId, activeFileId: file.id, modelFiles: cadFiles });
+      }, 50);
+    } else {
+      this.renderMediaPreview(container, file, kind, baseUrl);
+    }
     this.highlightPreviewFile(file.id);
 
-    // On narrow screens the viewer sits above the list: bring the 3D Studio back into view
+    // On narrow screens the viewer sits above the list: bring the preview back into view
     const r = container.getBoundingClientRect();
-    if (r.top < 56 || r.bottom > window.innerHeight) {
+    if (!opts.initial && (r.top < 56 || r.bottom > window.innerHeight)) {
       (container.closest('.glass-panel') || container).scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   },
 
-  // Mark the row of the file that is on screen, open the folders around it and keep it
-  // visible inside the scrolling file list (without moving the page)
+  // The strip under the preview: viewer hints for 3D, file name and open / download links otherwise
+  setPreviewHint(container, file, kind, url) {
+    const hint = container.closest('.detail-viewer-panel') && container.closest('.detail-viewer-panel').querySelector('.detail-viewer-hint');
+    const title = container.closest('.detail-viewer-panel') && container.closest('.detail-viewer-panel').querySelector('.detail-viewer-title');
+    if (title) title.textContent = (kind === '3d' || kind === 'gcode') ? '3D Studio' : 'Preview';
+    if (!hint) return;
+    if (hint.dataset.defaultHtml === undefined) hint.dataset.defaultHtml = hint.innerHTML;
+    if (kind === '3d' || kind === 'gcode') {
+      hint.classList.remove('is-media');
+      hint.innerHTML = hint.dataset.defaultHtml;
+      return;
+    }
+    const labels = { image: 'Image', video: 'Video', pdf: 'PDF', text: 'Text' };
+    const tip = kind === 'image' ? '<span class="hint-tip">Scroll to zoom · drag to pan · double-click to reset</span>' : '';
+    hint.classList.add('is-media');
+    hint.innerHTML = `
+      <span class="hint-file"><span class="badge badge-category">${labels[kind]}</span><span class="hint-name">${UI.escapeHtml(file.original_name || file.filename)}</span>${tip}</span>
+      <span class="hint-actions">
+        <a href="${UI.escapeHtml(url)}" target="_blank" rel="noopener">Open in new tab</a>
+        <a href="/api/files/${file.id}/download">Download</a>
+      </span>`;
+  },
+
+  renderMediaPreview(container, file, kind, url) {
+    const token = container.dataset.previewToken;
+    const name = file.original_name || file.filename || '';
+    container.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = `media-preview media-${kind}`;
+    container.appendChild(wrap);
+    const message = (text) => {
+      wrap.innerHTML = '';
+      const el = document.createElement('div');
+      el.className = 'media-message';
+      el.textContent = text;
+      wrap.appendChild(el);
+    };
+
+    if (kind === 'image') {
+      const img = document.createElement('img');
+      img.alt = name;
+      img.draggable = false;
+      img.onerror = () => message('This image could not be loaded.');
+      img.src = url;
+      wrap.appendChild(img);
+      this.enableImageZoom(wrap, img);
+    } else if (kind === 'video') {
+      const video = document.createElement('video');
+      video.controls = true;
+      video.preload = 'metadata';
+      video.playsInline = true;
+      video.onerror = () => message('The browser cannot play this video (unsupported format or codec). Use Download to watch it.');
+      video.src = url;
+      wrap.appendChild(video);
+    } else if (kind === 'pdf') {
+      const frame = document.createElement('iframe');
+      frame.title = name;
+      frame.src = url;
+      wrap.appendChild(frame);
+    } else if (kind === 'text') {
+      const MAX_TEXT = 2 * 1024 * 1024;
+      if (file.file_size > MAX_TEXT) return message('This file is too large to preview. Use Download to open it.');
+      message('Loading...');
+      fetch(url, { credentials: 'same-origin' })
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+        .then(text => {
+          if (container.dataset.previewToken !== token) return; // another file was opened meanwhile
+          wrap.innerHTML = '';
+          const box = document.createElement('div');
+          box.className = 'media-text';
+          if (/\.md$/i.test(name)) {
+            box.innerHTML = UI.renderMarkdown(text); // escapes the source, links are protocol-checked
+          } else {
+            const pre = document.createElement('pre');
+            pre.textContent = text;
+            box.appendChild(pre);
+          }
+          wrap.appendChild(box);
+        })
+        .catch(() => { if (container.dataset.previewToken === token) message('This document could not be loaded.'); });
+    }
+  },
+
+  // Wheel zoom around the cursor, drag to pan, double-click toggles 2.5x / fit
+  enableImageZoom(wrap, img) {
+    let scale = 1, x = 0, y = 0, drag = null;
+    const apply = () => {
+      if (scale <= 1) { scale = 1; x = 0; y = 0; }
+      img.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+      wrap.classList.toggle('is-zoomed', scale > 1);
+    };
+    const zoomAt = (clientX, clientY, next) => {
+      const r = wrap.getBoundingClientRect();
+      const cx = clientX - r.left - r.width / 2, cy = clientY - r.top - r.height / 2;
+      next = Math.min(10, Math.max(1, next));
+      x = cx - (cx - x) * next / scale;
+      y = cy - (cy - y) * next / scale;
+      scale = next;
+      apply();
+    };
+    wrap.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      zoomAt(e.clientX, e.clientY, scale * (e.deltaY < 0 ? 1.2 : 1 / 1.2));
+    }, { passive: false });
+    wrap.addEventListener('dblclick', (e) => {
+      if (scale > 1) { scale = 1; apply(); } else zoomAt(e.clientX, e.clientY, 2.5);
+    });
+    wrap.addEventListener('pointerdown', (e) => {
+      if (scale <= 1 || e.button !== 0) return;
+      drag = { sx: e.clientX - x, sy: e.clientY - y };
+      wrap.setPointerCapture(e.pointerId);
+      wrap.classList.add('is-dragging');
+    });
+    wrap.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      x = e.clientX - drag.sx;
+      y = e.clientY - drag.sy;
+      apply();
+    });
+    const end = () => { drag = null; wrap.classList.remove('is-dragging'); };
+    wrap.addEventListener('pointerup', end);
+    wrap.addEventListener('pointercancel', end);
+  },
+
+  // README of the project folder: fetched once and rendered in the description section
+  loadReadme(model) {
+    const readme = UI.readmeFile(model);
+    const box = readme && document.querySelector(`.detail-readme[data-readme-id="${readme.id}"] .detail-readme-body`);
+    const info = document.querySelector('.detail-info');
+    if (info && typeof ResizeObserver !== 'undefined') {
+      if (this.infoResizeObserver) this.infoResizeObserver.disconnect();
+      this.infoResizeObserver = new ResizeObserver(() => this.updateInfoToggle());
+      this.infoResizeObserver.observe(info);
+    }
+    this.updateInfoToggle();
+    if (!box) return;
+    const name = readme.original_name || '';
+    if (readme.file_size > 1024 * 1024) { box.textContent = 'README is too large to show here. Use Download to open it.'; return; }
+    fetch(readme.url || '/uploads/' + readme.filename, { credentials: 'same-origin' })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(text => {
+        if (/\.(md|markdown)$/i.test(name) || !/\.txt$/i.test(name)) {
+          box.innerHTML = UI.renderMarkdown(text); // escapes the source, links are protocol-checked
+        } else {
+          box.innerHTML = '';
+          const pre = document.createElement('pre');
+          pre.textContent = text;
+          box.appendChild(pre);
+        }
+        this.updateInfoToggle();
+      })
+      .catch(() => { box.textContent = 'README could not be loaded.'; this.updateInfoToggle(); });
+  },
+
+  // "Expand" when the description section is cut off, "Collapse" while it is expanded
+  updateInfoToggle() {
+    const panel = document.querySelector('.detail-info-panel');
+    if (!panel) return;
+    const btn = panel.querySelector('.detail-info-toggle');
+    const info = panel.querySelector('.detail-info');
+    const expanded = panel.closest('.detail-main').classList.contains('is-info-expanded');
+    const cutOff = info.scrollHeight > info.clientHeight + 2;
+    btn.hidden = !expanded && !cutOff;
+    btn.innerHTML = expanded
+      ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Collapse'
+      : '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Expand';
+  },
+
+  // Expanded, the description section takes the whole column and the 3D preview is switched off;
+  // collapsing brings back the file that was on screen
+  toggleInfoExpand(modelId, force) {
+    const model = this.currentModel && this.currentModel.id === modelId ? this.currentModel : null;
+    const panel = document.querySelector('.detail-info-panel');
+    const main = panel && panel.closest('.detail-main');
+    if (!model || !main) return;
+    const expand = force === undefined ? !main.classList.contains('is-info-expanded') : force;
+    if (expand === main.classList.contains('is-info-expanded')) {
+      if (expand) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+    const container = document.getElementById(`stl-viewer-${modelId}`);
+    if (expand) {
+      this.fileBeforeExpand = this.previewedFileId;
+      if (typeof Viewer !== 'undefined') Viewer.cleanup();
+      if (container) { container.dataset.previewToken = ''; container.innerHTML = ''; }
+      main.classList.add('is-info-expanded');
+      const readme = UI.readmeFile(model);
+      this.highlightPreviewFile(readme ? readme.id : null);
+      this.updateInfoToggle();
+      const r = panel.getBoundingClientRect();
+      if (r.top < 56 || r.top > window.innerHeight * 0.6) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      main.classList.remove('is-info-expanded');
+      this.updateInfoToggle();
+      const back = this.fileBeforeExpand || (UI.defaultPreviewFile(model) || {}).id;
+      if (back && container) this.previewFile(modelId, back, { initial: true });
+      else this.highlightPreviewFile(null);
+    }
+  },
+
+  // Mark the rows of the file that is on screen (Files and Documentation tabs), open the folders
+  // around them and keep the visible one in view inside its scrolling list (without moving the page)
   highlightPreviewFile(fileId) {
     document.querySelectorAll('.file-item-card.is-active').forEach(el => el.classList.remove('is-active'));
+    this.previewedFileId = fileId === null || fileId === undefined ? null : Number(fileId);
     if (fileId === null || fileId === undefined) return;
-    const row = document.querySelector(`.file-item-card[data-file-id="${fileId}"]`);
-    if (!row) return;
-    row.classList.add('is-active');
-    for (let d = row.parentElement && row.parentElement.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) {
-      d.open = true;
-    }
-    const list = row.closest('.detail-files-body');
+    const rows = document.querySelectorAll(`.file-item-card[data-file-id="${Number(fileId)}"]`);
+    rows.forEach(row => {
+      row.classList.add('is-active');
+      for (let d = row.parentElement && row.parentElement.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) {
+        d.open = true;
+      }
+    });
+    const row = [...rows].find(r => r.offsetParent !== null);
+    const list = row && row.closest('.detail-files-body');
     if (list) {
       const lr = list.getBoundingClientRect();
       const rr = row.getBoundingClientRect();

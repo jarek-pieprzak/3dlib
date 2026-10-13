@@ -148,6 +148,10 @@ app.use('/js/vendor/occt', express.static(path.join(__dirname, '..', 'node_modul
   }
 }));
 
+// Files of password-protected models need the unlock cookie (server/utils/adult.js)
+const adultLock = require('./utils/adult');
+app.use('/uploads', adultLock.staticGuard('uploads', UPLOADS_DIR));
+app.use('/library-files', adultLock.staticGuard('library', LIBRARY_PATH));
 app.use('/uploads', express.static(UPLOADS_DIR));
 if (fs.existsSync(LIBRARY_PATH)) {
   app.use('/library-files', express.static(LIBRARY_PATH));

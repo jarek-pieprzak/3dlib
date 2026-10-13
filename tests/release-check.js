@@ -1010,6 +1010,69 @@ async function runE2ETests() {
       assert(missing.status === 404, `A missing library file must return 404, got ${missing.status}`);
     });
 
+    await check('Password-protected models stay in lists; with a password every opening and every file needs it', async () => {
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      fs.mkdirSync(path.join(tmpLibDir, 'Adult Test'), { recursive: true });
+      fs.writeFileSync(path.join(tmpLibDir, 'Adult Test', 'part.stl'), stl);
+      fs.writeFileSync(path.join(tmpLibDir, 'Adult Test', 'notes.txt'), 'secret notes');
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const st = await apiReq('/api/library/scan/status', { session: adminSession });
+        if (st.status === 200 && !st.data.isScanning) break;
+      }
+      const find = async () => ((await apiReq('/api/models?search=Adult%20Test', { session: adminSession })).data.models || []).filter(m => m.name === 'Adult Test');
+      const [model] = await find();
+      assert(model, 'Adult Test project was not scanned');
+
+      const mark = await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: true } });
+      assert(mark.status === 200, `bulk-update is_adult failed (${mark.status})`);
+      const listed = await find();
+      assert(listed.length === 1 && listed[0].is_adult === 1, 'A protected model must stay in the list, flagged is_adult');
+
+      // No password yet: the model still opens
+      assert((await apiReq(`/api/models/${model.id}`, { session: adminSession })).status === 200, 'Without a password an protected model must open');
+
+      const setPw = await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
+      assert(setPw.status === 200, `Setting the password failed (${setPw.status})`);
+      const sys = await apiReq('/api/settings/system', { session: adminSession });
+      assert(!('adult_password_hash' in sys.data), 'The password hash must never be sent to the client');
+
+      const locked = await apiReq(`/api/models/${model.id}`, { session: adminSession });
+      assert(locked.status === 423 && locked.data.locked === true, `Locked protected model must answer 423, got ${locked.status}`);
+      const files = (await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': 'garbage' } }));
+      assert(files.status === 423, 'A forged unlock token must not open the model');
+
+      const wrong = await apiReq(`/api/models/${model.id}/unlock`, { method: 'POST', session: adminSession, body: { password: 'nope' } });
+      assert(wrong.status === 403, `Wrong password must be refused, got ${wrong.status}`);
+      const ok = await apiReq(`/api/models/${model.id}/unlock`, { method: 'POST', session: adminSession, body: { password: 'tajne123' } });
+      assert(ok.status === 200 && ok.data.token, `Right password must unlock, got ${ok.status}`);
+      const unlockCookie = (ok.setCookie || '').split(';')[0];
+      assert(unlockCookie.startsWith('gv_adult='), 'Unlock must set the gv_adult cookie');
+
+      const open = await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': ok.data.token } });
+      assert(open.status === 200, `Unlocked protected model must open, got ${open.status}`);
+      const txt = open.data.files.find(f => f.original_name === 'notes.txt');
+
+      const get = (url, cookie) => fetch(`${baseUrl}${url}`, { headers: { Cookie: cookie } });
+      const withLock = `${adminSession.cookie}`;
+      const withUnlock = `${adminSession.cookie}; ${unlockCookie}`;
+      assert((await get(txt.url, withLock)).status === 404, 'Library file of a locked protected model must be 404 without the unlock cookie');
+      assert((await get(txt.url, withUnlock)).status === 200, 'Library file must load with the unlock cookie');
+      assert((await get(`/api/files/${txt.id}/stream`, withLock)).status === 404, 'File stream of a locked protected model must be 404');
+      assert((await get(`/api/files/${txt.id}/download?unlock=${ok.data.token}`, withLock)).status === 200, 'A slicer link with ?unlock= must download');
+      assert((await get(`/api/models/${model.id}/download`, withLock)).status === 404, 'ZIP of a locked protected model must be 404');
+
+      const other = (await apiReq('/api/models?limit=100', { session: adminSession, })).data.models.find(m => m.id !== model.id);
+      if (other) {
+        const wrongModel = await apiReq(`/api/models/${other.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': ok.data.token } });
+        assert(wrongModel.status === 200, 'An unlock token must not break opening other models');
+      }
+
+      await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: '' } });
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: false } });
+    });
+
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {
       const delRes = await apiReq(`/api/models/${createdModelId}?deleteDisk=true`, {
         method: 'DELETE',

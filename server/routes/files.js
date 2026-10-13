@@ -10,6 +10,7 @@ const { heavyLimiter } = require('../middleware/rateLimit');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement } = require('../middleware/security');
 const { getSettingBool, getZipEntryBuffer } = require('../utils/modelHelpers');
+const adultLock = require('../utils/adult');
 
 // ─── GET /api/files/:id/stream ────────────────────────────────────────────────
 router.get('/:id/stream', (req, res, next) => {
@@ -19,6 +20,8 @@ router.get('/:id/stream', (req, res, next) => {
       const id = Number(req.params.id);
       const file = get('SELECT * FROM files WHERE id=?', [id]);
       if (!file) return res.status(404).json({ error: 'File not found' });
+      // A protected model's files need its unlock token (share links carry their own access)
+      if (!shareSlug && !adultLock.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
 
       if (shareSlug) {
         const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
@@ -110,6 +113,8 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
     try {
       const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
       if (!file) return res.status(404).json({ error: 'File not found' });
+      // A protected model's files need its unlock token (share links carry their own access)
+      if (!shareSlug && !adultLock.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
 
       if (shareSlug) {
         const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
@@ -169,6 +174,8 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
       const { stlToMesh, meshTo3mf } = require('../utils/3mf');
       const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
       if (!file) return res.status(404).json({ error: 'File not found' });
+      // A protected model's files need its unlock token (share links carry their own access)
+      if (!shareSlug && !adultLock.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
 
       if (shareSlug) {
         const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);

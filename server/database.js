@@ -268,6 +268,8 @@ async function initDatabase() {
     if (!mCols.some(c => c.name === 'parent_id')) db.run('ALTER TABLE models ADD COLUMN parent_id INTEGER');
     if (!mCols.some(c => c.name === 'source_url')) db.run('ALTER TABLE models ADD COLUMN source_url TEXT');
     if (!mCols.some(c => c.name === 'preview_file_id')) db.run('ALTER TABLE models ADD COLUMN preview_file_id INTEGER');
+    // Password-protected models (the password is set in Settings > Security)
+    if (!mCols.some(c => c.name === 'is_adult')) db.run('ALTER TABLE models ADD COLUMN is_adult INTEGER DEFAULT 0');
   } catch (e) { console.error('User migration failed:', e); }
 
   // Ensure metadata and library_path columns exist for existing databases

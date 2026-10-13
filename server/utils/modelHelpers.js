@@ -32,6 +32,9 @@ function getThumbUrl(thumbnail, folderPath = null) {
   }
   
   if (folderPath) {
+    // A project made of one file in the library root has that file as its path: its images
+    // sit next to it
+    try { if (fs.statSync(folderPath).isFile()) folderPath = path.dirname(folderPath); } catch (e) { /* missing: keep */ }
     const thumbPath = path.join(folderPath, thumbnail);
     if (fs.existsSync(thumbPath)) {
       return getFileUrl({ filename: thumbnail, library_path: thumbPath });

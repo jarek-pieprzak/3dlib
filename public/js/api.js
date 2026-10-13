@@ -8,6 +8,8 @@ const API = {
     }
     const headers = { 'Content-Type': 'application/json', ...options.headers };
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    // The unlock token of the password-protected model that is open
+    if (typeof App !== 'undefined' && App.adultUnlock && App.adultUnlock.token) headers['X-Adult-Unlock'] = App.adultUnlock.token;
 
     const res = await fetch(url, {
       credentials: 'same-origin',
@@ -29,6 +31,7 @@ const API = {
       const err = await res.json().catch(() => ({ error: 'Request failed' }));
       const error = new Error(err.error || 'Request failed');
       error.status = res.status;
+      error.data = err;
       error.suggested_name = err.suggested_name;
       error.suggested_names = err.suggested_names || (err.suggested_name ? [err.suggested_name] : []);
       throw error;
@@ -241,6 +244,9 @@ const API = {
   getSystemLogs() { return this.request('/api/system/logs'); },
   clearSystemLogs() { return this.request('/api/system/logs', { method: 'DELETE' }); },
   getPublicConfig() { return this.request('/api/system/public-config'); },
+  unlockModel(id, password) { return this.request(`/api/models/${id}/unlock`, { method: 'POST', body: JSON.stringify({ password }) }); },
+  lockAdult() { return this.request('/api/models/adult/lock', { method: 'POST', body: '{}' }); },
+  setAdultPassword(password) { return this.request('/api/settings/adult-password', { method: 'PUT', body: JSON.stringify({ password }) }); },
   getBlockedIps() { return this.request('/api/system/blocked-ips'); },
   unblockIp(ip) { return this.request('/api/system/unblock-ip', { method: 'POST', body: JSON.stringify({ ip }) }); },
   scanDuplicates() { return this.request('/api/system/duplicates'); },

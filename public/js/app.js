@@ -68,6 +68,9 @@ const App = {
       return;
     }
     
+    // An unlock from an earlier page load must not open a protected model without the password
+    this.adultUnlock = null;
+    API.lockAdult().catch(() => {});
     window.addEventListener('hashchange', () => this.route());
     
     // Setup keyboard shortcuts (Ctrl+K for search, Ctrl+B for sidebar toggle)
@@ -439,6 +442,12 @@ const App = {
     const params = new URLSearchParams(query || '');
 
     this.toggleMobileSidebar(false);
+
+    // Leaving an unlocked protected model locks it again: the next visit asks for the password
+    if (this.adultUnlock && path !== `/models/${this.adultUnlock.id}`) {
+      this.adultUnlock = null;
+      API.lockAdult().catch(() => {});
+    }
 
     const links = document.querySelectorAll('.sidebar-nav-item, .sidebar-sub-item');
     links.forEach(l => l.classList.remove('active'));
@@ -2200,8 +2209,84 @@ const App = {
         }, 100);
       }
     } catch (e) {
+      if (e.status === 423) return this.renderAdultLock(id, (e.data && e.data.name) || '');
       this.el.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--accent-yellow)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="empty-state-text">Model not found</div></div>';
     }
+  },
+
+  // ─── Password-protected models ───────────────────────────────────────
+  renderAdultLock(id, name) {
+    if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    this.el.innerHTML = `
+      <div class="adult-lock">
+        <form class="glass-panel adult-lock-card" onsubmit="App.submitAdultUnlock(event, ${Number(id)})">
+          <span class="badge badge-adult"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>
+          <div class="adult-lock-title">${UI.escapeHtml(name || 'Protected model')}</div>
+          <div class="adult-lock-text">This model is password protected. Enter the password to open it.</div>
+          <input type="text" class="form-input masked-input" name="unlock_code" id="adult-password-input" placeholder="Password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" required>
+          <div class="adult-lock-error" id="adult-lock-error"></div>
+          <div class="adult-lock-actions">
+            <a href="#/models" class="btn btn-ghost btn-sm">Back to library</a>
+            <button type="submit" class="btn btn-primary btn-sm">Open</button>
+          </div>
+        </form>
+      </div>`;
+    setTimeout(() => { UI.maskFallback(this.el); document.getElementById('adult-password-input')?.focus(); }, 50);
+  },
+
+  async submitAdultUnlock(e, id) {
+    e.preventDefault();
+    const input = e.target.querySelector('[name="unlock_code"]');
+    const errEl = document.getElementById('adult-lock-error');
+    try {
+      const r = await API.unlockModel(id, input.value);
+      this.adultUnlock = { id: Number(id), token: r.token };
+      this.renderModelDetail(id);
+    } catch (err) {
+      if (errEl) errEl.textContent = err.status === 403 ? 'Wrong password' : (err.message || 'Could not unlock');
+      input.value = '';
+      input.focus();
+    }
+  },
+
+  openBulkAdult() {
+    const n = this.selectedModelIds.length;
+    this.openModal('Password protection', `
+      <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:16px">${n} selected model${n === 1 ? '' : 's'}. Opening a protected model asks for the password set in Settings → Security; its thumbnail is blurred in lists.</div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="App.applyBulkAdult(false)">Remove protection</button>
+        <button type="button" class="btn btn-primary" onclick="App.applyBulkAdult(true)">Protect</button>
+      </div>`);
+  },
+
+  async applyBulkAdult(isAdult) {
+    try {
+      await API.bulkUpdateModels(this.selectedModelIds, { is_adult: isAdult });
+      this.toast(isAdult ? 'Password protection on' : 'Password protection removed');
+      this.closeModal();
+      this.clearSelection();
+      this.route();
+    } catch (e) { this.toast(e.message || 'Failed to update', 'error'); }
+  },
+
+  async saveAdultPassword(e) {
+    e.preventDefault();
+    const pw = e.target.querySelector('[name="new_unlock_code"]').value;
+    try {
+      await API.setAdultPassword(pw);
+      this.publicConfig = { ...(this.publicConfig || {}), adult_password_set: true };
+      this.toast('Password saved');
+      this.renderSettings('security');
+    } catch (err) { this.toast(err.message || 'Failed to save the password', 'error'); }
+  },
+
+  async removeAdultPassword() {
+    try {
+      await API.setAdultPassword('');
+      this.publicConfig = { ...(this.publicConfig || {}), adult_password_set: false };
+      this.toast('Password removed');
+      this.renderSettings('security');
+    } catch (err) { this.toast(err.message || 'Failed to remove the password', 'error'); }
   },
 
   async setPreviewFile(modelId, fileId) {
@@ -2871,7 +2956,7 @@ const App = {
               <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Security & Access Control</div></div>
               <div class="panel-body">${UI.securitySettingsForm(config)}</div>
             </div>`;
-          setTimeout(() => App.loadBlockedIps(), 50);
+          setTimeout(() => { App.loadBlockedIps(); UI.maskFallback(content); }, 50);
         } else if (tab === 'maintenance') {
           const logs = await API.getSystemLogs();
           content.innerHTML = `
@@ -3116,6 +3201,7 @@ const App = {
       custom_meta: customMeta,
       tags,
     };
+    if (id && e.target.querySelector('[name="is_adult"]')) data.is_adult = form.has('is_adult');
     
     if (form.has('parent_folder')) {
       data.parent_folder = form.get('parent_folder');

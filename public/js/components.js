@@ -26,6 +26,15 @@ const UI = {
     return null;
   },
 
+  // The password fields of protected models are text inputs masked with CSS, so the browser's
+  // password manager does not offer to save them. Browsers without -webkit-text-security
+  // (older Firefox) get a real password field instead.
+  maskFallback(root = document) {
+    const css = window.CSS;
+    if (css && css.supports && css.supports('-webkit-text-security', 'disc')) return;
+    root.querySelectorAll('input.masked-input').forEach(i => { i.type = 'password'; });
+  },
+
   // README / README.md / README.txt in the project folder itself (not in a subfolder)
   readmeFile(model) {
     const found = (model.files || []).filter(f => /^readme(\.(md|markdown|txt))?$/i.test(String(f.original_name || '')));
@@ -312,9 +321,10 @@ const UI = {
     const isSelected = App.selectedModelIds?.includes(m.id);
     const checkboxHtml = canManage ? `<div class="model-card-checkbox" onclick="App.toggleModelSelection(event, ${m.id})"></div>` : '';
 
-    return `<div class="model-card ${isSelected ? 'selected' : ''}" onclick="App.handleModelCardClick(event, ${m.id})" data-model-id="${m.id}">
+    const adultBadge = m.is_adult ? '<span class="badge badge-adult" title="Password protected"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : '';
+    return `<div class="model-card ${isSelected ? 'selected' : ''}${m.is_adult ? ' is-adult' : ''}" onclick="App.handleModelCardClick(event, ${m.id})" data-model-id="${m.id}">
       ${checkboxHtml}
-      <div class="model-card-thumb">${thumb}<div class="model-card-badges">${types}</div></div>
+      <div class="model-card-thumb">${thumb}<div class="model-card-badges">${adultBadge}${types}</div></div>
       <div class="model-card-body">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div class="model-card-name" style="flex:1">${m.name}</div>
@@ -336,6 +346,7 @@ const UI = {
         <div class="bulk-actions">
           <button class="btn btn-secondary btn-sm" onclick="App.openBulkTag()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Tag</button>
           <button class="btn btn-secondary btn-sm" onclick="App.openBulkMove()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Category</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.openBulkAdult()" title="Password protection" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protect</button>
           <button class="btn btn-secondary btn-sm" onclick="App.openBulkAddToCollection()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>Collection</button>
           <button class="btn btn-danger btn-sm" onclick="App.openBulkDelete()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete</button>
           <button class="btn btn-ghost btn-sm" onclick="App.clearSelection()">✕ Clear</button>
@@ -739,11 +750,14 @@ const UI = {
       const isGcode = f.file_type === 'gcode' || f.file_type === 'bgcode';
       const canBePreview = is3D || isImage;
 
+      // A slicer downloads the file itself, without the browser's cookies: an unlocked protected model
+      // passes its unlock token along
+      const unlockQ = (App.adultUnlock && App.adultUnlock.id === model.id) ? `?unlock=${App.adultUnlock.token}` : '';
       const slicerLinks = {
-        'orcaslicer': { name: 'OrcaSlicer', url: `orcaslicer://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type)}` },
-        'elegooslicer': { name: 'Elegoo Slicer', url: `elegooslicer://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type)}` },
-        'cura': { name: 'Ultimaker Cura', url: `cura://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type)}` },
-        'bambustudio': { name: 'Bambu Studio', url: `bambustudio://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/3mf/model.3mf')}` }
+        'orcaslicer': { name: 'OrcaSlicer', url: `orcaslicer://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type + unlockQ)}` },
+        'elegooslicer': { name: 'Elegoo Slicer', url: `elegooslicer://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type + unlockQ)}` },
+        'cura': { name: 'Ultimaker Cura', url: `cura://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type + unlockQ)}` },
+        'bambustudio': { name: 'Bambu Studio', url: `bambustudio://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/3mf/model.3mf' + unlockQ)}` }
       };
       const pref = App.currentUser?.preferred_slicer;
 
@@ -851,7 +865,7 @@ const UI = {
       <div class="detail-header">
         <div>
           <div class="detail-title">${this.escapeHtml(model.name)}</div>
-          <div class="detail-meta">${cat} ${printed}</div>
+          <div class="detail-meta">${model.is_adult ? '<span class="badge badge-adult"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : ''} ${cat} ${printed}</div>
         </div>
         <div class="detail-actions">
           ${(App.currentUser && model.files && model.files.length > 0) ? `
@@ -1034,6 +1048,13 @@ const UI = {
             <button type="button" class="btn btn-secondary btn-sm" onclick="App.addInlineTag()">Add</button>
           </div>
         </div>
+        ${isEdit ? `
+        <div class="form-group">
+          <label class="adult-check">
+            <input type="checkbox" name="is_adult" value="1" ${model.is_adult ? 'checked' : ''}>
+            <span><strong>Password protected</strong> — opening this model asks for the password set in Settings → Security</span>
+          </label>
+        </div>` : ''}
         ${!isEdit ? `
         <div class="form-group">
           <label class="form-label">Files (Optional)</label>
@@ -1567,6 +1588,19 @@ const UI = {
           <button type="submit" class="btn btn-primary">Save Security Settings</button>
         </div>
       </form>
+
+      <div style="margin-top:32px; border-top:1px solid var(--border); padding-top:20px">
+        <h3 style="margin-bottom:8px; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px"><svg style="color:var(--accent-purple)" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Password-protected Models</h3>
+        <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;max-width:640px">
+          Mark a model as password protected in its Edit form. Every opening of such a model asks for this password; its files cannot be opened or downloaded without it. In lists its thumbnail is blurred.
+          <div style="margin-top:6px;color:var(--text-secondary)">Status: ${App.publicConfig && App.publicConfig.adult_password_set ? '<strong style="color:var(--success, #22c55e)">password set</strong>' : '<strong style="color:var(--accent-yellow, #fbbf24)">no password</strong> — protected models open without one'}</div>
+        </div>
+        <form onsubmit="App.saveAdultPassword(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="text" name="new_unlock_code" class="form-input masked-input" placeholder="New password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" minlength="4" required style="max-width:260px">
+          <button type="submit" class="btn btn-primary btn-sm">${App.publicConfig && App.publicConfig.adult_password_set ? 'Change password' : 'Set password'}</button>
+          ${App.publicConfig && App.publicConfig.adult_password_set ? '<button type="button" class="btn btn-ghost btn-sm" onclick="App.removeAdultPassword()">Remove password</button>' : ''}
+        </form>
+      </div>
 
       <div style="margin-top:32px; border-top:1px solid var(--border); padding-top:20px">
         <h3 style="margin-bottom:12px; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-purple)"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Blocked IP Addresses</h3>

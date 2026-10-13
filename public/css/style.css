@@ -680,6 +680,19 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .detail-viewer-hint .hint-actions{display:flex;gap:14px;flex:none}
 .detail-viewer-hint .hint-actions a{color:var(--accent-cyan)}
 @media(max-width:700px){.detail-viewer-hint .hint-tip{display:none}}
+/* Password-protected models: lock badge, blurred thumbnail in lists, password screen */
+.badge-adult{display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.16);color:var(--accent-purple, #a78bfa);border:1px solid rgba(139,92,246,.4);font-weight:600}
+.model-card.is-adult .model-card-thumb>img,.model-card.is-adult .model-card-thumb>.model-card-placeholder,.model-card.is-adult .model-card-thumb>canvas{filter:blur(16px) saturate(.7);transform:scale(1.08)}
+.model-card.is-adult .model-card-thumb{overflow:hidden}
+.adult-lock{min-height:60vh;display:flex;align-items:center;justify-content:center;padding:24px 0}
+.adult-lock-card{width:100%;max-width:380px;padding:28px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.adult-lock-title{font-size:1.15rem;font-weight:700;color:var(--text-primary);word-break:break-word}
+.adult-lock-text{font-size:.85rem;color:var(--text-secondary)}
+.adult-lock-error{min-height:1.2em;font-size:.8rem;color:#fb7185}
+.adult-lock-actions{display:flex;justify-content:space-between;width:100%;gap:8px}
+.masked-input{-webkit-text-security:disc;text-security:disc;font-family:var(--font)}
+.adult-check{display:flex;align-items:flex-start;gap:10px;font-size:.85rem;color:var(--text-secondary);cursor:pointer}
+.adult-check input{margin-top:3px;accent-color:#f43f5e}
 /* Slicer menus near the bottom of the scrolling list open upwards */
 .dropdown.drop-up .dropdown-content{top:auto;bottom:100%}
 .detail-layout .glass-panel{scroll-margin-top:72px}

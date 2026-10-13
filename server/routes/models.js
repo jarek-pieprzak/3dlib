@@ -9,6 +9,32 @@ const { authenticate, requireUploader } = require('../middleware/auth');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement, safeUrl } = require('../middleware/security');
 const { getFileUrl, getThumbUrl, deleteModelInternal, getZipEntryBuffer, getSettingBool } = require('../utils/modelHelpers');
+const adultLock = require('../utils/adult');
+const bcrypt = require('bcryptjs');
+const { authLimiter } = require('../middleware/rateLimit');
+
+// ─── Password-protected models ─────────────────────────────────────────────────────────────────
+// POST /api/models/adult/lock: forget the unlock cookie (the page leaves a protected model)
+router.post('/adult/lock', (req, res) => {
+  res.clearCookie(adultLock.COOKIE, { path: '/' });
+  res.json({ success: true });
+});
+
+// POST /api/models/:id/unlock { password }: open a password-protected model once
+router.post('/:id/unlock', authLimiter, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const model = get('SELECT id, is_adult FROM models WHERE id=?', [id]);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+    if (adultLock.isLocked(model)) {
+      const password = typeof req.body.password === 'string' ? req.body.password : '';
+      if (!(await bcrypt.compare(password, adultLock.passwordHash()))) return res.status(403).json({ error: 'Wrong password' });
+    }
+    const token = adultLock.issueToken(id);
+    res.cookie(adultLock.COOKIE, token, { httpOnly: true, sameSite: 'strict', secure: req.secure, path: '/', maxAge: 6 * 3600 * 1000 });
+    res.json({ token });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unlock' }); }
+});
 
 // ─── GET /api/models ──────────────────────────────────────────────────────────
 router.get('/', (req, res) => {
@@ -171,6 +197,9 @@ router.get('/:id', (req, res) => {
     const id = Number(req.params.id);
     const model = get('SELECT m.*,c.name as category_name,c.color as category_color, u.username as uploader_name FROM models m LEFT JOIN categories c ON m.category_id=c.id LEFT JOIN users u ON m.user_id=u.id WHERE m.id=?', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
+    if (!adultLock.canOpenModel(req, model, { headerOnly: true })) {
+      return res.status(423).json({ error: 'This model is password protected', locked: true, id: model.id, name: model.name });
+    }
 
     // Enforce private collection access control
     const privateProjects = all('SELECT p.id, p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [id]);
@@ -217,6 +246,7 @@ router.get('/:id/download', (req, res) => {
     if (!model) return res.status(404).json({ error: 'Model not found' });
 
     const shareSlug = req.query.share;
+    if (!shareSlug && !adultLock.canOpenModel(req, model)) return res.status(404).json({ error: 'Model not found' });
     if (shareSlug) {
       const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
       if (!share || share.model_id !== id) {
@@ -493,7 +523,7 @@ router.put('/:id', authenticate, (req, res) => {
     const model = get('SELECT * FROM models WHERE id=?', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-    const { name, description, print_tips, source_url, category_id, tags, custom_meta } = req.body;
+    const { name, description, print_tips, source_url, category_id, tags, custom_meta, is_adult } = req.body;
     
     let metaStr = model.custom_meta;
     if (custom_meta !== undefined) {
@@ -505,8 +535,9 @@ router.put('/:id', authenticate, (req, res) => {
       cleanSourceUrl = safeUrl(source_url);
     }
 
-    run("UPDATE models SET name=?,description=?,print_tips=?,source_url=?,category_id=?,custom_meta=?,updated_at=datetime('now') WHERE id=?",
-      [name||model.name, description!==undefined?description:model.description, print_tips!==undefined?print_tips:model.print_tips, cleanSourceUrl, category_id!==undefined?category_id:model.category_id, metaStr, id]);
+    run("UPDATE models SET name=?,description=?,print_tips=?,source_url=?,category_id=?,custom_meta=?,is_adult=?,updated_at=datetime('now') WHERE id=?",
+      [name||model.name, description!==undefined?description:model.description, print_tips!==undefined?print_tips:model.print_tips, cleanSourceUrl, category_id!==undefined?category_id:model.category_id, metaStr,
+       is_adult !== undefined ? (is_adult ? 1 : 0) : (model.is_adult ? 1 : 0), id]);
     if (tags !== undefined) {
       run('DELETE FROM model_tags WHERE model_id=?', [id]);
       if (tags?.length) {
@@ -562,7 +593,7 @@ router.post('/bulk-delete', authenticate, (req, res) => {
 // ─── POST /api/models/bulk-update ─────────────────────────────────────────────
 router.post('/bulk-update', authenticate, (req, res) => {
   try {
-    const { ids, category_id, tags, add_tags, remove_tags } = req.body;
+    const { ids, category_id, tags, add_tags, remove_tags, is_adult } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'IDs array required' });
     
     for (const id of ids) {
@@ -573,6 +604,9 @@ router.post('/bulk-update', authenticate, (req, res) => {
       
       if (category_id !== undefined) {
         run("UPDATE models SET category_id=?, updated_at=datetime('now') WHERE id=?", [category_id || null, id]);
+      }
+      if (is_adult !== undefined) {
+        run("UPDATE models SET is_adult=?, updated_at=datetime('now') WHERE id=?", [is_adult ? 1 : 0, id]);
       }
 
       if (add_tags && Array.isArray(add_tags)) {

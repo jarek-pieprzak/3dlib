@@ -258,12 +258,14 @@ router.get('/:id/download', authenticate, heavyLimiter, (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
+    // Password-protected models are left out of collection archives
+    const adultLock = require('../utils/adult');
     const models = all(`
-      SELECT m.id, m.name
+      SELECT m.id, m.name, m.is_adult
       FROM models m
       JOIN project_models pm ON m.id = pm.model_id
       WHERE pm.project_id = ?
-    `, [projectId]);
+    `, [projectId]).filter(m => adultLock.canOpenModel(req, m));
 
     if (!models.length) return res.status(400).json({ error: 'No models in this collection to download' });
 

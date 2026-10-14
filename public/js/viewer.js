@@ -348,6 +348,7 @@ const Viewer = {
 
         <!-- Color Palette -->
         <div style="display:flex;align-items:center;gap:4px">
+          <div class="viewer-swatch viewer-swatch-file" data-color="file" style="display:none" title="Colours from the file"></div>
           <div class="viewer-swatch active" data-color="#00ccee" style="background:#00ccee" title="Cyan"></div>
           <div class="viewer-swatch" data-color="#f97316" style="background:#f97316" title="Orange"></div>
           <div class="viewer-swatch" data-color="#10b981" style="background:#10b981" title="Green"></div>
@@ -374,7 +375,10 @@ const Viewer = {
     let initialCameraDist = 100;
     let modelCenter = new THREE.Vector3();
     let currentShadingMode = 'solid';
-    let currentColorHex = '#00ccee';
+    const DEFAULT_COLOR = '#00ccee';
+    // 'file': the colours of a BambuStudio / OrcaSlicer 3MF (see applyFileColors in 3MFLoader.js)
+    let currentColorHex = DEFAULT_COLOR;
+    let userPickedColor = false;
 
     // Wire up Auto-Rotate Toggle
     const rotateBtn = container.querySelector(`#${containerId}-btn-rotate`);
@@ -505,18 +509,41 @@ const Viewer = {
     const setModelColor = (hex) => {
       currentColorHex = hex;
       swatches.forEach(s => s.classList.toggle('active', s.dataset.color === hex));
+      const fileMode = hex === 'file';
+      // The studio lights are tinted cyan / purple: filament colours need white light
+      light1.color.set(fileMode ? 0xffffff : 0x00d4ff);
+      light2.color.set(fileMode ? 0xffffff : 0x8b5cf6);
       if (!targetObject) return;
       targetObject.traverse((child) => {
-        if (child.isMesh && child.material) {
+        if (!child.isMesh || !child.material) return;
+        if (fileMode) {
+          if (child.userData.fileColor === undefined) return; // an STL next to a coloured 3MF
+          child.material.vertexColors = Boolean(child.userData.fileVertexColors);
+          child.material.color.set(child.userData.fileColor);
+        } else {
+          child.material.vertexColors = false;
           child.material.color.set(hex);
-          child.material.needsUpdate = true;
         }
+        child.material.needsUpdate = true;
       });
     };
 
     swatches.forEach(swatch => {
-      swatch.onclick = () => setModelColor(swatch.dataset.color);
+      swatch.onclick = () => {
+        userPickedColor = swatch.dataset.color !== 'file';
+        setModelColor(swatch.dataset.color);
+      };
     });
+
+    // After a load: a 3MF with colours of its own shows them, unless a colour was picked
+    const applyColorMode = () => {
+      let hasFileColors = false;
+      if (targetObject) targetObject.traverse(c => { if (c.isMesh && c.userData.fileColor !== undefined) hasFileColors = true; });
+      const fileSwatch = container.querySelector('.viewer-bottom-dock .viewer-swatch-file');
+      if (fileSwatch) fileSwatch.style.display = hasFileColors ? '' : 'none';
+      if (hasFileColors) setModelColor(userPickedColor ? currentColorHex : 'file');
+      else if (currentColorHex === 'file') setModelColor(DEFAULT_COLOR);
+    };
 
     // Smooth Surface Normal Computation for curved CAD geometry (eliminates faceted triangle artifacts)
     const smoothGeometryNormals = (geometry, maxAngleDeg = 45) => {
@@ -934,7 +961,7 @@ const Viewer = {
           const singleUrl = singleFile ? `${singleFile.url || '/uploads/'+singleFile.filename}?t=${Date.now()}` : fileUrl;
           const singleType = singleFile ? singleFile.file_type : fileType;
 
-          const loaded = await loadGeometryPromise(singleUrl, singleType, new THREE.Color(currentColorHex).getHex());
+          const loaded = await loadGeometryPromise(singleUrl, singleType, new THREE.Color(currentColorHex === 'file' ? DEFAULT_COLOR : currentColorHex).getHex());
           
           if (loaded.is3MF) {
             const plates = Viewer.platesOf(loaded.object);
@@ -974,7 +1001,8 @@ const Viewer = {
           }
         }
 
-        // Apply active shading mode
+        // Apply the colours and the active shading mode
+        applyColorMode();
         setShadingMode(currentShadingMode);
 
         // Auto-frame camera
@@ -1175,6 +1203,10 @@ const Viewer = {
           
           modelCenterY = (size.y * scale) / 2;
           scene.add(display);
+          // Filament colours of the file need white light, the tinted studio light otherwise
+          const fileColors = Boolean(object.userData.hasFileColors);
+          light1.color.set(fileColors ? 0xffffff : 0x00d4ff);
+          light2.color.set(fileColors ? 0xffffff : 0x8b5cf6);
         } else {
           const geometry = object;
           if (!geometry.attributes.normal || geometry.attributes.normal.count === 0) geometry.computeVertexNormals();

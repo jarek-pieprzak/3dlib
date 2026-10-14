@@ -186,7 +186,8 @@
 					model: modelParts,
 					printTicket: printTicketParts,
 					texture: texturesParts,
-					plates: parsePlateConfig( zip )
+					plates: parsePlateConfig( zip ),
+					colors: parseColorConfig( zip )
 				};
 
 			}
@@ -254,6 +255,137 @@
 				}
 
 				return plates;
+
+			}
+
+			// GyroidVault: the filament a painted triangle is printed with (1-based), 0 = not painted
+			// (the object's own filament). The attribute is a hex string read from its end, each
+			// digit low bit first: 2 bits = number of split sides; a leaf then has 2 bits of state
+			// (3 = 4 more bits + 3), a split triangle 2 bits for its special side and then its
+			// split + 1 children. Triangles on a colour border are split: they get the colour that
+			// covers most of them.
+			function paintedFilament( code ) {
+
+				let pos = 0;
+				const last = code.length - 1;
+
+				const bits = ( count ) => {
+
+					let value = 0;
+
+					for ( let i = 0; i < count; i ++, pos ++ ) {
+
+						const ci = last - ( pos >> 2 );
+						const digit = ci >= 0 ? parseInt( code.charAt( ci ), 16 ) || 0 : 0;
+						value |= ( ( digit >> ( pos & 3 ) ) & 1 ) << i;
+
+					}
+
+					return value;
+
+				};
+
+				const area = [];
+				let guard = 0;
+
+				const walk = ( weight ) => {
+
+					if ( ++ guard > 4096 || ( pos >> 2 ) > last ) return;
+					const split = bits( 2 );
+
+					if ( split === 0 ) {
+
+						let state = bits( 2 );
+						if ( state === 3 ) state = 3 + bits( 4 );
+						area[ state ] = ( area[ state ] || 0 ) + weight;
+						return;
+
+					}
+
+					bits( 2 ); // special side
+
+					for ( let c = 0; c <= split; c ++ ) walk( weight / ( split + 1 ) );
+
+				};
+
+				walk( 1 );
+
+				let best = 0;
+
+				for ( let s = 1; s < area.length; s ++ ) {
+
+					if ( ( area[ s ] || 0 ) > ( area[ best ] || 0 ) ) best = s;
+
+				}
+
+				return best;
+
+			}
+
+			// GyroidVault: filament colours (Metadata/project_settings.config) and the filament of
+			// each object and part (Metadata/model_settings.config) of a BambuStudio / OrcaSlicer
+			// project. null when the file has none.
+			function parseColorConfig( zip ) {
+
+				const settings = zip && zip[ 'Metadata/project_settings.config' ];
+				if ( ! settings ) return null;
+
+				let filaments;
+
+				try {
+
+					const json = JSON.parse( THREE.LoaderUtils.decodeText( settings ) );
+					filaments = ( json.filament_colour || json.extruder_colour || [] ).filter( c => /^#[0-9a-f]{6}/i.test( c ) ).map( c => c.substring( 0, 7 ) );
+
+				} catch ( e ) {
+
+					return null;
+
+				}
+
+				if ( ! filaments.length ) return null;
+
+				const objects = {};
+				const view = zip[ 'Metadata/model_settings.config' ];
+
+				if ( view ) {
+
+					try {
+
+						const xml = new DOMParser().parseFromString( THREE.LoaderUtils.decodeText( view ), 'application/xml' );
+
+						const extruderOf = ( node ) => {
+
+							for ( const child of node.children ) {
+
+								if ( child.nodeName === 'metadata' && child.getAttribute( 'key' ) === 'extruder' ) return parseInt( child.getAttribute( 'value' ), 10 ) || 0;
+
+							}
+
+							return 0;
+
+						};
+
+						for ( const objectNode of xml.documentElement.children ) {
+
+							if ( objectNode.nodeName !== 'object' ) continue;
+							const parts = {};
+
+							for ( const partNode of objectNode.children ) {
+
+								if ( partNode.nodeName === 'part' ) parts[ partNode.getAttribute( 'id' ) ] = extruderOf( partNode );
+
+							}
+
+							objects[ objectNode.getAttribute( 'id' ) ] = { extruder: extruderOf( objectNode ), parts: parts };
+
+						}
+
+					} catch ( e ) { /* colours of the filaments only */ }
+
+				}
+
+				return { filaments: filaments, objects: objects };
 
 			}
 
@@ -468,6 +600,17 @@
 					const p2 = triangleNode.getAttribute( 'p2' );
 					const p3 = triangleNode.getAttribute( 'p3' );
 					const pid = triangleNode.getAttribute( 'pid' );
+
+					// GyroidVault: colours painted in BambuStudio / OrcaSlicer (PrusaSlicer: mmu_segmentation)
+					const paint = triangleNode.getAttribute( 'paint_color' ) || triangleNode.getAttribute( 'slic3rpe:mmu_segmentation' );
+
+					if ( paint ) {
+
+						if ( ! meshData.paintStates ) meshData.paintStates = new Uint8Array( triangleNodes.length );
+						meshData.paintStates[ i ] = paintedFilament( paint );
+
+					}
+
 					const triangleProperty = {};
 					triangleProperty[ 'v1' ] = parseInt( v1, 10 );
 					triangleProperty[ 'v2' ] = parseInt( v2, 10 );
@@ -1035,6 +1178,8 @@
 				const geometry = new THREE.BufferGeometry();
 				geometry.setIndex( new THREE.BufferAttribute( meshData[ 'triangles' ], 1 ) );
 				geometry.setAttribute( 'position', new THREE.BufferAttribute( meshData[ 'vertices' ], 3 ) );
+				// GyroidVault: painted filaments per triangle, coloured in applyFileColors()
+				if ( meshData.paintStates ) geometry.userData.paintStates = meshData.paintStates;
 				const material = new THREE.MeshPhongMaterial( {
 					color: 0xffffff,
 					flatShading: true
@@ -1317,6 +1462,8 @@
 					const modelXml = modelData[ 'xml' ];
 					applyExtensions( extensions, meshData, modelXml );
 					objects[ objectData.id ] = getBuild( meshData, objects, modelData, textureData, objectData, buildGroup );
+					// GyroidVault: the part id model_settings.config gives a filament to
+					objects[ objectData.id ].userData.partId = String( objectData.id );
 
 				} else {
 
@@ -1481,7 +1628,96 @@
 					assignPlates( group, data3mf.plates );
 				}
 
+				applyFileColors( group, data3mf.colors );
+
 				return group;
+
+			}
+
+			// GyroidVault: colour every part with its filament (part, else object, else filament 1)
+			// and painted triangles with theirs. Meshes get userData.fileColor / fileVertexColors so
+			// the viewer can switch between the file's colours and one colour of its own.
+			function applyFileColors( group, colors ) {
+
+				if ( ! colors || ! colors.filaments.length ) return;
+				const filamentColor = ( n ) => colors.filaments[ Math.min( Math.max( n, 1 ), colors.filaments.length ) - 1 ];
+
+				group.children.forEach( ( item ) => {
+
+					const objectConfig = colors.objects[ item.userData.objectId ] || { extruder: 0, parts: {} };
+
+					item.traverse( ( mesh ) => {
+
+						if ( ! mesh.isMesh || ! mesh.geometry ) return;
+
+						let partId = null;
+
+						for ( let o = mesh; o && o !== item.parent; o = o.parent ) {
+
+							if ( o.userData && o.userData.partId !== undefined ) {
+
+								partId = o.userData.partId;
+								break;
+
+							}
+
+						}
+
+						const base = objectConfig.parts[ partId ] || objectConfig.extruder || 1;
+						const paint = mesh.geometry.userData.paintStates;
+
+						if ( paint && mesh.geometry.index ) {
+
+							// One colour per triangle: unshare the vertices
+							const index = mesh.geometry.index.array;
+							const source = mesh.geometry.attributes.position.array;
+							const positions = new Float32Array( index.length * 3 );
+							const vertexColors = new Float32Array( index.length * 3 );
+							const palette = colors.filaments.map( ( c ) => new THREE.Color().setStyle( c ) );
+							const baseColor = palette[ Math.min( base, palette.length ) - 1 ];
+
+							for ( let t = 0; t < index.length / 3; t ++ ) {
+
+								const state = paint[ t ];
+								const color = state > 0 ? palette[ Math.min( state, palette.length ) - 1 ] : baseColor;
+
+								for ( let k = 0; k < 3; k ++ ) {
+
+									const v = index[ t * 3 + k ];
+									const o = ( t * 3 + k ) * 3;
+									positions[ o ] = source[ v * 3 ];
+									positions[ o + 1 ] = source[ v * 3 + 1 ];
+									positions[ o + 2 ] = source[ v * 3 + 2 ];
+									vertexColors[ o ] = color.r;
+									vertexColors[ o + 1 ] = color.g;
+									vertexColors[ o + 2 ] = color.b;
+
+								}
+
+							}
+
+							const geometry = new THREE.BufferGeometry();
+							geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+							geometry.setAttribute( 'color', new THREE.BufferAttribute( vertexColors, 3 ) );
+							mesh.geometry = geometry;
+							mesh.material = new THREE.MeshPhongMaterial( { color: 0xffffff, vertexColors: true, flatShading: true } );
+							mesh.userData.fileColor = '#ffffff';
+							mesh.userData.fileVertexColors = true;
+
+						} else {
+
+							mesh.material = new THREE.MeshPhongMaterial( { color: filamentColor( base ), flatShading: true } );
+							mesh.userData.fileColor = filamentColor( base );
+							mesh.userData.fileVertexColors = false;
+
+						}
+
+					} );
+
+				} );
+
+				group.userData.hasFileColors = true;
+				group.userData.filaments = colors.filaments.slice();
 
 			}
 

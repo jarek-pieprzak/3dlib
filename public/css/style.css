@@ -774,6 +774,8 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .viewer-swatch{width:16px;height:16px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform 0.15s ease,border-color 0.15s ease}
 .viewer-swatch:hover{transform:scale(1.25)}
 .viewer-swatch.active{border-color:#ffffff;transform:scale(1.2)}
+/* The colours of a BambuStudio / OrcaSlicer 3MF */
+.viewer-swatch-file{background:conic-gradient(#f72323,#eab308,#10b981,#00ccee,#8b5cf6,#f72323)}
 .viewer-fullscreen-active{position:fixed !important;top:0 !important;left:0 !important;width:100vw !important;height:100vh !important;z-index:99999 !important;border-radius:0 !important;margin:0 !important;background:#0d0d18 !important;overflow:hidden !important}
 .viewer-fullscreen-active .viewer-container{width:100vw !important;height:100vh !important}
 .viewer-fullscreen-active .detail-stage-footer{display:none !important}

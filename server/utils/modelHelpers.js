@@ -90,6 +90,15 @@ function deleteModelInternal(id, deleteDisk = false) {
 }
 
 /**
+ * Who may change a model, its files and its Trash: an admin, or the owner unless a viewer
+ */
+function canEditModel(user, model) {
+  if (!user || !model) return false;
+  if (user.role === 'admin') return true;
+  return user.role !== 'viewer' && model.user_id === user.id;
+}
+
+/**
  * Fetches boolean system setting by key
  */
 function getSettingBool(key, defaultValue = false) {
@@ -157,6 +166,7 @@ module.exports = {
   getFileUrl,
   getThumbUrl,
   deleteModelInternal,
+  canEditModel,
   getSettingBool,
   logEvent,
   hashFileStream

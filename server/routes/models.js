@@ -8,8 +8,10 @@ const { LIBRARY_PATH, UPLOADS_DIR } = require('../config');
 const { authenticate, requireUploader } = require('../middleware/auth');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement, safeUrl } = require('../middleware/security');
-const { getFileUrl, getThumbUrl, deleteModelInternal, getZipEntryBuffer, getSettingBool } = require('../utils/modelHelpers');
+const { getFileUrl, getThumbUrl, getZipEntryBuffer, getSettingBool, canEditModel } = require('../utils/modelHelpers');
 const adultLock = require('../utils/adult');
+const trashUtil = require('../utils/trash');
+const projectFiles = require('../utils/projectFiles');
 const bcrypt = require('bcryptjs');
 const { authLimiter } = require('../middleware/rateLimit');
 
@@ -43,14 +45,15 @@ router.get('/', (req, res) => {
     const needsFileCountSort = sort === 'files';
     const needsPrintCountSort = sort === 'prints';
     let query = `SELECT m.*, c.name as category_name, c.color as category_color, u.username as uploader_name
-      ${needsFileCountSort ? ',(SELECT COUNT(*) FROM files WHERE model_id=m.id) as file_count' : ''}
+      ${needsFileCountSort ? ',(SELECT COUNT(*) FROM files WHERE model_id=m.id AND deleted_at IS NULL) as file_count' : ''}
       ${needsPrintCountSort ? ',(SELECT COUNT(*) FROM print_history WHERE model_id=m.id) as print_count' : ''}
       FROM models m
       LEFT JOIN categories c ON m.category_id=c.id
       LEFT JOIN users u ON m.user_id=u.id`;
     
-    const conds = [], params = [];
-    
+    // Models and files in the Trash are listed only in the Trash
+    const conds = ['m.deleted_at IS NULL'], params = [];
+
     // Filter out versions in main view
     if (!project_id) {
       conds.push("m.parent_id IS NULL");
@@ -70,7 +73,7 @@ router.get('/', (req, res) => {
     if (category) { conds.push("m.category_id=?"); params.push(Number(category)); }
     if (tag) { conds.push("m.id IN (SELECT model_id FROM model_tags WHERE tag_id=?)"); params.push(Number(tag)); }
     if (format && format !== 'all') {
-      conds.push("m.id IN (SELECT DISTINCT model_id FROM files WHERE file_type=?)");
+      conds.push("m.id IN (SELECT DISTINCT model_id FROM files WHERE file_type=? AND deleted_at IS NULL)");
       params.push(format.toLowerCase());
     }
     if (user) { conds.push("m.user_id=?"); params.push(Number(user)); }
@@ -122,14 +125,14 @@ router.get('/', (req, res) => {
         projectsByModel[p.model_id].push({ id: p.id, name: p.name, visibility: p.visibility });
       });
 
-      const fileCounts = all(`SELECT model_id, COUNT(*) as file_count, GROUP_CONCAT(DISTINCT file_type) as file_types FROM files WHERE model_id IN (${placeholders}) GROUP BY model_id`, modelIds);
+      const fileCounts = all(`SELECT model_id, COUNT(*) as file_count, GROUP_CONCAT(DISTINCT file_type) as file_types FROM files WHERE model_id IN (${placeholders}) AND deleted_at IS NULL GROUP BY model_id`, modelIds);
       fileCounts.forEach(r => { fileStatsByModel[r.model_id] = r; });
 
       const printCounts = all(`SELECT model_id, COUNT(*) as print_count FROM print_history WHERE model_id IN (${placeholders}) GROUP BY model_id`, modelIds);
       printCounts.forEach(r => { printCountByModel[r.model_id] = r.print_count; });
 
       // Most-recent stl/3mf per model, in one pass (newest-first)
-      const previewCandidates = all(`SELECT id, model_id, filename, library_path, file_type, uploaded_at FROM files WHERE model_id IN (${placeholders}) AND file_type IN ('stl','3mf') ORDER BY uploaded_at DESC`, modelIds);
+      const previewCandidates = all(`SELECT id, model_id, filename, library_path, file_type, uploaded_at FROM files WHERE model_id IN (${placeholders}) AND file_type IN ('stl','3mf') AND deleted_at IS NULL ORDER BY uploaded_at DESC`, modelIds);
       previewCandidates.forEach(f => {
         if (f.file_type === 'stl' && !stlByModel[f.model_id]) stlByModel[f.model_id] = f;
         if (f.file_type === '3mf' && !mfByModel[f.model_id]) mfByModel[f.model_id] = f;
@@ -140,7 +143,7 @@ router.get('/', (req, res) => {
       const previewIds = [...new Set(rawModels.map(m => m.preview_file_id).filter(id => id != null && !previewFileById[id]))];
       if (previewIds.length) {
         const pPlaceholders = previewIds.map(() => '?').join(',');
-        const extraPreview = all(`SELECT id, filename, library_path, file_type FROM files WHERE id IN (${pPlaceholders}) AND file_type IN ('stl','3mf')`, previewIds);
+        const extraPreview = all(`SELECT id, filename, library_path, file_type FROM files WHERE id IN (${pPlaceholders}) AND file_type IN ('stl','3mf') AND deleted_at IS NULL`, previewIds);
         extraPreview.forEach(f => { previewFileById[f.id] = f; });
       }
     }
@@ -177,7 +180,7 @@ router.get('/', (req, res) => {
       };
     });
 
-    const totalSizeObj = get('SELECT SUM(file_size) as total_bytes FROM files');
+    const totalSizeObj = get('SELECT SUM(f.file_size) as total_bytes FROM files f JOIN models m ON m.id=f.model_id WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL');
     const totalStorageBytes = totalSizeObj?.total_bytes || 0;
     
     res.json({
@@ -197,6 +200,9 @@ router.get('/:id', (req, res) => {
     const id = Number(req.params.id);
     const model = get('SELECT m.*,c.name as category_name,c.color as category_color, u.username as uploader_name FROM models m LEFT JOIN categories c ON m.category_id=c.id LEFT JOIN users u ON m.user_id=u.id WHERE m.id=?', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
+    // A model in the Trash opens only from the Trash (?trash=1), for those who may restore it
+    const canEdit = canEditModel(req.user, model);
+    if (model.deleted_at && !(req.query.trash && canEdit)) return res.status(404).json({ error: 'Model not found' });
     if (!adultLock.canOpenModel(req, model, { headerOnly: true })) {
       return res.status(423).json({ error: 'This model is password protected', locked: true, id: model.id, name: model.name });
     }
@@ -214,11 +220,21 @@ router.get('/:id', (req, res) => {
       model.thumbnail_url = getThumbUrl(model.thumbnail, model.library_path);
     }
 
-    model.files = all('SELECT f.*, u.username as uploader_name FROM files f LEFT JOIN users u ON f.user_id=u.id WHERE f.model_id=? ORDER BY (CASE WHEN f.id = ? THEN 0 ELSE 1 END), f.uploaded_at DESC', [model.id, model.preview_file_id || 0]).map(f => ({
+    const allFiles = all('SELECT f.*, u.username as uploader_name FROM files f LEFT JOIN users u ON f.user_id=u.id WHERE f.model_id=? ORDER BY (CASE WHEN f.id = ? THEN 0 ELSE 1 END), f.uploaded_at DESC', [model.id, model.preview_file_id || 0]).map(f => ({
       ...f,
-      is_preview: Boolean(model.preview_file_id && f.id === model.preview_file_id),
+      is_preview: Boolean(model.preview_file_id && f.id === model.preview_file_id && !f.deleted_at),
       url: getFileUrl(f)
     }));
+    model.files = allFiles.filter(f => !f.deleted_at);
+    // Deleted files are shown in the model's Trash tab; entries of a deleted archive go with it
+    const deletedPaths = new Set(allFiles.filter(f => f.deleted_at && f.library_path).map(f => f.library_path));
+    model.trash_files = canEdit
+      ? allFiles.filter(f => f.deleted_at && !(f.library_path && f.library_path.includes('::') && deletedPaths.has(f.library_path.split('::')[0])))
+      : [];
+    model.folders = projectFiles.visibleFolders(model, allFiles);
+    const info = projectFiles.projectInfo(model);
+    model.layout = info ? (info.isFolder ? 'folder' : 'file') : 'none';
+    model.trash_retention_days = trashUtil.retentionDays();
     model.prints = all('SELECT ph.*,mat.name as material_name, u.username as printer_name FROM print_history ph LEFT JOIN materials mat ON ph.material_id=mat.id LEFT JOIN users u ON ph.user_id=u.id WHERE ph.model_id=? ORDER BY ph.printed_at DESC', [model.id]);
     model.tags = all('SELECT t.id,t.name FROM tags t JOIN model_tags mt ON mt.tag_id=t.id WHERE mt.model_id=?', [model.id]);
     model.projects = all('SELECT p.id, p.name, p.visibility FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=?', [model.id]);
@@ -228,9 +244,9 @@ router.get('/:id', (req, res) => {
     const rootId = model.parent_id || model.id;
     model.versions = all(`
       SELECT id, name, created_at, 
-      (SELECT COUNT(*) FROM files WHERE model_id = models.id) as file_count 
-      FROM models 
-      WHERE (id = ? OR parent_id = ?) AND id != ? 
+      (SELECT COUNT(*) FROM files WHERE model_id = models.id AND deleted_at IS NULL) as file_count
+      FROM models
+      WHERE (id = ? OR parent_id = ?) AND id != ? AND deleted_at IS NULL
       ORDER BY created_at DESC`, [rootId, rootId, model.id]);
 
     res.json(model);
@@ -242,7 +258,7 @@ router.get('/:id', (req, res) => {
 router.get('/:id/download', (req, res) => {
   try {
     const id = Number(req.params.id);
-    const model = get('SELECT * FROM models WHERE id=?', [id]);
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
 
     const shareSlug = req.query.share;
@@ -265,7 +281,7 @@ router.get('/:id/download', (req, res) => {
       }
     }
 
-    const files = all('SELECT * FROM files WHERE model_id=? ORDER BY uploaded_at ASC', [id]);
+    const files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at ASC', [id]);
     if (!files.length) return res.status(400).json({ error: 'No files in this model to download' });
 
     const AdmZip = require('adm-zip');
@@ -333,7 +349,7 @@ router.put('/:id/preview-file', authenticate, (req, res) => {
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
 
-    const file = get('SELECT * FROM files WHERE id=? AND model_id=?', [Number(file_id), id]);
+    const file = get('SELECT * FROM files WHERE id=? AND model_id=? AND deleted_at IS NULL', [Number(file_id), id]);
     if (!file) return res.status(404).json({ error: 'File not found on this model' });
 
     run("UPDATE models SET preview_file_id=?, updated_at=datetime('now') WHERE id=?", [file.id, id]);
@@ -524,7 +540,19 @@ router.put('/:id', authenticate, (req, res) => {
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     const { name, description, print_tips, source_url, category_id, tags, custom_meta, is_adult } = req.body;
-    
+    if (model.deleted_at) return res.status(404).json({ error: 'Model not found' });
+
+    // A new name renames the project folder (or loose file) in the library too
+    const newName = typeof name === 'string' && name.trim() ? name.trim() : model.name;
+    if (newName !== model.name) {
+      try {
+        projectFiles.renameProject(model, newName);
+      } catch (e) {
+        if (e instanceof projectFiles.FsError) return res.status(e.status).json({ error: e.message });
+        throw e;
+      }
+    }
+
     let metaStr = model.custom_meta;
     if (custom_meta !== undefined) {
       metaStr = typeof custom_meta === 'string' ? custom_meta : JSON.stringify(custom_meta);
@@ -536,7 +564,7 @@ router.put('/:id', authenticate, (req, res) => {
     }
 
     run("UPDATE models SET name=?,description=?,print_tips=?,source_url=?,category_id=?,custom_meta=?,is_adult=?,updated_at=datetime('now') WHERE id=?",
-      [name||model.name, description!==undefined?description:model.description, print_tips!==undefined?print_tips:model.print_tips, cleanSourceUrl, category_id!==undefined?category_id:model.category_id, metaStr,
+      [newName, description!==undefined?description:model.description, print_tips!==undefined?print_tips:model.print_tips, cleanSourceUrl, category_id!==undefined?category_id:model.category_id, metaStr,
        is_adult !== undefined ? (is_adult ? 1 : 0) : (model.is_adult ? 1 : 0), id]);
     if (tags !== undefined) {
       run('DELETE FROM model_tags WHERE model_id=?', [id]);
@@ -562,13 +590,12 @@ router.delete('/:id', authenticate, (req, res) => {
   try {
     if (!req.user || req.user.role === 'viewer') return res.status(403).json({ error: 'Viewer accounts cannot delete data' });
     const id = Number(req.params.id);
-    const model = get('SELECT user_id FROM models WHERE id=?', [id]);
+    const model = get('SELECT user_id FROM models WHERE id=? AND deleted_at IS NULL', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-    const deleteDisk = req.query.deleteDisk === 'true';
-    const success = deleteModelInternal(id, deleteDisk);
-    if (!success) return res.status(404).json({ error: 'Model not found' });
-    res.json({ success: true });
+    // To the Trash; purged with its files after the retention period
+    trashUtil.trashModels([id]);
+    res.json({ success: true, trashed: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to delete model' }); }
 });
 
@@ -576,17 +603,16 @@ router.delete('/:id', authenticate, (req, res) => {
 router.post('/bulk-delete', authenticate, (req, res) => {
   try {
     if (!req.user || req.user.role === 'viewer') return res.status(403).json({ error: 'Viewer accounts cannot delete data' });
-    const { ids, deleteDisk } = req.body;
+    const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'IDs array required' });
-    let count = 0;
+    const allowed = [];
     for (const id of ids) {
       const numId = Number(id);
-      const model = get('SELECT user_id FROM models WHERE id=?', [numId]);
-      if (model && (req.user.role === 'admin' || !model.user_id || model.user_id === req.user.id)) {
-        if (deleteModelInternal(numId, !!deleteDisk)) count++;
-      }
+      const model = get('SELECT user_id FROM models WHERE id=? AND deleted_at IS NULL', [numId]);
+      if (model && (req.user.role === 'admin' || !model.user_id || model.user_id === req.user.id)) allowed.push(numId);
     }
-    res.json({ success: true, count });
+    trashUtil.trashModels(allowed);
+    res.json({ success: true, count: allowed.length, trashed: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed bulk delete' }); }
 });
 

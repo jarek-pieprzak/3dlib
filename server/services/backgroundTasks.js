@@ -30,6 +30,15 @@ async function syncLibraryWithDisk() {
   }
   syncInProgress = true;
   try {
+    // Models and files that have been in the Trash longer than the retention period
+    const { purgeExpired } = require('../utils/trash');
+    const purged = purgeExpired();
+    if (purged.models || purged.files) {
+      const msg = `Trash: permanently deleted ${purged.models} model(s) and ${purged.files} file(s)`;
+      logger.info('Sync', msg);
+      logEvent('info', msg);
+    }
+
     // Only check physical files on disk; skip virtual entries inside archives (is_archive_entry = 1)
     const files = all('SELECT id, library_path, original_name FROM files WHERE library_path IS NOT NULL AND (is_archive_entry IS NULL OR is_archive_entry = 0)');
     let deletedCount = 0;

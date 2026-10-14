@@ -12,7 +12,7 @@ const { getFileUrl } = require('../utils/modelHelpers');
 // ─── GET /api/projects ────────────────────────────────────────────────────────
 router.get('/', authenticate, (req, res) => {
   try {
-    let query = 'SELECT p.*, COUNT(pm.model_id) as model_count FROM projects p LEFT JOIN project_models pm ON p.id=pm.project_id ';
+    let query = 'SELECT p.*, COUNT(m.id) as model_count FROM projects p LEFT JOIN project_models pm ON p.id=pm.project_id LEFT JOIN models m ON m.id=pm.model_id AND m.deleted_at IS NULL ';
     if (req.user.role !== 'admin') {
       query += 'WHERE p.visibility="public" OR p.user_id=? ';
     }
@@ -28,7 +28,7 @@ router.get('/', authenticate, (req, res) => {
         SELECT pm.project_id, m.thumbnail, m.name
         FROM project_models pm
         JOIN models m ON pm.model_id = m.id
-        WHERE pm.project_id IN (${placeholders})
+        WHERE pm.project_id IN (${placeholders}) AND m.deleted_at IS NULL
         ORDER BY pm.rowid DESC
       `, projectIds);
 
@@ -59,23 +59,23 @@ router.get('/:id', authenticate, (req, res) => {
     }
     project.models = all(`
       SELECT m.*, c.name as category_name, c.color as category_color,
-      (SELECT COUNT(*) FROM files WHERE model_id=m.id) as file_count,
+      (SELECT COUNT(*) FROM files WHERE model_id=m.id AND deleted_at IS NULL) as file_count,
       (SELECT COUNT(*) FROM print_history WHERE model_id=m.id) as print_count,
-      (SELECT GROUP_CONCAT(DISTINCT file_type) FROM files WHERE model_id=m.id) as file_types,
+      (SELECT GROUP_CONCAT(DISTINCT file_type) FROM files WHERE model_id=m.id AND deleted_at IS NULL) as file_types,
       COALESCE(
-        (SELECT filename FROM files WHERE id=m.preview_file_id AND file_type IN ('stl','3mf')),
-        (SELECT filename FROM files WHERE model_id=m.id AND file_type='stl' ORDER BY uploaded_at DESC LIMIT 1)
+        (SELECT filename FROM files WHERE id=m.preview_file_id AND file_type IN ('stl','3mf') AND deleted_at IS NULL),
+        (SELECT filename FROM files WHERE model_id=m.id AND file_type='stl' AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 1)
       ) as stl_file,
       COALESCE(
-        (SELECT library_path FROM files WHERE id=m.preview_file_id AND file_type IN ('stl','3mf')),
-        (SELECT library_path FROM files WHERE model_id=m.id AND file_type='stl' ORDER BY uploaded_at DESC LIMIT 1)
+        (SELECT library_path FROM files WHERE id=m.preview_file_id AND file_type IN ('stl','3mf') AND deleted_at IS NULL),
+        (SELECT library_path FROM files WHERE model_id=m.id AND file_type='stl' AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 1)
       ) as stl_library_path,
-      (SELECT filename FROM files WHERE model_id=m.id AND file_type='3mf' ORDER BY uploaded_at DESC LIMIT 1) as mf_file,
-      (SELECT library_path FROM files WHERE model_id=m.id AND file_type='3mf' ORDER BY uploaded_at DESC LIMIT 1) as mf_library_path
-      FROM models m 
-      JOIN project_models pm ON m.id=pm.model_id 
-      LEFT JOIN categories c ON m.category_id=c.id 
-      WHERE pm.project_id=?`, [project.id]);
+      (SELECT filename FROM files WHERE model_id=m.id AND file_type='3mf' AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 1) as mf_file,
+      (SELECT library_path FROM files WHERE model_id=m.id AND file_type='3mf' AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 1) as mf_library_path
+      FROM models m
+      JOIN project_models pm ON m.id=pm.model_id
+      LEFT JOIN categories c ON m.category_id=c.id
+      WHERE pm.project_id=? AND m.deleted_at IS NULL`, [project.id]);
 
     project.models = project.models.map(m => {
       let stl_url = null;
@@ -100,7 +100,7 @@ router.get('/:id', authenticate, (req, res) => {
       const stats = get(`
         SELECT COUNT(id) as total_files, SUM(file_size) as total_size, GROUP_CONCAT(DISTINCT file_type) as file_types
         FROM files
-        WHERE model_id IN (${placeholders})
+        WHERE model_id IN (${placeholders}) AND deleted_at IS NULL
       `, modelIds);
       project.total_files = stats?.total_files || 0;
       project.total_size = stats?.total_size || 0;
@@ -264,7 +264,7 @@ router.get('/:id/download', authenticate, heavyLimiter, (req, res) => {
       SELECT m.id, m.name, m.is_adult
       FROM models m
       JOIN project_models pm ON m.id = pm.model_id
-      WHERE pm.project_id = ?
+      WHERE pm.project_id = ? AND m.deleted_at IS NULL
     `, [projectId]).filter(m => adultLock.canOpenModel(req, m));
 
     if (!models.length) return res.status(400).json({ error: 'No models in this collection to download' });
@@ -272,7 +272,7 @@ router.get('/:id/download', authenticate, heavyLimiter, (req, res) => {
     const zip = new AdmZip();
 
     for (const model of models) {
-      const files = all('SELECT filename, library_path FROM files WHERE model_id=?', [model.id]);
+      const files = all('SELECT filename, library_path FROM files WHERE model_id=? AND deleted_at IS NULL', [model.id]);
       const folderName = model.name.replace(/[/\\?%*:|"<>]/g, '_');
       for (const file of files) {
         const filePath = (file.library_path && fs.existsSync(file.library_path))

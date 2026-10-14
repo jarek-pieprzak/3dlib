@@ -37,6 +37,8 @@ const projectsRoutes = require('./routes/projects');
 const browseRoutes = require('./routes/browse');
 const taxonomyRoutes = require('./routes/taxonomy');
 const settingsRoutes = require('./routes/settings');
+const projectFilesRoutes = require('./routes/projectFiles');
+const trashRoutes = require('./routes/trash');
 
 const app = express();
 
@@ -174,6 +176,8 @@ app.get('/uploads/:filename', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/models', modelsRoutes);
+app.use('/api/models', projectFilesRoutes);
+app.use('/api/trash', trashRoutes);
 app.use('/api/files', filesRoutes);
 app.post('/api/upload-slicer', uploadSlicerHandler); // Legacy / direct slicer upload hook
 app.use('/api/projects', projectsRoutes);

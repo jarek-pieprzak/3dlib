@@ -96,7 +96,8 @@ const API = {
     const qs = new URLSearchParams(Object.entries(params).filter(([,v]) => v !== '' && v != null)).toString();
     return this.request(`/api/models${qs ? '?' + qs : ''}`);
   },
-  getModel(id) { return this.request(`/api/models/${id}`); },
+  // inTrash: a model in the Trash opens only with ?trash=1
+  getModel(id, inTrash = false) { return this.request(`/api/models/${id}${inTrash ? '?trash=1' : ''}`); },
   createModel(data) {
     return this.request('/api/models', { method: 'POST', body: JSON.stringify(data) });
   },
@@ -106,15 +107,39 @@ const API = {
   updateModel(id, data) {
     return this.request(`/api/models/${id}`, { method: 'PUT', body: JSON.stringify(data) });
   },
-  deleteModel(id, deleteDisk = false) {
-    return this.request(`/api/models/${id}?deleteDisk=${deleteDisk}`, { method: 'DELETE' });
+  deleteModel(id) {
+    return this.request(`/api/models/${id}`, { method: 'DELETE' });
   },
   createVersion(id, data) {
     return this.request(`/api/models/${id}/versions`, { method: 'POST', body: JSON.stringify(data) });
   },
-  bulkDeleteModels(ids, deleteDisk = false) {
-    return this.request('/api/models/bulk-delete', { method: 'POST', body: JSON.stringify({ ids, deleteDisk }) });
+  bulkDeleteModels(ids) {
+    return this.request('/api/models/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) });
   },
+
+  // Files and folders of a project, on disk (paths relative to the project folder)
+  renameProjectEntry(modelId, path, name) {
+    return this.request(`/api/models/${modelId}/fs/rename`, { method: 'POST', body: JSON.stringify({ path, name }) });
+  },
+  moveProjectEntries(modelId, paths, target) {
+    return this.request(`/api/models/${modelId}/fs/move`, { method: 'POST', body: JSON.stringify({ paths, target }) });
+  },
+  createProjectFolder(modelId, path, name) {
+    return this.request(`/api/models/${modelId}/fs/mkdir`, { method: 'POST', body: JSON.stringify({ path, name }) });
+  },
+  deleteProjectEntries(modelId, paths) {
+    return this.request(`/api/models/${modelId}/fs/delete`, { method: 'POST', body: JSON.stringify({ paths }) });
+  },
+
+  // Trash
+  getTrash() { return this.request('/api/trash'); },
+  restoreFromTrash(modelIds = [], fileIds = []) {
+    return this.request('/api/trash/restore', { method: 'POST', body: JSON.stringify({ model_ids: modelIds, file_ids: fileIds }) });
+  },
+  purgeFromTrash(modelIds = [], fileIds = []) {
+    return this.request('/api/trash/purge', { method: 'POST', body: JSON.stringify({ model_ids: modelIds, file_ids: fileIds }) });
+  },
+  emptyTrash() { return this.request('/api/trash/empty', { method: 'POST' }); },
   bulkUpdateModels(ids, data) {
     return this.request('/api/models/bulk-update', { method: 'POST', body: JSON.stringify({ ids, ...data }) });
   },
@@ -192,8 +217,8 @@ const API = {
       body: JSON.stringify({ file_id: fileId })
     });
   },
-  deleteFile(id, deleteDisk = false) { 
-    return this.request(`/api/files/${id}?deleteDisk=${deleteDisk}`, { method: 'DELETE' }); 
+  deleteFile(id) {
+    return this.request(`/api/files/${id}`, { method: 'DELETE' });
   },
 
   sendToPrinter(id, printerId) {

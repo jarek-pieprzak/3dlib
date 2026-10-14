@@ -202,7 +202,20 @@ async function runStaticAndUiChecks() {
       ['UI.systemSettingsForm', () => UI.systemSettingsForm({ scan_zip_archives: 'true', default_view_mode: 'grid' })],
       ['UI.securitySettingsForm', () => UI.securitySettingsForm({ private_instance: 'false', open_registration: 'false' })],
       ['UI.maintenanceSettingsForm', () => UI.maintenanceSettingsForm()],
-      ['UI.pagination', () => UI.pagination(5, 2)]
+      ['UI.pagination', () => UI.pagination(5, 2)],
+      ['UI.modelDetail (folder project with Trash)', () => UI.modelDetail({
+        ...mockModel, layout: 'folder', folders: ['Parts', 'Empty'], trash_retention_days: 30,
+        files: [...mockModel.files, { id: 12, model_id: 1, filename: 'arm.stl', original_name: 'Parts/arm.stl', file_type: 'stl', file_size: 10, library_path: '/library/Voron/Parts/arm.stl', url: '/library-files/Voron/Parts/arm.stl' }],
+        trash_files: [{ id: 13, model_id: 1, filename: 'old.stl', original_name: 'Parts/old.stl', file_type: 'stl', file_size: 10, deleted_at: '2026-10-01 10:00:00', url: '/library-files/Voron/Parts/old.stl' }]
+      })],
+      ['UI.modelDetail (model in the Trash)', () => UI.modelDetail({ ...mockModel, deleted_at: '2026-10-01 10:00:00', trash_retention_days: 30 })],
+      ['UI.trashPage', () => UI.trashPage({ retention_days: 30,
+        models: [{ id: 2, name: 'Old <b>model</b>', file_count: 3, total_size: 1000, deleted_at: '2026-10-01 10:00:00', thumbnail_url: null }],
+        files: [{ id: 5, model_id: 1, model_name: 'Voron', original_name: 'Parts/old.stl', file_type: 'stl', file_size: 10, deleted_at: '2026-10-01 10:00:00' }] })],
+      ['UI.trashPage (empty)', () => UI.trashPage({ retention_days: 30, models: [], files: [] })],
+      ['UI.entryNameForm', () => UI.entryNameForm({ label: 'File name', value: 'a "b".stl', submitLabel: 'Rename' })],
+      ['UI.entryMoveForm', () => UI.entryMoveForm('arm.stl', ['', 'Parts', 'Spare'], 'Parts')],
+      ['UI.deleteEntryForm', () => UI.deleteEntryForm('Parts', true)]
     ];
 
     for (const [label, fn] of renders) {
@@ -226,6 +239,11 @@ async function runStaticAndUiChecks() {
       if (typeof App[fnName] !== 'function') {
         missingHandlers.add(`App.${fnName}`);
       }
+    }
+    // Actions of the "..." menus on file and folder rows (UI.entryMenu builds App.<action>(this))
+    const menuActions = /action:\s*'([a-zA-Z0-9_]+)'/g;
+    while ((m = menuActions.exec(compCode)) !== null) {
+      if (typeof App[m[1]] !== 'function') missingHandlers.add(`App.${m[1]}`);
     }
     assert(missingHandlers.size === 0, `Missing App handlers: ${[...missingHandlers].join(', ')}`);
   });
@@ -815,20 +833,26 @@ async function runE2ETests() {
       assert(zipModel.file_count === 2, `Expected Zip Only Model (cover.jpg + archive.zip with deep scan off) to have 2 files, got ${zipModel.file_count}`);
       assert(zipModel.thumbnail, 'Expected cover.jpg to be set as thumbnail on Zip Only Model');
 
-      // 3. Delete both models from DB ONLY (deleteDisk=false) after saveDb debounce (>1.1s) and re-scan (#74 regression check)
+      // 3. Delete both models (to the Trash) after saveDb debounce (>1.1s) and re-scan: the scan must
+      // not bring them back; restoring them brings back all their files (#74 regression check)
       await new Promise(r => setTimeout(r, 1100)); // ensure saveDb() / db.export() has run
-      await apiReq(`/api/models/${scannedModel.id}?deleteDisk=false`, { method: 'DELETE', session: adminSession });
-      await apiReq(`/api/models/${zipModel.id}?deleteDisk=false`, { method: 'DELETE', session: adminSession });
+      await apiReq(`/api/models/${scannedModel.id}`, { method: 'DELETE', session: adminSession });
+      await apiReq(`/api/models/${zipModel.id}`, { method: 'DELETE', session: adminSession });
 
       await runScanAndWait();
 
+      const hidden = await apiReq('/api/models?search=Toolbox', { session: adminSession });
+      assert(!(hidden.data.models || []).some(m => m.name === 'Toolbox'), 'A model in the Trash must stay hidden after a re-scan');
+      const restore = await apiReq('/api/trash/restore', { method: 'POST', session: adminSession, body: { model_ids: [scannedModel.id, zipModel.id] } });
+      assert(restore.status === 200, `Restoring from the Trash failed (${restore.status})`);
+
       const rescan1 = await apiReq('/api/models?search=Toolbox', { session: adminSession });
       const rescannedModel = (rescan1.data.models || []).find(m => m.name === 'Toolbox');
-      assert(rescannedModel && rescannedModel.file_count === 1, `After DB delete + re-scan, expected file_count=1, got ${rescannedModel?.file_count} (Issue #74)`);
+      assert(rescannedModel && rescannedModel.file_count === 1, `After Trash + re-scan + restore, expected file_count=1, got ${rescannedModel?.file_count} (Issue #74)`);
 
       const rescan2 = await apiReq('/api/models?search=Zip%20Only%20Model', { session: adminSession });
       const rescannedZip = (rescan2.data.models || []).find(m => m.name === 'Zip Only Model');
-      assert(rescannedZip && rescannedZip.file_count === 2, `After DB delete + re-scan, expected Zip Only Model file_count=2, got ${rescannedZip?.file_count} (Issue #74)`);
+      assert(rescannedZip && rescannedZip.file_count === 2, `After Trash + re-scan + restore, expected Zip Only Model file_count=2, got ${rescannedZip?.file_count} (Issue #74)`);
 
       const browseRes = await apiReq('/api/browse', { session: adminSession });
       assert(browseRes.status === 200 && (browseRes.data.folders || []).some(f => f.name === 'Toolbox'), 'Expected "Toolbox" in /api/browse folders');
@@ -1071,6 +1095,99 @@ async function runE2ETests() {
 
       await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: '' } });
       await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: false } });
+    });
+
+    await check('Project files: rename, move, new folder, delete to the Trash, restore, purge; renaming a project renames it on disk', async () => {
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
+      put('Workshop/base.stl', stl);
+      put('Workshop/Parts/arm.stl', stl);
+      put('Workshop/Parts/leg.stl', stl);
+      put('Workshop/notes.txt', 'notes');
+      put('Loose Gear.stl', stl);
+      put('Loose Gear.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+      const scan = async () => {
+        await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const s = await apiReq('/api/library/scan/status', { session: adminSession });
+          if (s.status === 200 && !s.data.isScanning) return;
+        }
+        throw new Error('Library scanner did not complete within 6s');
+      };
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const detail = async (id, q = '') => (await apiReq(`/api/models/${id}${q}`, { session: adminSession })).data;
+      const names = (list) => (list || []).map(f => f.original_name).sort();
+      const fsOp = (id, op, body) => apiReq(`/api/models/${id}/fs/${op}`, { method: 'POST', session: adminSession, body });
+
+      await scan();
+      const ws = await byName('Workshop');
+      assert(ws, 'Workshop project was not scanned');
+
+      // Rename a file, with name checks
+      assert((await fsOp(ws.id, 'rename', { path: 'Parts/arm.stl', name: 'arm-v2.stl' })).status === 200, 'Renaming a file failed');
+      assert(fs.existsSync(lib('Workshop/Parts/arm-v2.stl')) && !fs.existsSync(lib('Workshop/Parts/arm.stl')), 'A rename must happen on disk');
+      assert(names((await detail(ws.id)).files).includes('Parts/arm-v2.stl'), 'A renamed file must keep its database row under the new name');
+      assert((await fsOp(ws.id, 'rename', { path: 'Parts/leg.stl', name: 'bad:name.stl' })).status === 400, 'A name with ":" must be refused');
+      assert((await fsOp(ws.id, 'rename', { path: 'Parts/leg.stl', name: 'arm-v2.stl' })).status === 409, 'Renaming onto an existing file must be refused');
+      assert((await fsOp(ws.id, 'rename', { path: '../Loose Gear.stl', name: 'x.stl' })).status === 400, 'Paths outside the project must be refused');
+
+      // New folder, move, rename a folder
+      assert((await fsOp(ws.id, 'mkdir', { path: '', name: 'Spare' })).status === 200, 'Creating a folder failed');
+      assert((await detail(ws.id)).folders.includes('Spare'), 'An empty folder must be listed');
+      assert((await fsOp(ws.id, 'move', { paths: ['Parts/leg.stl'], target: 'Spare' })).status === 200, 'Moving a file failed');
+      assert(fs.existsSync(lib('Workshop/Spare/leg.stl')), 'A move must happen on disk');
+      assert((await fsOp(ws.id, 'rename', { path: 'Parts', name: 'Arms' })).status === 200, 'Renaming a folder failed');
+      assert((await fsOp(ws.id, 'move', { paths: ['Arms'], target: 'Arms' })).status === 400, 'A folder cannot move into itself');
+      let d = await detail(ws.id);
+      assert(JSON.stringify(names(d.files)) === JSON.stringify(['Arms/arm-v2.stl', 'Spare/leg.stl', 'base.stl', 'notes.txt']),
+        `Unexpected files after rename/move: ${JSON.stringify(names(d.files))}`);
+
+      // Delete a folder: its files go to the Trash and stay on disk
+      assert((await fsOp(ws.id, 'delete', { paths: ['Arms'] })).status === 200, 'Deleting a folder failed');
+      d = await detail(ws.id);
+      assert(!names(d.files).includes('Arms/arm-v2.stl') && names(d.trash_files).includes('Arms/arm-v2.stl'), 'Deleted files must move to the Trash tab');
+      assert(!d.folders.includes('Arms'), 'A folder holding only deleted files must be hidden');
+      assert(fs.existsSync(lib('Workshop/Arms/arm-v2.stl')), 'A deleted file stays on disk until it is purged');
+      assert((await byName('Workshop')).file_count === 3, 'Deleted files must not count in lists');
+      const browse = await apiReq('/api/browse?path=Workshop', { session: adminSession });
+      assert(!(browse.data.folders || []).some(f => f.name === 'Arms'), 'The folder browser must hide folders that are in the Trash');
+      const trashList = await apiReq('/api/trash', { session: adminSession });
+      const trashed = (trashList.data.files || []).find(f => f.original_name === 'Arms/arm-v2.stl');
+      assert(trashed && trashList.data.retention_days === 30, 'The Trash must list deleted files and the retention period');
+      await scan();
+      assert(names((await detail(ws.id)).trash_files).includes('Arms/arm-v2.stl'), 'A scan must not restore deleted files');
+
+      // Restore, then delete and purge for good
+      assert((await apiReq('/api/trash/restore', { method: 'POST', session: adminSession, body: { file_ids: [trashed.id] } })).status === 200, 'Restore failed');
+      assert(names((await detail(ws.id)).files).includes('Arms/arm-v2.stl'), 'A restored file must be back in Files');
+      assert((await apiReq(`/api/files/${trashed.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'Deleting a file failed');
+      assert((await apiReq('/api/trash/purge', { method: 'POST', session: adminSession, body: { file_ids: [trashed.id] } })).status === 200, 'Purge failed');
+      assert(!fs.existsSync(lib('Workshop/Arms')), 'Purging the last file of a folder must remove the empty folder');
+      assert(!names((await detail(ws.id)).trash_files).length, 'A purged file must leave the Trash');
+      assert((await fsOp(ws.id, 'mkdir', { path: '', name: 'Empty' })).status === 200 && (await fsOp(ws.id, 'delete', { paths: ['Empty'] })).status === 200
+        && !fs.existsSync(lib('Workshop/Empty')), 'An empty folder is removed right away');
+
+      // Renaming the project renames its folder; a loose file takes its same-named image along
+      const ren = await apiReq(`/api/models/${ws.id}`, { method: 'PUT', session: adminSession, body: { name: 'Workshop Renamed' } });
+      assert(ren.status === 200 && fs.existsSync(lib('Workshop Renamed/base.stl')) && !fs.existsSync(lib('Workshop')), 'Renaming a project must rename its folder');
+      const base = (await detail(ws.id)).files.find(f => f.original_name === 'base.stl');
+      assert((await fetch(`${baseUrl}${base.url}`, { headers: { Cookie: adminSession.cookie } })).status === 200, 'Files of a renamed project must still load');
+      const gear = await byName('Loose Gear');
+      assert((await apiReq(`/api/models/${gear.id}`, { method: 'PUT', session: adminSession, body: { name: 'Loose Cog' } })).status === 200, 'Renaming a loose-file project failed');
+      assert(fs.existsSync(lib('Loose Cog.stl')) && fs.existsSync(lib('Loose Cog.jpg')) && !fs.existsSync(lib('Loose Gear.jpg')), 'A loose file must be renamed with its same-named image');
+      await scan();
+      assert(await byName('Loose Cog') && !(await byName('Loose Gear')), 'A scan after a rename must not create duplicates');
+
+      // A deleted model opens only from the Trash, and its purge removes the folder
+      assert((await apiReq(`/api/models/${ws.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'Deleting a model failed');
+      assert((await apiReq(`/api/models/${ws.id}`, { session: adminSession })).status === 404, 'A deleted model must be 404 outside the Trash');
+      assert((await detail(ws.id, '?trash=1')).deleted_at, 'A deleted model must open from the Trash');
+      assert(!(await byName('Workshop Renamed')), 'A deleted model must leave the lists');
+      assert(((await apiReq('/api/trash', { session: adminSession })).data.models || []).some(m => m.id === ws.id), 'The Trash must list the deleted model');
+      assert((await apiReq('/api/trash/purge', { method: 'POST', session: adminSession, body: { model_ids: [ws.id] } })).status === 200, 'Purging a model failed');
+      assert(!fs.existsSync(lib('Workshop Renamed')), 'Purging a model must delete its folder');
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

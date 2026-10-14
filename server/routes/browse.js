@@ -7,6 +7,47 @@ const { get, all, run } = require('../database');
 const { LIBRARY_PATH } = require('../config');
 const { authenticate } = require('../middleware/auth');
 const { getThumbUrl } = require('../utils/modelHelpers');
+const trash = require('../utils/trash');
+
+// What of the library is in the Trash: deleted models (a folder or a loose file with its
+// companions) and deleted files. The browser lists the disk, so it hides these itself.
+function trashIndex() {
+  const root = path.resolve(LIBRARY_PATH);
+  const deletedModels = all('SELECT id, library_path FROM models WHERE deleted_at IS NOT NULL AND library_path IS NOT NULL')
+    .map(m => path.resolve(m.library_path));
+  const deletedFiles = new Set();
+  // Folders holding deleted files, and folders holding files that are not deleted
+  const deletedDirs = new Set();
+  const activeDirs = new Set();
+  const addDirs = (p, set) => {
+    for (let d = path.dirname(p); d.startsWith(root + path.sep) && !set.has(d); d = path.dirname(d)) set.add(d);
+  };
+  const rows = all(`SELECT f.library_path, f.deleted_at, m.deleted_at as model_deleted FROM files f JOIN models m ON m.id = f.model_id
+    WHERE f.library_path IS NOT NULL AND f.library_path NOT LIKE '%::%'`);
+  if (deletedModels.length || rows.some(r => r.deleted_at)) {
+    for (const r of rows) {
+      const p = path.resolve(r.library_path);
+      if (r.deleted_at || r.model_deleted) {
+        deletedFiles.add(p);
+        addDirs(p, deletedDirs);
+      } else {
+        addDirs(p, activeDirs);
+      }
+    }
+  }
+  const underDeletedModel = (r) => deletedModels.some(m => r === m || r.startsWith(m + path.sep));
+  return {
+    file(p) {
+      const r = path.resolve(p);
+      return deletedFiles.has(r) || underDeletedModel(r);
+    },
+    // A folder is hidden when it is a deleted model, or when everything indexed in it is deleted
+    folder(p) {
+      const r = path.resolve(p);
+      return underDeletedModel(r) || (deletedDirs.has(r) && !activeDirs.has(r));
+    }
+  };
+}
 
 // ─── POST /api/browse/move ───────────────────────────────────────────────────
 router.post('/move', authenticate, (req, res) => {
@@ -95,32 +136,29 @@ router.post('/bulk-delete', authenticate, (req, res) => {
     const { paths } = req.body;
     if (!Array.isArray(paths)) return res.status(400).json({ error: 'Missing paths' });
 
+    // Everything goes to the Trash: projects at or below a path as a whole, other indexed
+    // files one by one. A folder with nothing indexed in it is removed when it is empty.
+    let models = 0, files = 0;
     for (const source of paths) {
-      const absPath = path.join(LIBRARY_PATH, source);
-      if (!absPath.startsWith(path.resolve(LIBRARY_PATH))) {
+      const absPath = path.resolve(LIBRARY_PATH, source);
+      if (!absPath.startsWith(path.resolve(LIBRARY_PATH) + path.sep)) {
         return res.status(403).json({ error: 'Access denied' });
       }
-      
-      if (fs.existsSync(absPath)) {
-        fs.rmSync(absPath, { recursive: true, force: true });
-      }
-      
-      const likePattern = absPath + '%';
-      const matchingModels = all('SELECT DISTINCT model_id FROM files WHERE library_path LIKE ?', [likePattern]);
-      
-      run('DELETE FROM files WHERE library_path LIKE ?', [likePattern]);
-      run('DELETE FROM models WHERE library_path LIKE ?', [likePattern]);
+      const prefix = absPath + path.sep;
+      const under = (p) => p && (path.resolve(p) === absPath || path.resolve(p).startsWith(prefix));
 
-      for (const row of matchingModels) {
-        if (row.model_id) {
-          const fileCount = get('SELECT COUNT(*) as c FROM files WHERE model_id = ?', [row.model_id]).c;
-          if (fileCount === 0) {
-            run('DELETE FROM models WHERE id = ?', [row.model_id]);
-          }
-        }
+      const modelIds = all('SELECT id, library_path FROM models WHERE deleted_at IS NULL AND library_path LIKE ?', [absPath + '%'])
+        .filter(m => under(m.library_path)).map(m => m.id);
+      const fileIds = all('SELECT id, model_id, library_path FROM files WHERE deleted_at IS NULL AND library_path LIKE ?', [absPath + '%'])
+        .filter(f => under(f.library_path) && !modelIds.includes(f.model_id)).map(f => f.id);
+      models += trash.trashModels(modelIds);
+      files += trash.trashFiles(fileIds);
+
+      if (!modelIds.length && !fileIds.length) {
+        try { if (fs.statSync(absPath).isDirectory()) trash.removeEmptyTree(absPath); } catch (e) { /* gone */ }
       }
     }
-    res.json({ success: true });
+    res.json({ success: true, models, files, trashed: true });
   } catch (e) {
     console.error('[Bulk Delete] Error:', e);
     res.status(500).json({ error: 'Failed to bulk delete' });
@@ -262,13 +300,15 @@ router.get('/', authenticate, (req, res) => {
     const { parseGcodeMetadata } = require('../utils/gcode');
     const folders = [];
     const files = [];
-    
+    const inTrash = trashIndex();
+
     for (const item of items) {
       if (item.name.startsWith('.')) continue; // skip hidden files
-      
+
       if (item.isDirectory()) {
         let itemCount = 0;
         const folderFullPath = path.join(fullPath, item.name);
+        if (inTrash.folder(folderFullPath)) continue;
         try {
           itemCount = fs.readdirSync(folderFullPath).filter(f => !f.startsWith('.')).length;
         } catch(e) { /* permission error, just show 0 */ }
@@ -283,9 +323,9 @@ router.get('/', authenticate, (req, res) => {
         const fNorm = (folderFullPath + '/').replace(/\\/g, '/');
         const fWin = (folderFullPath + '\\');
         const thumbRows = all(
-          `SELECT thumbnail, library_path FROM files 
-           WHERE (library_path LIKE ? || '%' OR library_path LIKE ? || '%') 
-             AND thumbnail IS NOT NULL 
+          `SELECT thumbnail, library_path FROM files
+           WHERE (library_path LIKE ? || '%' OR library_path LIKE ? || '%')
+             AND thumbnail IS NOT NULL AND deleted_at IS NULL
            LIMIT 4`,
           [fNorm, fWin]
         );
@@ -308,6 +348,7 @@ router.get('/', authenticate, (req, res) => {
         const ext = path.extname(item.name).toLowerCase();
         if (supportedExts.includes(ext) || imageExts.includes(ext)) {
           const filePath = path.join(fullPath, item.name);
+          if (inTrash.file(filePath)) continue;
           const normFilePath = filePath.replace(/\\/g, '/');
           const stat = fs.statSync(filePath);
           const relPath = path.relative(LIBRARY_PATH, filePath).replace(/\\/g, '/');
@@ -376,16 +417,17 @@ router.get('/', authenticate, (req, res) => {
 router.get('/tree', authenticate, (req, res) => {
   try {
     const maxDepth = 4; // Keep it snappy
-    
+    const deletedModels = new Set(all('SELECT library_path FROM models WHERE deleted_at IS NOT NULL AND library_path IS NOT NULL').map(r => path.resolve(r.library_path)));
+
     function scanTree(dirPath, relPath, depth) {
       if (depth >= maxDepth) return [];
-      
+
       let entries;
       try { entries = fs.readdirSync(dirPath, { withFileTypes: true }); }
       catch(e) { return []; }
-      
+
       return entries
-        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+        .filter(e => e.isDirectory() && !e.name.startsWith('.') && !deletedModels.has(path.resolve(dirPath, e.name)))
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(entry => {
           const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
@@ -411,13 +453,14 @@ router.get('/search', authenticate, (req, res) => {
     const q = (req.query.q || '').toLowerCase();
     if (!q) return res.json({ folders: [], files: [] });
     
-    const dbThumbs = all('SELECT library_path, thumbnail FROM files WHERE thumbnail IS NOT NULL');
+    const dbThumbs = all('SELECT library_path, thumbnail FROM files WHERE thumbnail IS NOT NULL AND deleted_at IS NULL');
+    const inTrash = trashIndex();
     const thumbMap = new Map();
     for (const row of dbThumbs) thumbMap.set(row.library_path, row.thumbnail);
 
     const matchingModels = all(`
       SELECT library_path FROM models m
-      WHERE library_path IS NOT NULL AND (
+      WHERE library_path IS NOT NULL AND deleted_at IS NULL AND (
         LOWER(m.name) LIKE ?
         OR LOWER(m.description) LIKE ?
         OR m.category_id IN (SELECT id FROM categories WHERE LOWER(name) LIKE ?)
@@ -445,7 +488,8 @@ router.get('/search', authenticate, (req, res) => {
         
         const childRel = relPath ? `${relPath}/${item.name}` : item.name;
         const childFull = path.join(dir, item.name);
-        
+        if (item.isDirectory() ? inTrash.folder(childFull) : inTrash.file(childFull)) continue;
+
         if (item.isDirectory()) {
           if (item.name.toLowerCase().includes(q) || matchingModelPaths.has(childFull)) {
             let itemCount = 0;

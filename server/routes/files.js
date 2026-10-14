@@ -11,6 +11,7 @@ const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement } = require('../middleware/security');
 const { getSettingBool, getZipEntryBuffer } = require('../utils/modelHelpers');
 const adultLock = require('../utils/adult');
+const { trashFiles } = require('../utils/trash');
 
 // ─── GET /api/files/:id/stream ────────────────────────────────────────────────
 router.get('/:id/stream', (req, res, next) => {
@@ -252,24 +253,13 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
 router.delete('/:id', authenticate, (req, res) => {
   try {
     if (!req.user || req.user.role === 'viewer') return res.status(403).json({ error: 'Viewer accounts cannot delete data' });
-    const file = get('SELECT f.*, m.user_id as model_owner FROM files f JOIN models m ON f.model_id = m.id WHERE f.id=?', [Number(req.params.id)]);
+    const file = get('SELECT f.*, m.user_id as model_owner FROM files f JOIN models m ON f.model_id = m.id WHERE f.id=? AND f.deleted_at IS NULL', [Number(req.params.id)]);
     if (!file) return res.status(404).json({ error: 'File not found' });
     if (req.user.role !== 'admin' && file.model_owner && file.model_owner !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-    
-    const deleteDisk = req.query.deleteDisk === 'true';
-    
-    // Always delete from uploads dir if it exists there
-    const p = path.join(UPLOADS_DIR, file.filename); 
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-    
-    // Delete from physical library path if requested
-    if (deleteDisk && file.library_path && fs.existsSync(file.library_path)) {
-      try { fs.unlinkSync(file.library_path); } catch (err) { console.error('Failed to delete physical file:', err); }
-    }
-    
-    run('DELETE FROM files WHERE id=?', [file.id]);
-    run("UPDATE models SET updated_at=datetime('now') WHERE id=?", [file.model_id]);
-    res.json({ success: true });
+
+    // To the Trash; the file stays on disk until it is purged
+    trashFiles([file.id]);
+    res.json({ success: true, trashed: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to delete file' }); }
 });
 

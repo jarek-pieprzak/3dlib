@@ -465,8 +465,13 @@ const App = {
       document.getElementById('nav-models')?.classList.add('active');
       this.renderModels(Object.fromEntries(params));
     } else if (path.startsWith('/models/')) {
-      document.getElementById('nav-models')?.classList.add('active');
-      this.renderModelDetail(path.split('/')[2]);
+      // ?trash=1: a model in the Trash, opened from the Trash
+      const fromTrash = params.has('trash');
+      document.getElementById(fromTrash ? 'nav-trash' : 'nav-models')?.classList.add('active');
+      this.renderModelDetail(path.split('/')[2], { trash: fromTrash });
+    } else if (path === '/trash') {
+      document.getElementById('nav-trash')?.classList.add('active');
+      this.renderTrash();
     } else if (path === '/projects' || path === '/collections') {
       document.getElementById('nav-collections')?.classList.add('active');
       this.renderProjects();
@@ -968,10 +973,9 @@ const App = {
       this.toast('You must be logged in as an uploader or admin to delete models', 'error');
       return;
     }
-    const fd = new FormData(e.target);
     try {
-      await API.bulkDeleteModels(this.selectedModelIds, fd.get('delete_disk') === 'on');
-      this.toast(`Deleted ${this.selectedModelIds.length} models`);
+      await API.bulkDeleteModels(this.selectedModelIds);
+      this.toast(`${this.selectedModelIds.length} models moved to the Trash`);
       this.clearSelection();
       this.closeModal();
       this.route();
@@ -1137,7 +1141,7 @@ const App = {
     e.preventDefault();
     try {
       await API.bulkDeleteItems(this.selectedBrowsePaths);
-      this.toast(`Deleted ${this.selectedBrowsePaths.length} items`);
+      this.toast(`${this.selectedBrowsePaths.length} items moved to the Trash`);
       this.clearBrowseSelection();
       this.closeModal();
       this.renderBrowse(this.currentBrowsePath);
@@ -1538,7 +1542,9 @@ const App = {
     const role = document.getElementById('sidebar-user-role');
     const wrapper = document.getElementById('nav-login-wrapper');
     const settingsLink = document.getElementById('nav-settings');
-    
+    const trashLink = document.getElementById('nav-trash');
+    if (trashLink) trashLink.style.display = this.currentUser && this.currentUser.role !== 'viewer' ? '' : 'none';
+
     if (this.currentUser) {
       if (avatar) avatar.textContent = (this.currentUser.username || 'U').charAt(0).toUpperCase();
       if (username) username.textContent = this.currentUser.username;
@@ -2168,11 +2174,14 @@ const App = {
   },
 
   // ─── Model Detail ────────────────────────────────────────────────────
-  async renderModelDetail(id) {
+  // opts.trash: the model is in the Trash and opened from there
+  async renderModelDetail(id, opts = {}) {
     if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    this.currentModelOpts = opts;
     this.el.innerHTML = '<div style="padding:40px;text-align:center"><div class="skeleton" style="width:200px;height:30px;margin:0 auto 20px"></div><div class="skeleton" style="width:100%;height:200px"></div></div>';
     try {
-      const model = await API.getModel(id);
+      const model = await API.getModel(id, opts.trash);
+      this.trashRetentionDays = model.trash_retention_days;
       const config = await API.getSystemSettings().catch(() => ({}));
       let printers = [];
       try { if (config.printers) printers = JSON.parse(config.printers); } catch(e){}
@@ -2181,6 +2190,12 @@ const App = {
       this.currentModel = model;
       this.el.innerHTML = `
         ${UI.modelDetail(model, hasPrinters)}`;
+      this.fitFileTree(document.getElementById('tab-content-files'));
+      // Coming from the Trash page: open the model's Trash tab
+      if (this.pendingFilesTab) {
+        this.selectFilesTab(this.pendingFilesTab);
+        this.pendingFilesTab = null;
+      }
       // Initialize 3D viewer using chosen 3D preview file or first stl/3mf
       const files = model.files || [];
       const cadFiles = files.filter(f => UI.previewKind(f) === '3d');
@@ -2562,7 +2577,8 @@ const App = {
   // 3D models and G-code in the 3D Studio, images / videos / PDFs / text in their own viewer
   previewFile(modelId, fileId, opts = {}) {
     const model = this.currentModel && this.currentModel.id === modelId ? this.currentModel : null;
-    const file = model && (model.files || []).find(f => f.id === fileId);
+    const trashed = model && (model.trash_files || []).find(f => f.id === fileId);
+    const file = model && ((model.files || []).find(f => f.id === fileId) || trashed);
     const container = document.getElementById(`stl-viewer-${modelId}`);
     // The README lives in the description section: its row expands that section instead
     if (file && file === UI.readmeFile(model)) return this.toggleInfoExpand(modelId, true);
@@ -2580,7 +2596,8 @@ const App = {
     this.setPreviewHint(container, file, kind, baseUrl);
 
     if (kind === '3d' || kind === 'gcode') {
-      const cadFiles = (model.files || []).filter(f => UI.previewKind(f) === '3d');
+      // A file in the Trash is shown on its own, outside the assembly of the model's parts
+      const cadFiles = trashed ? [trashed] : (model.files || []).filter(f => UI.previewKind(f) === '3d');
       const url = `${baseUrl}?t=${Date.now()}`;
       container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading...</div>';
       container.dataset.stlUrl = url;
@@ -3087,6 +3104,12 @@ const App = {
   switchFilesTab(e, tab) {
     const container = e.target.closest('.glass-panel');
     const tabEl = e.currentTarget || e.target.closest('div[onclick]');
+    this.showFilesTab(container, tab, tabEl);
+  },
+
+  // Files / Documentation / Trash tabs of the model page
+  showFilesTab(container, tab, tabEl) {
+    if (!container) return;
     const tabs = container.querySelectorAll('.panel-header div[onclick]');
     tabs.forEach(t => {
       t.style.borderBottomColor = 'transparent';
@@ -3096,10 +3119,214 @@ const App = {
       tabEl.style.borderBottomColor = 'var(--accent-cyan)';
       tabEl.style.color = 'var(--text)';
     }
-    
-    container.querySelector('#tab-content-files').style.display = tab === 'files' ? 'block' : 'none';
-    const docsContent = container.querySelector('#tab-content-docs');
-    if(docsContent) docsContent.style.display = tab === 'docs' ? 'block' : 'none';
+    let shown = null;
+    for (const name of ['files', 'docs', 'trash']) {
+      const content = container.querySelector(`#tab-content-${name}`);
+      if (!content) continue;
+      content.style.display = name === tab ? 'block' : 'none';
+      if (name === tab) shown = content;
+    }
+    this.fitFileTree(shown);
+  },
+
+  selectFilesTab(tab) {
+    const content = document.getElementById(`tab-content-${tab}`);
+    const container = content && content.closest('.glass-panel');
+    if (!container) return;
+    const tabEl = [...container.querySelectorAll('.panel-header div[onclick]')].find(t => t.getAttribute('onclick').includes(`'${tab}'`));
+    this.showFilesTab(container, tab, tabEl);
+  },
+
+  // ── Files and folders of a project (rename / move / new folder / delete, on disk) ──
+  entryFrom(el) {
+    const row = el && el.closest('[data-entry-path]');
+    if (!row) return null;
+    return {
+      path: row.dataset.entryPath,
+      kind: row.dataset.entryKind,
+      onDisk: row.dataset.entryKind === 'folder' || row.dataset.entryDisk === '1',
+      fileId: row.dataset.fileId ? Number(row.dataset.fileId) : null
+    };
+  },
+
+  reloadModel() {
+    if (this.currentModel) this.renderModelDetail(this.currentModel.id, this.currentModelOpts || {});
+  },
+
+  renameEntry(el) {
+    const entry = this.entryFrom(el);
+    if (!entry || !this.currentModel) return;
+    this.pendingEntry = { ...entry, op: 'rename' };
+    const name = entry.path.split('/').pop();
+    this.openModal(entry.kind === 'folder' ? 'Rename Folder' : 'Rename File', UI.entryNameForm({
+      label: entry.kind === 'folder' ? 'Folder name' : 'File name',
+      value: name,
+      submitLabel: 'Rename',
+      hint: 'The file or folder is renamed in the library on disk too.'
+    }));
+    setTimeout(() => {
+      const input = document.getElementById('entry-name-input');
+      if (!input) return;
+      input.focus();
+      // Select the name without its extension
+      const dot = entry.kind === 'file' ? name.lastIndexOf('.') : -1;
+      input.setSelectionRange(0, dot > 0 ? dot : name.length);
+    }, 60);
+  },
+
+  // el: a folder row (new folder inside it) or null (in the project folder)
+  newFolder(el) {
+    if (!this.currentModel) return;
+    const parent = el ? (this.entryFrom(el) || {}).path || '' : '';
+    this.pendingEntry = { op: 'mkdir', path: parent };
+    this.openModal('New Folder', UI.entryNameForm({
+      label: 'Folder name',
+      submitLabel: 'Create',
+      hint: parent ? `Inside "${UI.escapeHtml(parent)}"` : 'In the project folder'
+    }));
+    setTimeout(() => document.getElementById('entry-name-input')?.focus(), 60);
+  },
+
+  async handleEntryNameSubmit(e) {
+    e.preventDefault();
+    const entry = this.pendingEntry;
+    const model = this.currentModel;
+    if (!entry || !model) return;
+    const name = String(new FormData(e.target).get('name') || '').trim();
+    try {
+      if (entry.op === 'mkdir') {
+        await API.createProjectFolder(model.id, entry.path, name);
+        this.toast('Folder created');
+      } else {
+        await API.renameProjectEntry(model.id, entry.path, name);
+        this.toast('Renamed');
+      }
+      this.pendingEntry = null;
+      this.closeModal();
+      this.reloadModel();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  moveEntry(el) {
+    const entry = this.entryFrom(el);
+    const model = this.currentModel;
+    if (!entry || !model) return;
+    this.pendingEntry = { ...entry, op: 'move' };
+    // A folder cannot go into itself or one of its subfolders
+    const folders = ['', ...(model.folders || [])]
+      .filter(f => entry.kind !== 'folder' || (f !== entry.path && !f.startsWith(entry.path + '/')));
+    const current = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : '';
+    this.openModal('Move', UI.entryMoveForm(entry.path.split('/').pop(), folders, current));
+  },
+
+  async handleEntryMoveSubmit(e) {
+    e.preventDefault();
+    const entry = this.pendingEntry;
+    const model = this.currentModel;
+    if (!entry || !model) return;
+    const target = String(new FormData(e.target).get('target') ?? '');
+    try {
+      await API.moveProjectEntries(model.id, [entry.path], target);
+      this.toast('Moved');
+      this.pendingEntry = null;
+      this.closeModal();
+      this.reloadModel();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  deleteEntry(el) {
+    const entry = this.entryFrom(el);
+    if (!entry || !this.currentModel) return;
+    this.pendingEntry = { ...entry, op: 'delete' };
+    this.openModal(entry.kind === 'folder' ? 'Delete Folder' : 'Delete File', UI.deleteEntryForm(entry.path.split('/').pop() || entry.path, entry.kind === 'folder'));
+  },
+
+  async handleEntryDeleteSubmit(e) {
+    e.preventDefault();
+    const entry = this.pendingEntry;
+    const model = this.currentModel;
+    if (!entry || !model) return;
+    try {
+      // Uploads outside the library and entries inside archives have no path on disk
+      if (entry.kind === 'file' && !entry.onDisk && entry.fileId) await API.deleteFile(entry.fileId);
+      else await API.deleteProjectEntries(model.id, [entry.path]);
+      this.toast('Moved to the Trash');
+      this.pendingEntry = null;
+      this.closeModal();
+      this.reloadModel();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  // ── Trash ──
+  async renderTrash() {
+    if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    if (!this.currentUser || this.currentUser.role === 'viewer') {
+      this.el.innerHTML = '<div class="empty-state"><div class="empty-state-text">Log in to see the Trash</div></div>';
+      return;
+    }
+    this.el.innerHTML = '<div style="padding:40px"><div class="skeleton" style="width:200px;height:30px;margin-bottom:20px"></div><div class="skeleton" style="width:100%;height:200px"></div></div>';
+    try {
+      const data = await API.getTrash();
+      this.trashRetentionDays = data.retention_days;
+      this.el.innerHTML = UI.trashPage(data);
+    } catch (e) {
+      this.el.innerHTML = `<div class="empty-state"><div class="empty-state-text">${UI.escapeHtml(e.message || 'Failed to load the Trash')}</div></div>`;
+    }
+  },
+
+  // After a Trash action: refresh the page it was done on
+  refreshAfterTrash(modelIds) {
+    const onModel = this.currentModel && location.hash.startsWith(`#/models/${this.currentModel.id}`);
+    if (!onModel) return this.renderTrash();
+    if (modelIds.includes(this.currentModel.id)) return null;
+    return this.reloadModel();
+  },
+
+  async restoreTrashItems(modelIds, fileIds) {
+    try {
+      await API.restoreFromTrash(modelIds, fileIds);
+      this.toast(modelIds.length ? 'Model restored' : `${fileIds.length} file${fileIds.length === 1 ? '' : 's'} restored`);
+      const onThisModel = this.currentModel && modelIds.includes(this.currentModel.id) && location.hash.startsWith(`#/models/${this.currentModel.id}`);
+      if (onThisModel) this.navigate(`/models/${this.currentModel.id}`);
+      else this.refreshAfterTrash(modelIds);
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async purgeTrashItems(modelIds, fileIds) {
+    const what = modelIds.length ? 'this model and all its files' : (fileIds.length === 1 ? 'this file' : `${fileIds.length} files`);
+    if (!confirm(`Delete ${what} from disk for good? This cannot be undone.`)) return;
+    try {
+      await API.purgeFromTrash(modelIds, fileIds);
+      this.toast('Deleted permanently');
+      const onThisModel = this.currentModel && modelIds.includes(this.currentModel.id) && location.hash.startsWith(`#/models/${this.currentModel.id}`);
+      if (onThisModel) this.navigate('/trash');
+      else this.refreshAfterTrash(modelIds);
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async confirmEmptyTrash() {
+    if (!confirm('Delete everything in the Trash from disk for good? This cannot be undone.')) return;
+    try {
+      await API.emptyTrash();
+      this.toast('Trash emptied');
+      this.renderTrash();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  openModelTrashTab() {
+    this.pendingFilesTab = 'trash';
+  },
+
+  // A file tree is rendered fully open. If it does not fit the list without scrolling, collapse
+  // every folder. Done once per tab, the first time it is visible, so manual toggles stay.
+  fitFileTree(content) {
+    if (!content || content.dataset.fitted || content.offsetParent === null) return;
+    const list = content.closest('.detail-files-body');
+    if (!list || !list.clientHeight) return;
+    content.dataset.fitted = '1';
+    if (list.scrollHeight > list.clientHeight + 1) {
+      content.querySelectorAll('details.file-folder[open]').forEach(d => { d.open = false; });
+    }
   },
 
   addPendingFiles(files) {
@@ -3308,11 +3535,9 @@ const App = {
 
   async handleDeleteModel(e, id) {
     e.preventDefault();
-    const form = new FormData(e.target);
-    const deleteDisk = form.get('delete_disk') === 'on';
     try {
-      await API.deleteModel(id, deleteDisk);
-      this.toast('Model deleted');
+      await API.deleteModel(id);
+      this.toast('Model moved to the Trash');
       this.closeModal();
       this.navigate('/models');
     } catch (err) { this.toast(err.message, 'error'); }
@@ -3391,11 +3616,9 @@ const App = {
 
   async handleDeleteFile(e, fileId, modelId) {
     e.preventDefault();
-    const form = new FormData(e.target);
-    const deleteDisk = form.get('delete_disk') === 'on';
     try {
-      await API.deleteFile(fileId, deleteDisk);
-      this.toast('File deleted');
+      await API.deleteFile(fileId);
+      this.toast('File moved to the Trash');
       this.closeModal();
       this.renderModelDetail(modelId);
     } catch (err) { this.toast(err.message, 'error'); }

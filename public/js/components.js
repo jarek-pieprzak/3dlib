@@ -11,9 +11,6 @@ const UI = {
       .replace(/'/g, '&#39;');
   },
 
-  // Files of a project folder keep their path relative to it ("Gantry adapters/Creality/mount.stl").
-  // Show them as a collapsible folder tree (top level open, bigger subfolders collapsed);
-  // models without subfolders stay a flat list.
   // How a file can be shown in the model page's preview area (null = info only)
   previewKind(f) {
     const t = f && f.file_type;
@@ -59,45 +56,215 @@ const UI = {
     return null;
   },
 
-  fileTree(files, renderFile) {
+  // Files of a project folder keep their path relative to it ("Gantry adapters/Creality/mount.stl").
+  // Show them as a collapsible folder tree, rendered fully open; App.fitFileTree collapses every
+  // folder when the open tree does not fit the list. Models without subfolders stay a flat list.
+  // opts.folders: folder paths to show even when empty; opts.folderActions(path): HTML for the
+  // actions of a folder row
+  fileTree(files, renderFile, opts = {}) {
     const nameOf = (f) => String(f.original_name || f.filename || '');
-    if (!files.some(f => nameOf(f).includes('/'))) return files.map(f => renderFile(f, nameOf(f))).join('');
+    const extraFolders = opts.folders || [];
+    if (!extraFolders.length && !files.some(f => nameOf(f).includes('/'))) return files.map(f => renderFile(f, nameOf(f))).join('');
 
-    const newNode = () => ({ folders: new Map(), files: [] });
-    const root = newNode();
+    const newNode = (p) => ({ path: p, folders: new Map(), files: [] });
+    const root = newNode('');
+    const nodeAt = (parts) => {
+      let node = root;
+      for (const part of parts) {
+        if (!node.folders.has(part)) node.folders.set(part, newNode(node.path ? `${node.path}/${part}` : part));
+        node = node.folders.get(part);
+      }
+      return node;
+    };
+    for (const folder of extraFolders) nodeAt(String(folder).split('/').filter(Boolean));
     for (const f of files) {
       const parts = nameOf(f).split('/').filter(Boolean);
       const base = parts.pop() || nameOf(f);
-      let node = root;
-      for (const part of parts) {
-        if (!node.folders.has(part)) node.folders.set(part, newNode());
-        node = node.folders.get(part);
-      }
-      node.files.push({ f, base });
+      nodeAt(parts).files.push({ f, base });
     }
 
     const countOf = (node) => node.files.length + [...node.folders.values()].reduce((n, child) => n + countOf(child), 0);
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-    const render = (node, depth) => {
+    const render = (node) => {
       const filesHtml = node.files.map(({ f, base }) => renderFile(f, base)).join('');
       const foldersHtml = [...node.folders.entries()]
         .sort((a, b) => collator.compare(a[0], b[0]))
         .map(([name, child]) => {
           const count = countOf(child);
+          const actions = opts.folderActions ? opts.folderActions(child.path) : '';
           return `
-          <details class="file-folder"${depth === 0 || count <= 6 ? ' open' : ''}>
+          <details class="file-folder" open data-entry-path="${this.escapeHtml(child.path)}" data-entry-kind="folder">
             <summary>
               <svg class="file-folder-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent-cyan)"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               <span class="file-folder-name">${this.escapeHtml(name)}</span>
               <span class="file-folder-count">${count}</span>
+              ${actions}
             </summary>
-            <div class="file-folder-body">${render(child, depth + 1)}</div>
+            <div class="file-folder-body">${render(child) || '<div class="file-folder-empty">Empty folder</div>'}</div>
           </details>`;
         }).join('');
       return filesHtml + foldersHtml;
     };
-    return render(root, 0);
+    return render(root);
+  },
+
+  // Icon of a file row: unknown and archive types show their extension
+  fileIconType(f) {
+    const ext = (String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '';
+    return ['other', 'zip', 'f3d', 'scad'].includes(f.file_type) ? (ext.toLowerCase() || f.file_type) : f.file_type;
+  },
+
+  // SQLite datetime('now') values are UTC without a zone
+  sqlDate(value) {
+    if (!value) return null;
+    return /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(value) ? new Date(value.replace(' ', 'T') + 'Z') : new Date(value);
+  },
+
+  // "12 days left" until something in the Trash is deleted for good
+  trashCountdown(deletedAt, retentionDays) {
+    const days = retentionDays === undefined || retentionDays === null ? 30 : Number(retentionDays);
+    if (days <= 0) return 'kept until the Trash is emptied';
+    const deleted = this.sqlDate(deletedAt);
+    if (!deleted || isNaN(deleted)) return '';
+    const left = Math.ceil(days - (Date.now() - deleted.getTime()) / 86400000);
+    if (left <= 0) return 'deleted for good at the next cleanup';
+    return `${left} day${left === 1 ? '' : 's'} left`;
+  },
+
+  // One text field: rename a file or folder, name a new folder
+  entryNameForm({ label, value = '', submitLabel, hint = '' }) {
+    return `
+      <form onsubmit="App.handleEntryNameSubmit(event)">
+        <div class="form-group">
+          <label class="form-label">${this.escapeHtml(label)}</label>
+          <input class="form-input" name="name" id="entry-name-input" value="${this.escapeHtml(value)}" autocomplete="off" spellcheck="false" required maxlength="255">
+          ${hint ? `<div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">${hint}</div>` : ''}
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">${this.escapeHtml(submitLabel)}</button>
+        </div>
+      </form>`;
+  },
+
+  // Pick the folder of the project to move a file or folder to
+  entryMoveForm(name, folders, current) {
+    const firstFree = folders.find(f => f !== current);
+    const options = folders.map(f => `<option value="${this.escapeHtml(f)}"${f === current ? ' disabled' : ''}${f === firstFree ? ' selected' : ''}>${f ? this.escapeHtml(f) : '(project folder)'}${f === current ? ' (current)' : ''}</option>`).join('');
+    return `
+      <form onsubmit="App.handleEntryMoveSubmit(event)">
+        <div style="margin-bottom:14px;color:var(--text-secondary)">Move <strong>${this.escapeHtml(name)}</strong> to:</div>
+        <div class="form-group">
+          <select class="form-select" name="target" size="${Math.min(10, Math.max(3, folders.length))}" style="width:100%;background-image:none;padding-right:12px">${options}</select>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary"${firstFree === undefined ? ' disabled' : ''}>Move</button>
+        </div>
+      </form>`;
+  },
+
+  deleteEntryForm(name, isFolder) {
+    return `
+      <form onsubmit="App.handleEntryDeleteSubmit(event)">
+        <div style="margin-bottom:16px;color:var(--text-secondary)">
+          Delete ${isFolder ? 'the folder' : ''} <strong>"${this.escapeHtml(name)}"</strong>${isFolder ? ' with everything in it' : ''}?
+        </div>
+        ${this.trashNote()}
+        <div class="form-actions" style="margin-top:24px">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-danger">Delete</button>
+        </div>
+      </form>`;
+  },
+
+  // ── Trash page (sidebar) ──
+  trashPage(data) {
+    const days = data.retention_days;
+    const models = data.models || [];
+    const files = data.files || [];
+    const restoreIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+    const purgeIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    const placeholder = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>';
+
+    const modelRows = models.map(m => `
+      <div class="trash-row">
+        <a class="trash-thumb${m.is_adult ? ' is-protected' : ''}" href="#/models/${m.id}?trash=1" title="Open">
+          ${m.thumbnail_url ? `<img src="${this.escapeHtml(m.thumbnail_url)}" alt="" loading="lazy">` : placeholder}
+        </a>
+        <div class="trash-info">
+          <a class="trash-name" href="#/models/${m.id}?trash=1">${this.escapeHtml(m.name)}</a>
+          <div class="trash-meta">${m.file_count} file${m.file_count === 1 ? '' : 's'} · ${this.formatSize(m.total_size)} · deleted ${this.formatDateShort(this.sqlDate(m.deleted_at))} · <span class="trash-countdown">${this.trashCountdown(m.deleted_at, days)}</span></div>
+        </div>
+        <div class="trash-actions">
+          <button type="button" class="btn btn-secondary btn-xs" onclick="App.restoreTrashItems([${m.id}], [])">${restoreIcon}Restore</button>
+          <button type="button" class="file-action-btn delete" title="Delete permanently" onclick="App.purgeTrashItems([${m.id}], [])">${purgeIcon}</button>
+        </div>
+      </div>`).join('');
+
+    // Deleted files of models that are not in the Trash, grouped by model
+    const groups = new Map();
+    for (const f of files) {
+      if (!groups.has(f.model_id)) groups.set(f.model_id, { name: f.model_name, files: [] });
+      groups.get(f.model_id).files.push(f);
+    }
+    const fileGroups = [...groups.entries()].map(([modelId, g]) => `
+      <div class="trash-group">
+        <div class="trash-group-head">
+          <a href="#/models/${modelId}" onclick="App.openModelTrashTab(${modelId})">${this.escapeHtml(g.name)}</a>
+          <span>${g.files.length} file${g.files.length === 1 ? '' : 's'}</span>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="App.restoreTrashItems([], [${g.files.map(f => f.id).join(',')}])">Restore all</button>
+        </div>
+        ${g.files.map(f => `
+        <div class="trash-row is-file">
+          ${this.fileTypeIcon(this.fileIconType(f))}
+          <div class="trash-info">
+            <a class="trash-name" href="#/models/${modelId}" onclick="App.openModelTrashTab(${modelId})" title="Open the model's Trash tab to preview">${this.escapeHtml(f.original_name)}</a>
+            <div class="trash-meta">${this.formatSize(f.file_size)} · deleted ${this.formatDateShort(this.sqlDate(f.deleted_at))} · <span class="trash-countdown">${this.trashCountdown(f.deleted_at, days)}</span></div>
+          </div>
+          <div class="trash-actions">
+            <button type="button" class="file-action-btn restore" title="Restore" onclick="App.restoreTrashItems([], [${f.id}])">${restoreIcon}</button>
+            <button type="button" class="file-action-btn delete" title="Delete permanently" onclick="App.purgeTrashItems([], [${f.id}])">${purgeIcon}</button>
+          </div>
+        </div>`).join('')}
+      </div>`).join('');
+
+    const empty = !models.length && !files.length;
+    return `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Trash</h1>
+          <div class="page-subtitle">${days > 0 ? `Deleted models and files stay on disk for ${days} days, then they are deleted for good.` : 'Deleted models and files stay on disk until the Trash is emptied.'}</div>
+        </div>
+        ${!empty && App.currentUser?.role === 'admin' ? `<button class="btn btn-danger btn-sm" onclick="App.confirmEmptyTrash()">Empty Trash</button>` : ''}
+      </div>
+      ${empty ? `
+      <div class="empty-state">
+        <div class="empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+        <div class="empty-state-text">The Trash is empty</div>
+      </div>` : ''}
+      ${models.length ? `<div class="glass-panel trash-section"><div class="panel-header"><div class="panel-title">Models (${models.length})</div></div><div class="panel-body no-pad">${modelRows}</div></div>` : ''}
+      ${files.length ? `<div class="glass-panel trash-section"><div class="panel-header"><div class="panel-title">Files (${files.length})</div></div><div class="panel-body no-pad">${fileGroups}</div></div>` : ''}`;
+  },
+
+  // The "..." menu of a file or folder row in a project's file list. The row carries
+  // data-entry-path / data-entry-kind; the handlers read them from there.
+  entryMenu(items) {
+    if (!items.length) return '';
+    const icons = {
+      rename: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+      move: '<path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>',
+      folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>',
+      delete: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+    };
+    return `
+      <div class="dropdown entry-menu" onclick="event.preventDefault();event.stopPropagation()">
+        <button type="button" class="file-action-btn" title="More actions" aria-label="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>
+        <div class="dropdown-content">
+          ${items.map(it => `<a href="#" class="${it.danger ? 'is-danger' : ''}" onclick="event.preventDefault();event.stopPropagation();App.${it.action}(this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[it.icon]}</svg>${it.label}</a>`).join('')}
+        </div>
+      </div>`;
   },
 
   // Safe URL protocol validator (only http, https, mailto allowed)
@@ -369,19 +536,23 @@ const UI = {
       </div>`;
   },
 
+  // What "Delete" means since the Trash: nothing is removed from disk right away
+  trashNote() {
+    const days = (App.trashRetentionDays === undefined || App.trashRetentionDays === null) ? 30 : Number(App.trashRetentionDays);
+    const when = days > 0 ? `After ${days} day${days === 1 ? '' : 's'} they are deleted from disk for good.` : 'They stay there until you empty the Trash.';
+    return `<div class="trash-note">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      <span>The files move to the <a href="#/trash" onclick="App.closeModal()">Trash</a>, where you can preview and restore them. ${when}</span>
+    </div>`;
+  },
+
   bulkDeleteForm(count) {
     return `
       <form id="bulk-delete-form" onsubmit="App.handleBulkDelete(event)">
-        <div style="margin-bottom: 20px; color: var(--text-secondary)">
-          Are you sure you want to delete <strong>${count} models</strong>?<br>
-          This action cannot be undone.
+        <div style="margin-bottom: 16px; color: var(--text-secondary)">
+          Delete <strong>${count} models</strong>?
         </div>
-        <div class="form-group" style="padding: 12px; background: rgba(239, 68, 68, 0.1); border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.2)">
-          <label class="form-checkbox" style="color: #ef4444; font-weight: 600; margin: 0">
-            <input type="checkbox" name="delete_disk"> 
-            Also permanently delete physical files from disk
-          </label>
-        </div>
+        ${this.trashNote()}
         <div class="form-actions" style="margin-top: 24px">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-danger">Delete ${count} Models</button>
@@ -518,10 +689,10 @@ const UI = {
   bulkBrowseDeleteForm(count) {
     return `
       <form onsubmit="App.handleBulkBrowseDeleteSubmit(event)">
-        <div style="margin-bottom: 20px; color: var(--text-secondary)">
-          Are you sure you want to delete <strong>${count} items</strong>?<br>
-          This action cannot be undone.
+        <div style="margin-bottom: 16px; color: var(--text-secondary)">
+          Delete <strong>${count} items</strong>?
         </div>
+        ${this.trashNote()}
         <div class="form-actions" style="margin-top: 24px">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-danger">Delete ${count} Items</button>
@@ -582,7 +753,13 @@ const UI = {
   },
 
   modelDetail(model, hasPrinters = false) {
-    const canEdit = App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id);
+    // A model in the Trash is shown read-only, with Restore / Delete permanently
+    const inTrash = Boolean(model.deleted_at);
+    const canEdit = !inTrash && (App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id));
+    // Files of a project in the library can be renamed / moved on disk ('folder' projects also
+    // have folders); uploads outside the library and entries inside archives can only be deleted
+    const layout = model.layout || 'none';
+    const onDisk = (f) => layout !== 'none' && Boolean(f.library_path) && !f.is_archive_entry && !String(f.library_path).includes('::');
     const cat = model.category_name
       ? `<span class="badge badge-category" style="background:${model.category_color}20;color:${model.category_color};border:1px solid ${model.category_color}33">${model.category_name}</span>`
       : '';
@@ -803,11 +980,17 @@ const UI = {
       const openAttrs = canOpen
         ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in preview" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
         : ` data-file-id="${f.id}" title="No preview for this file type"`;
-      const ext = (String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '';
-      const iconType = ['other', 'zip', 'f3d', 'scad'].includes(f.file_type) ? (ext.toLowerCase() || f.file_type) : f.file_type;
+      const iconType = this.fileIconType(f);
+      const menuItems = !canEdit ? [] : onDisk(f)
+        ? [
+          { action: 'renameEntry', icon: 'rename', label: 'Rename' },
+          ...(layout === 'folder' ? [{ action: 'moveEntry', icon: 'move', label: 'Move to...' }] : []),
+          { action: 'deleteEntry', icon: 'delete', label: 'Delete', danger: true }
+        ]
+        : [{ action: 'deleteEntry', icon: 'delete', label: 'Delete', danger: true }];
 
       return `
-      <div class="file-item-card${canOpen ? ' is-openable' : ' is-info'}"${openAttrs} style="padding:10px 14px;border-bottom:1px solid var(--border);transition:background var(--transition)">
+      <div class="file-item-card${canOpen ? ' is-openable' : ' is-info'}"${openAttrs} data-entry-path="${this.escapeHtml(f.original_name || f.filename || '')}" data-entry-kind="file" data-entry-disk="${onDisk(f) ? 1 : 0}" style="padding:10px 14px;border-bottom:1px solid var(--border);transition:background var(--transition)">
         <!-- Top Row: Icon, File Details, Quick Action Buttons -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
@@ -832,7 +1015,7 @@ const UI = {
           <!-- Quick Actions: 3D Preview Eye, Download, Delete -->
           <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
             <a href="/api/files/${f.id}/download" class="file-action-btn" title="Download file" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
-            ${canEdit ? `<button class="file-action-btn delete" onclick="event.stopPropagation();App.confirmDeleteFile(${f.id},'${(f.original_name || f.filename).replace(/'/g, "\\'")}',${model.id})" title="Delete file"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}
+            ${this.entryMenu(menuItems)}
           </div>
         </div>
 
@@ -846,9 +1029,56 @@ const UI = {
     };
     // Files: every file of the project; Documentation: only the text documents (PDF, TXT, MD).
     // Both keep the folder structure and open the clicked file in the preview area.
-    const filesHtml = this.fileTree(model.files || [], renderFileCard);
+    const folderActions = (canEdit && layout === 'folder') ? () => this.entryMenu([
+      { action: 'newFolder', icon: 'folder', label: 'New folder inside' },
+      { action: 'renameEntry', icon: 'rename', label: 'Rename' },
+      { action: 'moveEntry', icon: 'move', label: 'Move to...' },
+      { action: 'deleteEntry', icon: 'delete', label: 'Delete', danger: true }
+    ]) : null;
+    const filesHtml = this.fileTree(model.files || [], renderFileCard, { folders: model.folders || [], folderActions });
     const docFiles = (model.files || []).filter(f => f.file_type === 'document');
     const docsHtml = docFiles.length ? this.fileTree(docFiles, renderFileCard) : '';
+
+    // Trash tab: files of this model in the Trash, with preview, Restore and Delete permanently
+    const retention = model.trash_retention_days;
+    const renderTrashCard = (f, displayName = f.original_name) => {
+      const canOpen = Boolean(this.previewKind(f));
+      const openAttrs = canOpen
+        ? ` role="button" tabindex="0" title="Show in preview" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
+        : ' title="No preview for this file type"';
+      return `
+      <div class="file-item-card is-trashed${canOpen ? ' is-openable' : ' is-info'}" data-file-id="${f.id}"${openAttrs}>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+            ${this.fileTypeIcon(this.fileIconType(f))}
+            <div style="min-width:0;flex:1">
+              <span class="file-name" title="${this.escapeHtml(f.original_name)}">${this.escapeHtml(displayName)}</span>
+              <div class="file-meta">
+                <span>${this.formatSize(f.file_size)}</span><span>·</span>
+                <span>Deleted ${this.formatDateShort(this.sqlDate(f.deleted_at))}</span><span>·</span>
+                <span class="trash-countdown">${this.trashCountdown(f.deleted_at, retention)}</span>
+              </div>
+            </div>
+          </div>
+          ${inTrash ? '' : `
+          <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+            <button type="button" class="file-action-btn restore" title="Restore" onclick="event.stopPropagation();App.restoreTrashItems([], [${f.id}])"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
+            <button type="button" class="file-action-btn delete" title="Delete permanently" onclick="event.stopPropagation();App.purgeTrashItems([], [${f.id}])"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>`}
+        </div>
+      </div>`;
+    };
+    const trashFiles = model.trash_files || [];
+    const trashHtml = trashFiles.length ? this.fileTree(trashFiles, renderTrashCard) : '';
+    const trashBanner = inTrash ? `
+      <div class="trash-banner">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <span>This model is in the Trash since ${this.formatDate(this.sqlDate(model.deleted_at))} · ${this.trashCountdown(model.deleted_at, retention)}</span>
+        <span class="trash-banner-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="App.restoreTrashItems([${model.id}], [])">Restore</button>
+          <button type="button" class="btn btn-danger btn-sm" onclick="App.purgeTrashItems([${model.id}], [])">Delete permanently</button>
+        </span>
+      </div>` : '';
 
     const breadcrumbs = `
       <div class="breadcrumbs">
@@ -860,15 +1090,16 @@ const UI = {
     `;
 
     return `
-      <div class="detail-page">
-      ${breadcrumbs}
+      <div class="detail-page${inTrash ? ' is-in-trash' : ''}">
+      ${inTrash ? `<div class="breadcrumbs"><a href="#/trash">Trash</a><span>/</span><span class="current">${this.escapeHtml(model.name)}</span></div>` : breadcrumbs}
+      ${trashBanner}
       <div class="detail-header">
         <div>
           <div class="detail-title">${this.escapeHtml(model.name)}</div>
           <div class="detail-meta">${model.is_adult ? '<span class="badge badge-adult"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : ''} ${cat} ${printed}</div>
         </div>
         <div class="detail-actions">
-          ${(App.currentUser && model.files && model.files.length > 0) ? `
+          ${(App.currentUser && !inTrash && model.files && model.files.length > 0) ? `
           <a href="/api/models/${model.id}/download" class="btn btn-secondary btn-sm" download title="Download all files as .zip" style="display:inline-flex;align-items:center;gap:5px;text-decoration:none;white-space:nowrap">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Download All (.zip)
@@ -948,8 +1179,13 @@ const UI = {
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                     Documentation (${docFiles.length})
                   </div>` : ''}
+                  ${trashHtml ? `<div onclick="App.switchFilesTab(event, 'trash')" title="Deleted files of this model" style="font-size:0.95rem;font-weight:600;line-height:1.4;padding-bottom:12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Trash (${trashFiles.length})
+                  </div>` : ''}
                 </div>
                 <div style="padding:12px 16px;display:flex;gap:8px;align-items:center">
+                  ${canEdit && layout === 'folder' ? `<button class="btn btn-secondary btn-xs" onclick="App.newFolder(null)" title="New folder in the project folder" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>Folder</button>` : ''}
                   ${canEdit ? `<button class="btn btn-primary btn-xs" onclick="App.showUploadFiles(${model.id})" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>` : ''}
                 </div>
               </div>
@@ -961,6 +1197,11 @@ const UI = {
               ${docsHtml ? `
               <div id="tab-content-docs" style="display:none">
                 ${docsHtml}
+              </div>` : ''}
+              ${trashHtml ? `
+              <div id="tab-content-trash" style="display:none">
+                <div class="trash-tab-note">${inTrash ? 'Files deleted on their own before the model went to the Trash.' : 'Deleted files stay on disk until they are deleted for good. Click a file to preview it.'}</div>
+                ${trashHtml}
               </div>` : ''}
             </div>
           </div>
@@ -1131,16 +1372,10 @@ const UI = {
     const safeName = this.escapeHtml(name || '');
     return `
       <form id="delete-model-form" onsubmit="App.handleDeleteModel(event, ${id})">
-        <div style="margin-bottom: 20px; color: var(--text-secondary)">
-          Are you sure you want to delete <strong>"${safeName}"</strong>?<br>
-          This will remove the model, all its files, and print history from GyroidVault.
+        <div style="margin-bottom: 16px; color: var(--text-secondary)">
+          Delete <strong>"${safeName}"</strong> with all its files?
         </div>
-        <div class="form-group" style="padding: 12px; background: rgba(239, 68, 68, 0.1); border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.2)">
-          <label class="form-checkbox" style="color: #ef4444; font-weight: 600; margin: 0">
-            <input type="checkbox" name="delete_disk"> 
-            Also permanently delete physical files from disk
-          </label>
-        </div>
+        ${this.trashNote()}
         <div class="form-actions" style="margin-top: 24px">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-danger">Delete Model</button>
@@ -1152,15 +1387,10 @@ const UI = {
   deleteFileForm(fileId, filename, modelId) {
     return `
       <form id="delete-file-form" onsubmit="App.handleDeleteFile(event, ${fileId}, ${modelId})">
-        <div style="margin-bottom: 20px; color: var(--text-secondary)">
-          Are you sure you want to delete <strong>"${filename}"</strong> from GyroidVault?
+        <div style="margin-bottom: 16px; color: var(--text-secondary)">
+          Delete <strong>"${this.escapeHtml(filename)}"</strong>?
         </div>
-        <div class="form-group" style="padding: 12px; background: rgba(239, 68, 68, 0.1); border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.2)">
-          <label class="form-checkbox" style="color: #ef4444; font-weight: 600; margin: 0">
-            <input type="checkbox" name="delete_disk"> 
-            Also permanently delete physical file from disk
-          </label>
-        </div>
+        ${this.trashNote()}
         <div class="form-actions" style="margin-top: 24px">
           <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button type="submit" class="btn btn-danger">Delete File</button>
@@ -1542,6 +1772,11 @@ const UI = {
           <label>Auto-Scan Interval (Hours)</label>
           <input type="number" name="auto_scan_interval" value="${config.auto_scan_interval !== undefined ? config.auto_scan_interval : 24}" min="0" max="168" class="form-input">
           <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Set to 0 to disable background scanning. Default is 24.</p>
+        </div>
+        <div class="form-group">
+          <label>Keep Deleted Items in the Trash (Days)</label>
+          <input type="number" name="trash_retention_days" value="${config.trash_retention_days !== undefined ? config.trash_retention_days : 30}" min="0" max="3650" class="form-input">
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Then they are deleted from disk for good (checked every hour). Set to 0 to keep them until the Trash is emptied. Default is 30.</p>
         </div>
         <div class="form-group" style="grid-column: 1 / -1; margin-top: 10px;">
           <label class="toggle-item">

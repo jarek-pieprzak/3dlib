@@ -558,6 +558,45 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .file-action-btn:hover{background:rgba(255,255,255,0.1);color:var(--text-primary);border-color:var(--border-hover)}
 .file-action-btn.preview:hover{background:rgba(0,212,255,0.15);color:var(--accent-cyan);border-color:rgba(0,212,255,0.35)}
 .file-action-btn.delete:hover{background:rgba(239,68,68,0.15);color:var(--error);border-color:rgba(239,68,68,0.35)}
+.file-action-btn.restore:hover{background:rgba(16,185,129,0.15);color:#34d399;border-color:rgba(52,211,153,0.35)}
+/* "..." menu of file and folder rows (rename / move / delete) */
+.entry-menu .dropdown-content{min-width:170px}
+.entry-menu .dropdown-content a{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:.8rem;font-weight:500}
+.entry-menu .dropdown-content a.is-danger:hover{color:var(--error);background:rgba(239,68,68,0.1)}
+.file-folder>summary .entry-menu .file-action-btn{width:24px;height:24px}
+.file-folder>summary .entry-menu{opacity:.55;transition:opacity var(--transition)}
+.file-folder>summary:hover .entry-menu,.file-folder>summary .entry-menu:hover{opacity:1}
+.file-folder-empty{padding:8px 14px;font-size:.75rem;color:var(--text-muted);font-style:italic}
+/* Trash */
+.trash-note{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:6px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);color:var(--text-secondary);font-size:.85rem;line-height:1.45}
+.trash-note svg{flex-shrink:0;margin-top:2px;color:#f59e0b}
+.trash-note a{color:var(--accent-cyan)}
+.trash-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;margin-bottom:16px;border-radius:var(--radius-md);background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);color:var(--text-primary);font-size:.88rem}
+.trash-banner>svg{color:#f59e0b;flex-shrink:0}
+.trash-banner-actions{margin-left:auto;display:flex;gap:8px}
+.trash-tab-note{padding:10px 14px;font-size:.75rem;color:var(--text-muted);border-bottom:1px solid var(--border)}
+.file-item-card.is-trashed .file-name{font-weight:600;font-size:.85rem;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.file-item-card.is-trashed .file-meta{font-size:.72rem;color:var(--text-muted);display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+.trash-countdown{color:#f59e0b}
+.trash-section{margin-bottom:20px}
+.trash-row{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border)}
+.trash-row:last-child{border-bottom:none}
+.trash-row.is-file{padding-left:28px}
+.trash-thumb{width:56px;height:56px;border-radius:8px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg-tertiary);color:var(--text-muted)}
+.trash-thumb img{width:100%;height:100%;object-fit:cover}
+.trash-thumb.is-protected img{filter:blur(10px)}
+.trash-info{min-width:0;flex:1}
+.trash-name{display:block;font-weight:600;font-size:.9rem;color:var(--text-primary);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trash-name:hover{color:var(--accent-cyan)}
+.trash-meta{font-size:.75rem;color:var(--text-muted);margin-top:2px}
+.trash-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.trash-actions .btn{display:inline-flex;align-items:center;gap:5px}
+.trash-group-head{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bg-tertiary);border-bottom:1px solid var(--border);font-size:.82rem}
+.trash-group-head a{font-weight:600;color:var(--text-primary);text-decoration:none}
+.trash-group-head a:hover{color:var(--accent-cyan)}
+.trash-group-head span{color:var(--text-muted)}
+.trash-group-head .btn{margin-left:auto}
+@media (max-width:640px){.trash-row{flex-wrap:wrap}.trash-actions{width:100%;justify-content:flex-end}.trash-banner-actions{margin-left:0}}
 .file-info{flex:1;min-width:0}
 .file-name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary)}
 .file-meta{font-size:.75rem;color:var(--text-muted)}
@@ -703,6 +742,8 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .viewer-overlay-top>.viewer-pill:last-child{flex-shrink:0}
 @media(max-width: 1024px){
   .detail-header{display:flex;flex-direction:column;align-items:flex-start;gap:16px}
+  /* In a column the 260px basis would become the title's height */
+  .detail-header > div:first-child{flex:0 0 auto}
   .detail-actions{justify-content:flex-start;flex-wrap:wrap;width:auto}
   .detail-layout{grid-template-columns:1fr}
 }

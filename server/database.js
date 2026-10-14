@@ -270,6 +270,9 @@ async function initDatabase() {
     if (!mCols.some(c => c.name === 'preview_file_id')) db.run('ALTER TABLE models ADD COLUMN preview_file_id INTEGER');
     // Password-protected models (the password is set in Settings > Security)
     if (!mCols.some(c => c.name === 'is_adult')) db.run('ALTER TABLE models ADD COLUMN is_adult INTEGER DEFAULT 0');
+    // Trash: a deleted model or file is only flagged; server/utils/trash.js purges it later
+    if (!mCols.some(c => c.name === 'deleted_at')) db.run('ALTER TABLE models ADD COLUMN deleted_at DATETIME');
+    if (!all("PRAGMA table_info(files)").some(c => c.name === 'deleted_at')) db.run('ALTER TABLE files ADD COLUMN deleted_at DATETIME');
   } catch (e) { console.error('User migration failed:', e); }
 
   // Ensure metadata and library_path columns exist for existing databases
@@ -317,6 +320,8 @@ async function initDatabase() {
     db.run('CREATE INDEX IF NOT EXISTS idx_files_file_size ON files(file_size)');
     db.run('CREATE INDEX IF NOT EXISTS idx_files_thumbnail ON files(thumbnail)');
     db.run('CREATE INDEX IF NOT EXISTS idx_models_name ON models(name)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_models_deleted_at ON models(deleted_at)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_files_deleted_at ON files(deleted_at)');
 
     // Self-heal any orphaned rows created when sql.js db.export() reset PRAGMA foreign_keys (#74)
     db.run('DELETE FROM files WHERE model_id NOT IN (SELECT id FROM models)');

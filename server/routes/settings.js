@@ -97,10 +97,10 @@ router.get('/system/duplicates', authenticate, async (req, res) => {
     
     // Efficiently query only file sizes that appear 2 or more times (using SQLite index)
     const duplicateSizes = all(`
-      SELECT file_size 
-      FROM files 
-      WHERE file_size > 0 
-      GROUP BY file_size 
+      SELECT file_size
+      FROM files
+      WHERE file_size > 0 AND deleted_at IS NULL
+      GROUP BY file_size
       HAVING COUNT(*) > 1
     `).map(r => r.file_size);
 
@@ -119,7 +119,7 @@ router.get('/system/duplicates', authenticate, async (req, res) => {
         SELECT f.id, f.filename, f.original_name, f.file_size, f.file_type, f.library_path, f.model_id, m.name as model_name
         FROM files f
         LEFT JOIN models m ON f.model_id = m.id
-        WHERE f.file_size = ?
+        WHERE f.file_size = ? AND f.deleted_at IS NULL AND m.deleted_at IS NULL
       `, [size]);
 
       if (candidateFiles.length < 2) continue;
@@ -388,13 +388,15 @@ router.delete('/system/logs', authenticate, (req, res) => {
 // ─── STATS ──────────────────────────────────────────────────────────────────
 router.get('/stats', (req, res) => {
   try {
-    const totalModels = get('SELECT COUNT(*) as c FROM models').c;
-    const totalFiles = get('SELECT COUNT(*) as c FROM files').c;
+    // The Trash does not count
+    const activeFiles = 'FROM files f JOIN models m ON m.id=f.model_id WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL';
+    const totalModels = get('SELECT COUNT(*) as c FROM models WHERE deleted_at IS NULL').c;
+    const totalFiles = get(`SELECT COUNT(*) as c ${activeFiles}`).c;
     const totalPrints = get('SELECT COUNT(*) as c FROM print_history').c;
     const successfulPrints = get('SELECT COUNT(*) as c FROM print_history WHERE successful=1').c;
     const printedModels = get('SELECT COUNT(DISTINCT model_id) as c FROM print_history').c;
-    const totalSize = get('SELECT COALESCE(SUM(file_size),0) as s FROM files').s;
-    const recentModels = all('SELECT m.*,c.name as category_name,c.color as category_color FROM models m LEFT JOIN categories c ON m.category_id=c.id ORDER BY m.created_at DESC LIMIT 5');
+    const totalSize = get(`SELECT COALESCE(SUM(f.file_size),0) as s ${activeFiles}`).s;
+    const recentModels = all('SELECT m.*,c.name as category_name,c.color as category_color FROM models m LEFT JOIN categories c ON m.category_id=c.id WHERE m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 5');
     const recentPrints = all('SELECT ph.*,m.name as model_name,mat.name as material_name FROM print_history ph JOIN models m ON ph.model_id=m.id LEFT JOIN materials mat ON ph.material_id=mat.id ORDER BY ph.printed_at DESC LIMIT 5');
     const materialUsage = all('SELECT mat.name,COUNT(ph.id) as count FROM materials mat JOIN print_history ph ON ph.material_id=mat.id GROUP BY mat.id ORDER BY count DESC LIMIT 5');
     res.json({

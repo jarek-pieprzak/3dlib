@@ -10,7 +10,7 @@ const { getFileUrl } = require('../utils/modelHelpers');
 // ─── CATEGORIES ─────────────────────────────────────────────────────────────
 router.get('/categories', (req, res) => {
   try {
-    res.json(all('SELECT c.*,(SELECT COUNT(*) FROM models WHERE category_id=c.id) as model_count FROM categories c ORDER BY c.name'));
+    res.json(all('SELECT c.*,(SELECT COUNT(*) FROM models WHERE category_id=c.id AND deleted_at IS NULL) as model_count FROM categories c ORDER BY c.name'));
   } catch (e) {
     res.status(500).json({ error: 'Failed' });
   }
@@ -52,7 +52,7 @@ router.delete('/categories/:id', authenticate, (req, res) => {
 // ─── TAGS ───────────────────────────────────────────────────────────────────
 router.get('/tags', (req, res) => {
   try {
-    res.json(all('SELECT t.*,(SELECT COUNT(*) FROM model_tags WHERE tag_id=t.id) as model_count FROM tags t ORDER BY t.name'));
+    res.json(all('SELECT t.*,(SELECT COUNT(*) FROM model_tags mt JOIN models m ON m.id=mt.model_id WHERE mt.tag_id=t.id AND m.deleted_at IS NULL) as model_count FROM tags t ORDER BY t.name'));
   } catch (e) {
     res.status(500).json({ error: 'Failed' });
   }
@@ -150,9 +150,10 @@ router.get('/shares/:slug', (req, res) => {
     const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [req.params.slug]);
     if (!share) return res.status(404).json({ error: 'Share not found or expired' });
     
-    const model = get('SELECT m.*,c.name as category_name,c.color as category_color FROM models m LEFT JOIN categories c ON m.category_id=c.id WHERE m.id=?', [share.model_id]);
+    const model = get('SELECT m.*,c.name as category_name,c.color as category_color FROM models m LEFT JOIN categories c ON m.category_id=c.id WHERE m.id=? AND m.deleted_at IS NULL', [share.model_id]);
+    if (!model) return res.status(404).json({ error: 'Share not found or expired' });
     model.share_slug = req.params.slug;
-    model.files = all('SELECT * FROM files WHERE model_id=? ORDER BY uploaded_at DESC', [model.id]).map(f => {
+    model.files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at DESC', [model.id]).map(f => {
       const base = getFileUrl(f);
       return {
         ...f,

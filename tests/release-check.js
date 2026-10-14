@@ -298,6 +298,15 @@ async function runStaticAndUiChecks() {
     assert(appSrc.includes("this.lastCategoryFilter"), 'handleFilter must track lastCategoryFilter to reset format when switching categories');
   });
 
+  await check('"Open in slicer" file names are plain ASCII (Bambu Studio decodes the link: a raw space fails with 400)', () => {
+    const name = UI.slicerFileName({ original_name: 'Parts/Część łoża (v2) #1.stl', slicer_token: 'abcdefgh' }, '3mf');
+    assert(name === 'Czesc_loza_v2_1_gv-abcdefgh.3mf', `Unexpected slicer file name: ${name}`);
+    assert(UI.slicerFileName({ original_name: '¿¿.stl' }, 'stl') === 'model.stl', 'A name with nothing usable falls back to "model"');
+    const html = UI.modelDetail({ ...mockModel, files: [{ ...mockModel.files[0], slicer_token: 'abcdefgh', original_name: 'Main body.stl' }] }, false);
+    const links = html.match(/[a-z]+:\/\/open\?file=[^"]+/g) || [];
+    assert(links.length && links.every(l => /^[a-z]+:\/\/open\?file=[A-Za-z0-9:/._?=-]+$/.test(l)), `Slicer links must need no %-encoding: ${links.join(' ')}`);
+  });
+
     await check('Every API.* method called in app.js & components.js exists on API in api.js', () => {
     const frontendSources = `${compCode}\n${appCode}`;
     const apiCallRegex = /\bAPI\.([a-zA-Z0-9_]+)\s*\(/g;
@@ -1188,6 +1197,31 @@ async function runE2ETests() {
       assert(((await apiReq('/api/trash', { session: adminSession })).data.models || []).some(m => m.id === ws.id), 'The Trash must list the deleted model');
       assert((await apiReq('/api/trash/purge', { method: 'POST', session: adminSession, body: { model_ids: [ws.id] } })).status === 200, 'Purging a model failed');
       assert(!fs.existsSync(lib('Workshop Renamed')), 'Purging a model must delete its folder');
+    });
+
+    await check('Every file gets a unique slicer token; slicer links named "<name>_gv-<token>.<ext>" download the file', async () => {
+      const list = (await apiReq('/api/models?limit=100', { session: adminSession })).data.models || [];
+      const tokens = [];
+      let sample = null;
+      for (const m of list) {
+        const d = (await apiReq(`/api/models/${m.id}`, { session: adminSession })).data;
+        for (const f of d.files || []) {
+          assert(/^[a-z2-9]{8}$/.test(f.slicer_token || ''), `File ${f.original_name} has no valid slicer token: ${f.slicer_token}`);
+          tokens.push(f.slicer_token);
+          if (!sample && f.library_path && ['stl', '3mf'].includes(f.file_type)) sample = f;
+        }
+      }
+      assert(tokens.length && new Set(tokens).size === tokens.length, 'Slicer tokens must be unique per file');
+      const again = (await apiReq(`/api/models/${sample.model_id}`, { session: adminSession })).data.files.find(f => f.id === sample.id);
+      assert(again.slicer_token === sample.slicer_token, 'A file must keep its slicer token');
+      const { tokenFromName } = require(path.join(ROOT_DIR, 'server/utils/slicerToken'));
+      const t = sample.slicer_token;
+      assert(tokenFromName(`Xmas_tree_210_gv-${t}.3mf`) === t, 'The token must be read back from a saved file name');
+      assert(tokenFromName(`Xmas_tree_210_gv-${t}(2).3mf`) === t, 'A "(2)" suffix added by the slicer must not hide the token');
+      assert(tokenFromName(`Xmas tree 210 gv-${t.toUpperCase()}.3mf`) === t, 'Spaces and letter case must not hide the token');
+      assert(tokenFromName('model(2).3mf') === null && tokenFromName(`xgv-${t}.3mf`) === null, 'A name without a token has none');
+      const dl = await fetch(`${baseUrl}/api/files/${sample.id}/3mf/Xmas_tree_210_gv-${t}.3mf`, { headers: { Cookie: adminSession.cookie } });
+      assert(dl.status === 200, `A slicer link with the file name and token must download, got ${dl.status}`);
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

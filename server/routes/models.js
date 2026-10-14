@@ -12,6 +12,7 @@ const { getFileUrl, getThumbUrl, getZipEntryBuffer, getSettingBool, canEditModel
 const adultLock = require('../utils/adult');
 const trashUtil = require('../utils/trash');
 const projectFiles = require('../utils/projectFiles');
+const { ensureTokens } = require('../utils/slicerToken');
 const bcrypt = require('bcryptjs');
 const { authLimiter } = require('../middleware/rateLimit');
 
@@ -225,7 +226,7 @@ router.get('/:id', (req, res) => {
       is_preview: Boolean(model.preview_file_id && f.id === model.preview_file_id && !f.deleted_at),
       url: getFileUrl(f)
     }));
-    model.files = allFiles.filter(f => !f.deleted_at);
+    model.files = ensureTokens(allFiles.filter(f => !f.deleted_at));
     // Deleted files are shown in the model's Trash tab; entries of a deleted archive go with it
     const deletedPaths = new Set(allFiles.filter(f => f.deleted_at && f.library_path).map(f => f.library_path));
     model.trash_files = canEdit

@@ -273,6 +273,10 @@ async function initDatabase() {
     // Trash: a deleted model or file is only flagged; server/utils/trash.js purges it later
     if (!mCols.some(c => c.name === 'deleted_at')) db.run('ALTER TABLE models ADD COLUMN deleted_at DATETIME');
     if (!all("PRAGMA table_info(files)").some(c => c.name === 'deleted_at')) db.run('ALTER TABLE files ADD COLUMN deleted_at DATETIME');
+    // Random per-file token in the names of "Open in slicer" downloads: a file saved by the
+    // slicer can be matched back to the file it came from (server/utils/slicerToken.js)
+    if (!all("PRAGMA table_info(files)").some(c => c.name === 'slicer_token')) db.run('ALTER TABLE files ADD COLUMN slicer_token TEXT');
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_files_slicer_token ON files(slicer_token)');
   } catch (e) { console.error('User migration failed:', e); }
 
   // Ensure metadata and library_path columns exist for existing databases

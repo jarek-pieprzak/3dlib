@@ -109,6 +109,16 @@ const UI = {
     return render(root);
   },
 
+  // "Xmas_tree_210_gv-7k3m9q2x.3mf": the file name an "Open in slicer" link ends with.
+  // Bambu Studio decodes the link before it downloads, so a space or any other %-encoded sign
+  // would reach the server raw and fail (400): ASCII letters, digits, "_", "-" and "." only.
+  slicerFileName(f, ext) {
+    const base = String(f.original_name || f.filename || '').split('/').pop().replace(/\.[^.]+$/, '');
+    const stem = base.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[łŁ]/g, m => (m === 'ł' ? 'l' : 'L'))
+      .replace(/[^A-Za-z0-9.-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 100) || 'model';
+    return `${stem}${f.slicer_token ? `_gv-${f.slicer_token}` : ''}.${ext}`;
+  },
+
   // Icon of a file row: unknown and archive types show their extension
   fileIconType(f) {
     const ext = (String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '';
@@ -930,11 +940,15 @@ const UI = {
       // A slicer downloads the file itself, without the browser's cookies: an unlocked protected model
       // passes its unlock token along
       const unlockQ = (App.adultUnlock && App.adultUnlock.id === model.id) ? `?unlock=${App.adultUnlock.token}` : '';
+      // The slicer names its project after the last part of the URL: it carries the file's name
+      // and token, so a project saved by the slicer can be matched back to this file
+      const ext = (String(f.original_name || f.filename || '').match(/\.([a-z0-9]+)$/i) || [])[1] || f.file_type;
+      const downloadUrl = encodeURI(`${window.location.origin}/api/files/${f.id}/download/${this.slicerFileName(f, ext.toLowerCase())}${unlockQ}`);
       const slicerLinks = {
-        'orcaslicer': { name: 'OrcaSlicer', url: `orcaslicer://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type + unlockQ)}` },
-        'elegooslicer': { name: 'Elegoo Slicer', url: `elegooslicer://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type + unlockQ)}` },
-        'cura': { name: 'Ultimaker Cura', url: `cura://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/download/model.' + f.file_type + unlockQ)}` },
-        'bambustudio': { name: 'Bambu Studio', url: `bambustudio://open?file=${encodeURI(window.location.origin + '/api/files/' + f.id + '/3mf/model.3mf' + unlockQ)}` }
+        'orcaslicer': { name: 'OrcaSlicer', url: `orcaslicer://open?file=${downloadUrl}` },
+        'elegooslicer': { name: 'Elegoo Slicer', url: `elegooslicer://open?file=${downloadUrl}` },
+        'cura': { name: 'Ultimaker Cura', url: `cura://open?file=${downloadUrl}` },
+        'bambustudio': { name: 'Bambu Studio', url: `bambustudio://open?file=${encodeURI(`${window.location.origin}/api/files/${f.id}/3mf/${this.slicerFileName(f, '3mf')}${unlockQ}`)}` }
       };
       const pref = App.currentUser?.preferred_slicer;
 

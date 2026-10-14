@@ -235,6 +235,47 @@ async function initDatabase() {
     )
   `);
 
+  // History of a file: earlier contents kept in the project's hidden ".versions" folder.
+  // path is relative to the project folder, so renaming the project keeps it valid.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS file_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_id INTEGER NOT NULL,
+      path TEXT NOT NULL,
+      file_size INTEGER DEFAULT 0,
+      source TEXT DEFAULT 'slicer',
+      created_at DATETIME DEFAULT (datetime('now')),
+      FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_file_versions_file_id ON file_versions(file_id)');
+
+  // Slicer round trips (server/services/slicerSaves.js): what "Open in slicer" sent (to tell a
+  // plain download from a save) and the files found in the library's ".slicer-saves" folder
+  db.run(`
+    CREATE TABLE IF NOT EXISTS slicer_downloads (
+      hash TEXT PRIMARY KEY,
+      file_id INTEGER,
+      created_at DATETIME DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS slicer_saves (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      file_size INTEGER DEFAULT 0,
+      mtime_ms INTEGER DEFAULT 0,
+      hash TEXT,
+      status TEXT DEFAULT 'pending',
+      file_id INTEGER,
+      imported_hash TEXT,
+      imported_file_id INTEGER,
+      imported_at DATETIME,
+      message TEXT,
+      created_at DATETIME DEFAULT (datetime('now'))
+    )
+  `);
+
   // Migration: Ensure user_id columns exist
   try {
     const mCols = all("PRAGMA table_info(models)");

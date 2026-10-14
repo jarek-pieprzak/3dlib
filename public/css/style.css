@@ -596,6 +596,17 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .trash-group-head a:hover{color:var(--accent-cyan)}
 .trash-group-head span{color:var(--text-muted)}
 .trash-group-head .btn{margin-left:auto}
+/* Slicer saves */
+.slicer-hint{font-size:.75rem;color:var(--text-muted);margin-left:auto}
+.trash-meta a{color:var(--accent-cyan);text-decoration:none}
+.trash-meta a:hover{text-decoration:underline}
+.page-subtitle code,.form-group code,.empty-state-sub code{font-size:.85em;padding:1px 5px;border-radius:4px;background:var(--bg-tertiary)}
+.slicer-assign{display:flex;flex-direction:column;gap:10px}
+.slicer-assign-or{font-size:.8rem;color:var(--text-muted)}
+.slicer-assign-results{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
+.slicer-assign-model{text-align:left;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:.85rem;cursor:pointer}
+.slicer-assign-model:hover{border-color:var(--border-hover);color:var(--accent-cyan)}
+.slicer-assign-model.is-active{border-color:var(--accent-cyan);color:var(--accent-cyan)}
 @media (max-width:640px){.trash-row{flex-wrap:wrap}.trash-actions{width:100%;justify-content:flex-end}.trash-banner-actions{margin-left:0}}
 .file-info{flex:1;min-width:0}
 .file-name{font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-primary)}

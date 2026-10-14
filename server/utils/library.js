@@ -98,7 +98,8 @@ async function collectAllFilesInModelDir(rootModelPath) {
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
-        await gather(fullPath);
+        // Hidden folders (.versions with file history, .git, ...) are not part of the project
+        if (!entry.name.startsWith('.')) await gather(fullPath);
       } else if (!isIgnoredFile(entry.name)) {
         collected.push({
           filename: entry.name,
@@ -452,7 +453,7 @@ async function scanLibrary(libraryPath) {
 
     const resolvedRoot = path.resolve(rootPath);
     const extOf = (name) => path.extname(name).toLowerCase();
-    const looseFiles = items.filter(item => item.isFile());
+    const looseFiles = items.filter(item => item.isFile() && !isIgnoredFile(item.name));
     const companions = looseFiles.filter(item => !MODEL_TRIGGER_EXTENSIONS.includes(extOf(item.name)));
 
     // Loose model files: one project each
@@ -475,7 +476,8 @@ async function scanLibrary(libraryPath) {
         console.log('[Scanner] Scan aborted early by cancellation request.');
         return;
       }
-      if (item.isDirectory()) await scanProjectFolder(path.join(resolvedRoot, item.name));
+      // Hidden folders (.slicer-saves, the slicer's save folder) are not projects
+      if (item.isDirectory() && !item.name.startsWith('.')) await scanProjectFolder(path.join(resolvedRoot, item.name));
     }
   }
 

@@ -264,6 +264,34 @@ function renameProject(model, newName) {
   saveDb();
 }
 
+// A project made of a loose file in the library root becomes a folder of the same name
+// ("Benchy.3mf" + "Benchy.jpg" -> "Benchy/Benchy.3mf" + "Benchy/Benchy.jpg"), so it can hold
+// new files and the .versions history. Returns the project folder.
+function ensureProjectFolder(model) {
+  const info = requireProject(model);
+  if (info.isFolder) return info.root;
+  const folder = path.join(info.root, stemOf(path.basename(model.library_path)));
+  if (exists(folder)) throw new FsError(409, `"${path.basename(folder)}" already exists in the library`);
+  const rows = all('SELECT library_path FROM files WHERE model_id = ? AND library_path IS NOT NULL', [model.id])
+    .map(r => r.library_path)
+    .filter(lp => !lp.includes('::') && path.dirname(lp) === info.root);
+  try {
+    fs.mkdirSync(folder);
+  } catch (e) {
+    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for GyroidVault');
+    throw e;
+  }
+  for (const src of rows) {
+    const dest = path.join(folder, path.basename(src));
+    renameOnDisk(src, dest);
+    repointFiles(model, folder, src, dest);
+  }
+  run('UPDATE models SET library_path = ? WHERE id = ?', [folder, model.id], true);
+  model.library_path = folder;
+  saveDb();
+  return folder;
+}
+
 // Folders of a project for its file tree: every folder on disk except those that only hold
 // files in the Trash. Empty folders are listed too, so they can get files or be removed.
 function visibleFolders(model, files) {
@@ -296,5 +324,5 @@ function visibleFolders(model, files) {
 
 module.exports = {
   FsError, validateName, projectInfo, renameEntry, moveEntries, makeFolder, deleteEntries,
-  renameProject, visibleFolders
+  renameProject, visibleFolders, ensureProjectFolder, stemOf, relOf, exists, assertNotScanning
 };

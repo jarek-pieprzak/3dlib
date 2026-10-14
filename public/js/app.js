@@ -472,6 +472,9 @@ const App = {
     } else if (path === '/trash') {
       document.getElementById('nav-trash')?.classList.add('active');
       this.renderTrash();
+    } else if (path === '/slicer-saves') {
+      document.getElementById('nav-slicer-saves')?.classList.add('active');
+      this.renderSlicerSaves();
     } else if (path === '/projects' || path === '/collections') {
       document.getElementById('nav-collections')?.classList.add('active');
       this.renderProjects();
@@ -1544,6 +1547,8 @@ const App = {
     const settingsLink = document.getElementById('nav-settings');
     const trashLink = document.getElementById('nav-trash');
     if (trashLink) trashLink.style.display = this.currentUser && this.currentUser.role !== 'viewer' ? '' : 'none';
+    const slicerLink = document.getElementById('nav-slicer-saves');
+    if (slicerLink) slicerLink.style.display = this.currentUser && this.currentUser.role === 'admin' ? '' : 'none';
 
     if (this.currentUser) {
       if (avatar) avatar.textContent = (this.currentUser.username || 'U').charAt(0).toUpperCase();
@@ -3315,6 +3320,142 @@ const App = {
 
   openModelTrashTab() {
     this.pendingFilesTab = 'trash';
+  },
+
+  // ── File history (.versions) ──
+  async showFileHistory(el) {
+    const entry = this.entryFrom(el);
+    const model = this.currentModel;
+    const file = entry && model && (model.files || []).find(f => f.id === entry.fileId);
+    if (!file) return;
+    try {
+      this.historyFile = file;
+      this.historyVersions = await API.getFileVersions(file.id);
+      const canEdit = !model.deleted_at && (this.currentUser?.role === 'admin' || (this.currentUser?.role !== 'viewer' && model.user_id === this.currentUser?.id));
+      this.openModal(`History of ${file.original_name.split('/').pop()}`, UI.fileHistoryModal(file, this.historyVersions, canEdit));
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  previewFileVersion(versionId) {
+    const v = (this.historyVersions || []).find(x => x.id === versionId);
+    const file = this.historyFile;
+    if (!v || !file) return;
+    this.previewFileModal(v.url, UI.escapeHtml(`${file.original_name} · ${UI.sqlDate(v.created_at).toLocaleString()}`), file.file_type);
+  },
+
+  async restoreFileVersion(versionId) {
+    const file = this.historyFile;
+    if (!file) return;
+    try {
+      await API.restoreFileVersion(file.id, versionId);
+      this.toast('Version restored');
+      this.closeModal();
+      this.reloadModel();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async deleteFileVersion(versionId) {
+    const file = this.historyFile;
+    if (!file || !confirm('Delete this version from disk for good?')) return;
+    try {
+      await API.deleteFileVersion(file.id, versionId);
+      this.toast('Version deleted');
+      this.closeModal();
+      this.reloadModel();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  // ── Slicer saves (.slicer-saves) ──
+  async renderSlicerSaves() {
+    if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    if (!this.currentUser || this.currentUser.role !== 'admin') {
+      this.el.innerHTML = '<div class="empty-state"><div class="empty-state-text">Admin access required</div></div>';
+      return;
+    }
+    try {
+      const data = await API.getSlicerSaves();
+      this.slicerSaves = data.saves || [];
+      this.el.innerHTML = UI.slicerSavesPage(data);
+    } catch (e) {
+      this.el.innerHTML = `<div class="empty-state"><div class="empty-state-text">${UI.escapeHtml(e.message || 'Failed to load slicer saves')}</div></div>`;
+    }
+  },
+
+  async checkSlicerSaves() {
+    try {
+      await API.checkSlicerSaves();
+      this.renderSlicerSaves();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async importSlicerSave(id) {
+    try {
+      await API.importSlicerSave(id);
+      this.toast('Imported');
+      this.renderSlicerSaves();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async deleteSlicerSave(id) {
+    if (!confirm('Delete this file from .slicer-saves? A slicer that still has it open can save it again.')) return;
+    try {
+      await API.deleteSlicerSave(id);
+      this.renderSlicerSaves();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  previewSlicerSave(id) {
+    const s = (this.slicerSaves || []).find(x => x.id === id);
+    if (s) this.previewFileModal(s.url, UI.escapeHtml(s.name), (s.name.match(/\.([^.]+)$/) || [])[1].toLowerCase());
+  },
+
+  showAssignSlicerSave(id) {
+    const s = (this.slicerSaves || []).find(x => x.id === id);
+    if (!s) return;
+    this.assignSave = s;
+    this.openModal('Assign Slicer Save', UI.slicerAssignForm(s));
+    setTimeout(() => document.getElementById('assign-model-search')?.focus(), 60);
+  },
+
+  async searchAssignModels() {
+    const q = document.getElementById('assign-model-search')?.value.trim() || '';
+    const box = document.getElementById('assign-model-results');
+    if (!box) return;
+    try {
+      const { models } = await API.getModels({ search: q, limit: 20, sort: 'name' });
+      document.getElementById('assign-model-files').innerHTML = '';
+      box.innerHTML = models.length
+        ? models.map(m => `<button type="button" class="slicer-assign-model" onclick="App.pickAssignModel(${m.id})">${UI.escapeHtml(m.name)}</button>`).join('')
+        : '<div class="slicer-assign-or">No models found</div>';
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async pickAssignModel(modelId) {
+    const box = document.getElementById('assign-model-files');
+    if (!box) return;
+    try {
+      const model = await API.getModel(modelId);
+      const files = (model.files || []).filter(f => f.library_path && !f.is_archive_entry && !String(f.library_path).includes('::'));
+      document.querySelectorAll('.slicer-assign-model').forEach(b => b.classList.toggle('is-active', b.getAttribute('onclick').includes(`(${modelId})`)));
+      box.innerHTML = `
+        <div class="slicer-assign-or">In <strong>${UI.escapeHtml(model.name)}</strong>:</div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="App.assignSlicerSave({ model_id: ${model.id} })">Add as a new file</button>
+        ${files.length ? `<div class="slicer-assign-or">or as a new version of</div>
+        <div class="slicer-assign-results">${files.map(f => `<button type="button" class="slicer-assign-model" onclick="App.assignSlicerSave({ file_id: ${f.id} })">${UI.escapeHtml(f.original_name)}</button>`).join('')}</div>` : ''}`;
+    } catch (err) {
+      this.toast(err.status === 423 ? 'This model is password protected' : err.message, 'error');
+    }
+  },
+
+  async assignSlicerSave(target) {
+    if (!this.assignSave) return;
+    try {
+      const r = await API.assignSlicerSave(this.assignSave.id, target);
+      this.toast(r.message || 'Done');
+      this.assignSave = null;
+      this.closeModal();
+      this.renderSlicerSaves();
+    } catch (err) { this.toast(err.message, 'error'); }
   },
 
   // A file tree is rendered fully open. If it does not fit the list without scrolling, collapse

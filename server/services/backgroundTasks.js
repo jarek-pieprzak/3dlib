@@ -125,6 +125,8 @@ function startBackgroundServices() {
   setTimeout(syncLibraryWithDisk, 10000);
   // Scheduled scanner
   setupBackgroundScanner();
+  // Projects saved by the slicer into .slicer-saves
+  require('./slicerSaves').start();
 }
 
 /**
@@ -133,6 +135,7 @@ function startBackgroundServices() {
 function stopBackgroundServices() {
   if (syncIntervalId) clearInterval(syncIntervalId);
   if (scanIntervalId) clearInterval(scanIntervalId);
+  require('./slicerSaves').stop();
 }
 
 module.exports = {

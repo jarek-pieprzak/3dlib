@@ -122,7 +122,8 @@ function purgeFiles(fileIds) {
   for (const id of ids(fileIds)) {
     const file = get('SELECT * FROM files WHERE id = ? AND deleted_at IS NOT NULL', [id]);
     if (!file) continue;
-    const model = get('SELECT library_path FROM models WHERE id = ?', [file.model_id]);
+    const model = get('SELECT id, library_path FROM models WHERE id = ?', [file.model_id]);
+    require('./fileVersions').removeAll(model, file.id);
     purgeFileRow(file, projectRoot(model));
     count++;
   }
@@ -137,9 +138,16 @@ function purgeModels(modelIds) {
     const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NOT NULL', [id]);
     if (!model) continue;
     const files = all('SELECT * FROM files WHERE model_id = ?', [id]);
+    run('DELETE FROM file_versions WHERE file_id IN (SELECT id FROM files WHERE model_id = ?)', [id], true);
     for (const f of files) purgeFileRow(f, null);
     if (model.library_path && inLibrary(model.library_path)) {
-      try { if (fs.statSync(model.library_path).isDirectory()) removeEmptyTree(model.library_path); } catch (e) { /* gone */ }
+      try {
+        if (fs.statSync(model.library_path).isDirectory()) {
+          // The file history of the project goes with it
+          fs.rmSync(path.join(model.library_path, '.versions'), { recursive: true, force: true });
+          removeEmptyTree(model.library_path);
+        }
+      } catch (e) { /* gone */ }
     }
     deleteModelInternal(id, false);
     count++;

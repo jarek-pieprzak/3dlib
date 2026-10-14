@@ -227,6 +227,9 @@ router.get('/:id', (req, res) => {
       url: getFileUrl(f)
     }));
     model.files = ensureTokens(allFiles.filter(f => !f.deleted_at));
+    // Number of earlier versions in each file's history (.versions)
+    const versionCounts = Object.fromEntries(all('SELECT v.file_id, COUNT(*) as n FROM file_versions v JOIN files f ON f.id = v.file_id WHERE f.model_id = ? GROUP BY v.file_id', [model.id]).map(r => [r.file_id, r.n]));
+    for (const f of model.files) f.version_count = versionCounts[f.id] || 0;
     // Deleted files are shown in the model's Trash tab; entries of a deleted archive go with it
     const deletedPaths = new Set(allFiles.filter(f => f.deleted_at && f.library_path).map(f => f.library_path));
     model.trash_files = canEdit

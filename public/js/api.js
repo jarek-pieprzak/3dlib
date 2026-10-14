@@ -140,6 +140,18 @@ const API = {
     return this.request('/api/trash/purge', { method: 'POST', body: JSON.stringify({ model_ids: modelIds, file_ids: fileIds }) });
   },
   emptyTrash() { return this.request('/api/trash/empty', { method: 'POST' }); },
+
+  // File history (.versions)
+  getFileVersions(fileId) { return this.request(`/api/files/${fileId}/versions`); },
+  restoreFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' }); },
+  deleteFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}`, { method: 'DELETE' }); },
+
+  // Projects saved by the slicer into .slicer-saves
+  getSlicerSaves() { return this.request('/api/slicer-saves'); },
+  checkSlicerSaves() { return this.request('/api/slicer-saves/scan', { method: 'POST' }); },
+  importSlicerSave(id) { return this.request(`/api/slicer-saves/${id}/import`, { method: 'POST' }); },
+  assignSlicerSave(id, target) { return this.request(`/api/slicer-saves/${id}/assign`, { method: 'POST', body: JSON.stringify(target) }); },
+  deleteSlicerSave(id) { return this.request(`/api/slicer-saves/${id}`, { method: 'DELETE' }); },
   bulkUpdateModels(ids, data) {
     return this.request('/api/models/bulk-update', { method: 'POST', body: JSON.stringify({ ids, ...data }) });
   },

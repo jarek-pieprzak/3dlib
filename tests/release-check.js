@@ -215,7 +215,17 @@ async function runStaticAndUiChecks() {
       ['UI.trashPage (empty)', () => UI.trashPage({ retention_days: 30, models: [], files: [] })],
       ['UI.entryNameForm', () => UI.entryNameForm({ label: 'File name', value: 'a "b".stl', submitLabel: 'Rename' })],
       ['UI.entryMoveForm', () => UI.entryMoveForm('arm.stl', ['', 'Parts', 'Spare'], 'Parts')],
-      ['UI.deleteEntryForm', () => UI.deleteEntryForm('Parts', true)]
+      ['UI.deleteEntryForm', () => UI.deleteEntryForm('Parts', true)],
+      ['UI.fileHistoryModal', () => UI.fileHistoryModal({ id: 10, original_name: 'Parts/gear.3mf', file_type: '3mf' },
+        [{ id: 1, file_size: 100, source: 'slicer', created_at: '2026-10-14 10:00:00', url: '/api/files/10/versions/1/file' }], true)],
+      ['UI.slicerSavesPage', () => UI.slicerSavesPage({ quiet_minutes: 5, cleanup_days: 7, now: Date.now(), saves: [
+        { id: 1, name: 'gear_gv-abcdefgh.3mf', clean_name: 'gear.3mf', status: 'pending', file_size: 10, mtime_ms: Date.now(), model_id: 1, model_name: 'Box', file_name: 'gear.3mf' },
+        { id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf', status: 'unmatched', file_size: 10, mtime_ms: Date.now() },
+        { id: 3, name: 'x.3mf', clean_name: 'x.3mf', status: 'imported', file_size: 10, mtime_ms: Date.now(), message: 'New version of x.3mf', imported_model_id: 1, imported_model_name: 'Box', imported_name: 'x.3mf' },
+        { id: 4, name: 'y.3mf', clean_name: 'y.3mf', status: 'error', file_size: 10, mtime_ms: Date.now(), message: 'Read-only' },
+        { id: 5, name: 'z.stl', clean_name: 'z.stl', status: 'download', file_size: 10, mtime_ms: Date.now() }] })],
+      ['UI.slicerSavesPage (empty)', () => UI.slicerSavesPage({ quiet_minutes: 5, cleanup_days: 7, now: Date.now(), saves: [] })],
+      ['UI.slicerAssignForm', () => UI.slicerAssignForm({ id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf' })]
     ];
 
     for (const [label, fn] of renders) {
@@ -1222,6 +1232,90 @@ async function runE2ETests() {
       assert(tokenFromName('model(2).3mf') === null && tokenFromName(`xgv-${t}.3mf`) === null, 'A name without a token has none');
       const dl = await fetch(`${baseUrl}/api/files/${sample.id}/3mf/Xmas_tree_210_gv-${t}.3mf`, { headers: { Cookie: adminSession.cookie } });
       assert(dl.status === 200, `A slicer link with the file name and token must download, got ${dl.status}`);
+    });
+
+    await check('Slicer saves: downloads are ignored, changed saves become file versions, STL saves add a 3MF, unmatched saves are assigned by hand', async () => {
+      const { meshTo3mf } = require(path.join(ROOT_DIR, 'server/utils/3mf'));
+      const mesh = (n) => meshTo3mf({ verts: [[0, 0, 0], [n, 0, 0], [0, n, 0]], tris: [[0, 1, 2]] });
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
+      const scanLibrary = async () => {
+        await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const s = await apiReq('/api/library/scan/status', { session: adminSession });
+          if (s.status === 200 && !s.data.isScanning) return;
+        }
+        throw new Error('Library scanner did not complete within 6s');
+      };
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const detail = async (id) => (await apiReq(`/api/models/${id}`, { session: adminSession })).data;
+      const saves = async () => {
+        assert((await apiReq('/api/slicer-saves/scan', { method: 'POST', session: adminSession })).status === 200, 'Checking .slicer-saves failed');
+        return (await apiReq('/api/slicer-saves', { session: adminSession })).data.saves;
+      };
+      const download = async (url) => Buffer.from(await (await fetch(`${baseUrl}${url}`, { headers: { Cookie: adminSession.cookie } })).arrayBuffer());
+      const same = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
+
+      put('Gear Box/gear.3mf', mesh(10));
+      put('Loose Xmas.stl', stl);
+      await scanLibrary();
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '0' } });
+      const gearModel = await byName('Gear Box');
+      const gear = (await detail(gearModel.id)).files.find(f => f.original_name === 'gear.3mf');
+      const saveName = `gear_gv-${gear.slicer_token}.3mf`;
+
+      // The slicer drops the downloaded file into .slicer-saves: not a save
+      const sent = await download(`/api/files/${gear.id}/download/${saveName}`);
+      put(`.slicer-saves/${saveName}`, sent);
+      let s = (await saves()).find(x => x.name === saveName);
+      assert(s && s.status === 'download', `An unchanged download must be ignored, got ${s && s.status}`);
+      assert(same(fs.readFileSync(lib('Gear Box/gear.3mf')), mesh(10)), 'A download must not touch the library file');
+
+      // A real save replaces the file; the old content goes to its history
+      put(`.slicer-saves/${saveName}`, mesh(20));
+      s = (await saves()).find(x => x.name === saveName);
+      assert(s.status === 'imported' && same(fs.readFileSync(lib('Gear Box/gear.3mf')), mesh(20)), `A changed save must replace the file, got ${s.status} ${s.message || ''}`);
+      assert(fs.existsSync(lib('.slicer-saves/' + saveName)), 'A save is copied, not moved');
+      let versions = (await apiReq(`/api/files/${gear.id}/versions`, { session: adminSession })).data;
+      assert(versions.length === 1 && same(await download(versions[0].url), mesh(10)), 'The replaced content must be kept as a version');
+      assert((await saves()).find(x => x.name === saveName).status === 'imported' && (await apiReq(`/api/files/${gear.id}/versions`, { session: adminSession })).data.length === 1,
+        'The same save must not be imported twice');
+      assert((await detail(gearModel.id)).files.find(f => f.id === gear.id).version_count === 1, 'The model page must show the version count');
+
+      // Restore brings the old content back and keeps the current one as a version
+      assert((await apiReq(`/api/files/${gear.id}/versions/${versions[0].id}/restore`, { method: 'POST', session: adminSession })).status === 200, 'Restoring a version failed');
+      versions = (await apiReq(`/api/files/${gear.id}/versions`, { session: adminSession })).data;
+      assert(same(fs.readFileSync(lib('Gear Box/gear.3mf')), mesh(10)) && versions.length === 2, 'Restore must swap the content and keep both in the history');
+
+      // The scanner skips .versions and .slicer-saves
+      await scanLibrary();
+      assert(!(await byName('.slicer-saves')), 'The save folder must not become a model');
+      assert(JSON.stringify((await detail(gearModel.id)).files.map(f => f.original_name)) === '["gear.3mf"]', 'Versions must not be indexed as files');
+
+      // A 3MF saved from a loose STL: the project becomes a folder and the 3MF its main file
+      const xmasModel = await byName('Loose Xmas');
+      const xmasStl = (await detail(xmasModel.id)).files[0];
+      const xmasSave = `Loose_Xmas_gv-${xmasStl.slicer_token}.3mf`;
+      put(`.slicer-saves/${xmasSave}`, await download(`/api/files/${xmasStl.id}/3mf/${xmasSave}`));
+      assert((await saves()).find(x => x.name === xmasSave).status === 'download', 'The converted STL download must be ignored too');
+      put(`.slicer-saves/${xmasSave}`, mesh(30));
+      s = (await saves()).find(x => x.name === xmasSave);
+      assert(s.status === 'imported', `The STL save must be imported, got ${s.status} ${s.message || ''}`);
+      assert(fs.existsSync(lib('Loose Xmas/Loose Xmas.stl')) && fs.existsSync(lib('Loose Xmas/Loose Xmas.3mf')) && !fs.existsSync(lib('Loose Xmas.stl')),
+        'A loose file must move into a folder of its name, next to the new 3MF');
+      const xd = await detail(xmasModel.id);
+      const new3mf = xd.files.find(f => f.original_name === 'Loose Xmas.3mf');
+      assert(new3mf && xd.preview_file_id === new3mf.id && xd.files.some(f => f.original_name === 'Loose Xmas.stl'), 'The 3MF must become the main file and the STL stay');
+
+      // A save that matches nothing waits to be assigned
+      put('.slicer-saves/Mystery_part.3mf', mesh(40));
+      s = (await saves()).find(x => x.name === 'Mystery_part.3mf');
+      assert(s.status === 'unmatched' && s.clean_name === 'Mystery part.3mf', `A save without a match must wait, got ${s.status}`);
+      const created = await apiReq(`/api/slicer-saves/${s.id}/assign`, { method: 'POST', session: adminSession, body: { new_model: true } });
+      assert(created.status === 200 && fs.existsSync(lib('Mystery part/Mystery part.3mf')) && await byName('Mystery part'), `Assigning a new model failed: ${JSON.stringify(created.data)}`);
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

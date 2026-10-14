@@ -258,6 +258,101 @@ const UI = {
       ${files.length ? `<div class="glass-panel trash-section"><div class="panel-header"><div class="panel-title">Files (${files.length})</div></div><div class="panel-body no-pad">${fileGroups}</div></div>` : ''}`;
   },
 
+  // ── File history (.versions) ──
+  fileHistoryModal(file, versions, canEdit) {
+    const sources = { slicer: 'Before a slicer save', restore: 'Before a restore' };
+    const is3d = ['stl', '3mf', 'obj', 'step'].includes(file.file_type);
+    const rows = versions.map(v => `
+      <div class="trash-row">
+        ${this.fileTypeIcon(this.fileIconType(file))}
+        <div class="trash-info">
+          <div class="trash-name" style="cursor:default">${this.escapeHtml(this.sqlDate(v.created_at).toLocaleString())}</div>
+          <div class="trash-meta">${this.formatSize(v.file_size)} · ${sources[v.source] || this.escapeHtml(v.source || '')}</div>
+        </div>
+        <div class="trash-actions">
+          ${is3d ? `<button type="button" class="btn btn-ghost btn-xs" onclick="App.previewFileVersion(${v.id})">Preview</button>` : ''}
+          <a class="file-action-btn" href="${this.escapeHtml(v.url)}" download title="Download"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
+          ${canEdit ? `
+          <button type="button" class="btn btn-secondary btn-xs" onclick="App.restoreFileVersion(${v.id})">Restore</button>
+          <button type="button" class="file-action-btn delete" title="Delete this version" onclick="App.deleteFileVersion(${v.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
+        </div>
+      </div>`).join('');
+    return `
+      <div style="margin-bottom:12px;color:var(--text-secondary);font-size:.85rem">
+        Earlier contents of <strong>${this.escapeHtml(file.original_name)}</strong>, newest first. Restore keeps the current content as a version too.
+      </div>
+      <div class="glass-panel" style="max-height:60vh;overflow:auto">${rows || '<div class="empty-state" style="padding:24px"><div class="empty-state-text">No earlier versions</div></div>'}</div>`;
+  },
+
+  // ── Slicer saves page (sidebar) ──
+  slicerSavesPage(data) {
+    const saves = data.saves || [];
+    const by = (status) => saves.filter(s => s.status === status);
+    const ago = (ms) => this.formatDateShort(new Date(ms)) + ' ' + new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const modelLink = (id, name, fileName) => id ? `<a href="#/models/${id}">${this.escapeHtml(name || '')}</a>${fileName ? ` / ${this.escapeHtml(fileName)}` : ''}` : '';
+    const row = (s, meta, actions) => `
+      <div class="trash-row">
+        ${this.fileTypeIcon(this.fileIconType({ original_name: s.name, file_type: (s.name.match(/\.([^.]+)$/) || [])[1] }))}
+        <div class="trash-info">
+          <div class="trash-name" style="cursor:default" title="${this.escapeHtml(s.name)}">${this.escapeHtml(s.name)}</div>
+          <div class="trash-meta">${this.formatSize(s.file_size)} · saved ${ago(s.mtime_ms)}${meta ? ` · ${meta}` : ''}</div>
+        </div>
+        <div class="trash-actions">${actions}</div>
+      </div>`;
+    const preview = (s) => /\.(3mf|stl|obj)$/i.test(s.name) ? `<button type="button" class="btn btn-ghost btn-xs" onclick="App.previewSlicerSave(${s.id})">Preview</button>` : '';
+    const discard = (s) => `<button type="button" class="file-action-btn delete" title="Delete this saved file" onclick="App.deleteSlicerSave(${s.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+    const section = (title, hint, items) => items.length ? `
+      <div class="glass-panel trash-section">
+        <div class="panel-header"><div class="panel-title">${title} (${items.length})</div>${hint ? `<div class="slicer-hint">${hint}</div>` : ''}</div>
+        <div class="panel-body no-pad">${items.join('')}</div>
+      </div>` : '';
+
+    const quietMs = data.quiet_minutes * 60000;
+    const pending = by('pending').map(s => {
+      const left = Math.max(1, Math.ceil((quietMs - (data.now - s.mtime_ms)) / 60000));
+      return row(s, `for ${modelLink(s.model_id, s.model_name, s.file_name)} · imports in ${left} min`,
+        `${preview(s)}<button type="button" class="btn btn-primary btn-xs" onclick="App.importSlicerSave(${s.id})">Import now</button>`);
+    });
+    const errors = by('error').map(s => row(s, `<span style="color:var(--error)">${this.escapeHtml(s.message || 'Import failed')}</span>`,
+      `<button type="button" class="btn btn-secondary btn-xs" onclick="App.importSlicerSave(${s.id})">Retry</button>${discard(s)}`));
+    const unmatched = by('unmatched').map(s => row(s, 'no matching file',
+      `${preview(s)}<button type="button" class="btn btn-primary btn-xs" onclick="App.showAssignSlicerSave(${s.id})">Assign...</button>${discard(s)}`));
+    const imported = by('imported').map(s => row(s, `${this.escapeHtml(s.message || 'Imported')} · ${modelLink(s.imported_model_id, s.imported_model_name, s.imported_name)}`, ''));
+    const downloads = by('download').map(s => row(s, `opened from ${modelLink(s.model_id, s.model_name, s.file_name) || 'the library'}, not changed`, ''));
+    const empty = !saves.length;
+
+    return `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Slicer saves</h1>
+          <div class="page-subtitle">Projects your slicer saves to the library's <code>.slicer-saves</code> folder. A changed file replaces the file it was opened from
+            ${data.quiet_minutes > 0 ? `${data.quiet_minutes} minute${data.quiet_minutes === 1 ? '' : 's'} after the last save` : 'right away'}; the old content stays in its History.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="App.checkSlicerSaves()">Check now</button>
+      </div>
+      ${empty ? `<div class="empty-state"><div class="empty-state-text">Nothing saved by the slicer yet</div><div class="empty-state-sub">Set the slicer's save folder to <code>.slicer-saves</code> in the library share.</div></div>` : ''}
+      ${section('Needs a decision', 'These files match no library file.', unmatched)}
+      ${section('Failed', '', errors)}
+      ${section('Waiting', 'Imported once the slicer has not saved them for a while.', pending)}
+      ${section('Imported', data.cleanup_days > 0 ? `Deleted from .slicer-saves ${data.cleanup_days} days after the last save.` : '', imported)}
+      ${section('Opened, not changed', '', downloads)}`;
+  },
+
+  slicerAssignForm(save) {
+    return `
+      <div style="margin-bottom:14px;color:var(--text-secondary);font-size:.85rem">Where should <strong>${this.escapeHtml(save.name)}</strong> go?</div>
+      <div class="slicer-assign">
+        <button type="button" class="btn btn-secondary" onclick="App.assignSlicerSave({ new_model: true })">New model "${this.escapeHtml(save.clean_name.replace(/\.[^.]+$/, ''))}"</button>
+        <div class="slicer-assign-or">or put it into a model</div>
+        <form onsubmit="event.preventDefault();App.searchAssignModels()" style="display:flex;gap:8px">
+          <input class="form-input" id="assign-model-search" placeholder="Search models..." autocomplete="off" style="flex:1">
+          <button type="submit" class="btn btn-secondary">Search</button>
+        </form>
+        <div id="assign-model-results" class="slicer-assign-results"></div>
+        <div id="assign-model-files"></div>
+      </div>`;
+  },
+
   // The "..." menu of a file or folder row in a project's file list. The row carries
   // data-entry-path / data-entry-kind; the handlers read them from there.
   entryMenu(items) {
@@ -266,6 +361,7 @@ const UI = {
       rename: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
       move: '<path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>',
       folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>',
+      history: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><polyline points="12 7 12 12 15 14"/>',
       delete: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
     };
     return `
@@ -995,8 +1091,10 @@ const UI = {
         ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in preview" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
         : ` data-file-id="${f.id}" title="No preview for this file type"`;
       const iconType = this.fileIconType(f);
-      const menuItems = !canEdit ? [] : onDisk(f)
+      const historyItem = f.version_count ? [{ action: 'showFileHistory', icon: 'history', label: `History (${f.version_count})` }] : [];
+      const menuItems = !canEdit ? historyItem : onDisk(f)
         ? [
+          ...historyItem,
           { action: 'renameEntry', icon: 'rename', label: 'Rename' },
           ...(layout === 'folder' ? [{ action: 'moveEntry', icon: 'move', label: 'Move to...' }] : []),
           { action: 'deleteEntry', icon: 'delete', label: 'Delete', danger: true }
@@ -1791,6 +1889,21 @@ const UI = {
           <label>Keep Deleted Items in the Trash (Days)</label>
           <input type="number" name="trash_retention_days" value="${config.trash_retention_days !== undefined ? config.trash_retention_days : 30}" min="0" max="3650" class="form-input">
           <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Then they are deleted from disk for good (checked every hour). Set to 0 to keep them until the Trash is emptied. Default is 30.</p>
+        </div>
+        <div class="form-group">
+          <label>Slicer Saves: Wait After the Last Save (Minutes)</label>
+          <input type="number" name="slicer_quiet_minutes" value="${config.slicer_quiet_minutes !== undefined ? config.slicer_quiet_minutes : 5}" min="0" max="1440" class="form-input">
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">A project saved to <code>.slicer-saves</code> replaces its library file once the slicer has not saved it for this long, so quick saves in a row make one version. 0 = right away. Default is 5.</p>
+        </div>
+        <div class="form-group">
+          <label>Slicer Saves: Clean Up After (Days)</label>
+          <input type="number" name="slicer_cleanup_days" value="${config.slicer_cleanup_days !== undefined ? config.slicer_cleanup_days : 7}" min="0" max="3650" class="form-input">
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Unchanged downloads and imported files are deleted from <code>.slicer-saves</code> this long after the last save. Unimported changes are never deleted. 0 = never. Default is 7.</p>
+        </div>
+        <div class="form-group">
+          <label>File History: Versions Kept per File</label>
+          <input type="number" name="file_versions_keep" value="${config.file_versions_keep !== undefined ? config.file_versions_keep : 10}" min="1" max="1000" class="form-input">
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Earlier contents kept in the project's hidden <code>.versions</code> folder; older ones are deleted. Default is 10.</p>
         </div>
         <div class="form-group" style="grid-column: 1 / -1; margin-top: 10px;">
           <label class="toggle-item">

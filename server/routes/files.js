@@ -12,6 +12,17 @@ const { validatePathConfinement } = require('../middleware/security');
 const { getSettingBool, getZipEntryBuffer } = require('../utils/modelHelpers');
 const adultLock = require('../utils/adult');
 const { trashFiles } = require('../utils/trash');
+const { tokenFromName } = require('../utils/slicerToken');
+const { hashFileStream } = require('../utils/modelHelpers');
+
+// "Open in slicer" links end with the file's token: remember a hash of what they send, so the
+// copy the slicer drops into .slicer-saves is not taken for a save (services/slicerSaves.js)
+function rememberSlicerDownload(req, fileId, data) {
+  if (!tokenFromName(req.params.filename)) return;
+  const slicerSaves = require('../services/slicerSaves');
+  if (Buffer.isBuffer(data)) return slicerSaves.recordDownload(fileId, slicerSaves.hashBuffer(data));
+  hashFileStream(data).then(hash => slicerSaves.recordDownload(fileId, hash)).catch(() => {});
+}
 
 // ─── GET /api/files/:id/stream ────────────────────────────────────────────────
 router.get('/:id/stream', (req, res, next) => {
@@ -140,6 +151,7 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
         const entry = zip.getEntry(entryPath);
         if (!entry) return res.status(404).json({ error: 'File not found in archive' });
         const data = getZipEntryBuffer(entry);
+        rememberSlicerDownload(req, file.id, data);
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.filename)}"`);
         return res.send(data);
@@ -152,6 +164,7 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
       const confined = validatePathConfinement(baseDir, path.relative(baseDir, p));
       if (!confined) return res.status(403).json({ error: 'Access denied' });
 
+      rememberSlicerDownload(req, file.id, confined);
       res.download(confined, file.original_name);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to download' }); }
   };
@@ -210,6 +223,7 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
         rawBuffer = getZipEntryBuffer(entry);
         res.setHeader('Content-Type', 'model/3mf');
         if (file.file_type === '3mf') {
+          rememberSlicerDownload(req, file.id, rawBuffer);
           res.setHeader('Content-Disposition', `attachment; filename="${name}.3mf"`);
           return res.send(rawBuffer);
         }
@@ -222,7 +236,10 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
         if (!confined) return res.status(403).json({ error: 'Access denied' });
 
         res.setHeader('Content-Type', 'model/3mf');
-        if (file.file_type === '3mf') return res.download(confined, `${name}.3mf`);
+        if (file.file_type === '3mf') {
+          rememberSlicerDownload(req, file.id, confined);
+          return res.download(confined, `${name}.3mf`);
+        }
 
         if (fs.statSync(confined).size > 300 * 1024 * 1024) {
           return res.status(413).json({ error: 'File too large to convert to 3MF' });
@@ -234,6 +251,7 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
       if (!mesh.tris.length) return res.status(422).json({ error: 'No triangles found in STL' });
 
       const buffer = meshTo3mf(mesh);
+      rememberSlicerDownload(req, file.id, buffer);
       res.setHeader('Content-Disposition', `attachment; filename="${name}.3mf"`);
       res.setHeader('Content-Length', buffer.length);
       res.send(buffer);

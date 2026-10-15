@@ -1021,7 +1021,6 @@ const App = {
         await API.bulkUpdateModels(this.selectedModelIds, { add_tags: tagsToApply });
       }
       this.toast(`Updated tags on ${this.selectedModelIds.length} models`);
-      this.clearSelection();
       this.closeModal();
       this.cache.tags = await API.getTags().catch(() => this.cache.tags);
       this.route();
@@ -1054,7 +1053,6 @@ const App = {
     try {
       await API.bulkUpdateModels(this.selectedModelIds, { category_id: catId });
       this.toast(`Updated category on ${count} model${count > 1 ? 's' : ''}`);
-      this.clearSelection();
       this.closeModal();
       this.cache.categories = await API.getCategories().catch(() => this.cache.categories);
       this.renderSidebarCategories();
@@ -1072,7 +1070,6 @@ const App = {
     try {
       await API.bulkAddModelsToProject(fd.get('project_id'), this.selectedModelIds);
       this.toast(`Added ${this.selectedModelIds.length} models to collection`);
-      this.clearSelection();
       this.closeModal();
     } catch(e) { this.toast(e.message, 'error'); }
   },
@@ -1831,7 +1828,14 @@ const App = {
     this.collectionModelSearchQuery = '';
     this.el.innerHTML = '<div class="skeleton-grid"></div>';
     try {
-      this.currentProject = await API.getProject(id);
+      // A collection only references models: its tiles come from the model list query, so they
+      // are the same tiles (covers, badges, counts) as on the main list
+      const [project, list] = await Promise.all([
+        API.getProject(id),
+        API.getModels({ project_id: id, limit: 1000, sort: 'name' })
+      ]);
+      project.models = list.models || [];
+      this.currentProject = project;
       this.el.innerHTML = UI.projectDetail(this.currentProject, this.collectionModelSearchQuery);
       if (typeof Viewer !== 'undefined' && Viewer.generateThumbnails) {
         setTimeout(() => Viewer.generateThumbnails(), 50);
@@ -2081,7 +2085,6 @@ const App = {
           await API.bulkAddModelsToProject(pid, this.selectedModelIds);
         }
         this.toast(`Added ${this.selectedModelIds.length} models to ${selectedProjectIds.length} collection(s)`);
-        this.clearSelection();
         this.closeModal();
       }
       this.renderSidebarCollections();
@@ -2295,7 +2298,6 @@ const App = {
       await API.bulkUpdateModels(this.selectedModelIds, { is_adult: isAdult });
       this.toast(isAdult ? 'Password protection on' : 'Password protection removed');
       this.closeModal();
-      this.clearSelection();
       this.route();
     } catch (e) { this.toast(e.message || 'Failed to update', 'error'); }
   },

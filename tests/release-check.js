@@ -1334,6 +1334,18 @@ async function runE2ETests() {
       assert(up.status === 200, `Uploading a viewer cover failed (${up.status})`);
       assert((await pending()).some(m => m.id === gear.id && m.reason === 'viewer'), 'A cover rendered by the viewer must be listed for regeneration');
       assert((await apiReq('/api/covers/pending', { session: viewerSession })).status === 403, 'Only an admin may regenerate covers');
+
+      // A collection shows the covers of the model list (a cover may be an image in the project folder)
+      const col = await apiReq('/api/projects', { method: 'POST', session: adminSession, body: { name: 'Cover check' } });
+      await apiReq(`/api/projects/${col.data.id}/models/bulk`, { method: 'POST', session: adminSession, body: { model_ids: [gear.id, benchy.id] } });
+      const inCollection = (await apiReq(`/api/projects/${col.data.id}`, { session: adminSession })).data.models || [];
+      for (const listed of [await find('Gear Box'), benchy]) {
+        const m = inCollection.find(x => x.id === listed.id);
+        assert(m && m.thumbnail === listed.thumbnail, `A collection must show the list cover of ${listed.name}: ${m && m.thumbnail} vs ${listed.thumbnail}`);
+        assert(!m.stl_file || m.stl_file.startsWith('/'), `stl_file of a collection model must be a URL, got ${m.stl_file}`);
+      }
+      assert((await fetch(`${baseUrl}${inCollection.find(x => x.id === benchy.id).thumbnail}`, { headers: { Cookie: adminSession.cookie } })).status === 200,
+        'An image cover of a collection model must load');
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

@@ -1179,8 +1179,16 @@ const Viewer = {
     return this.coverStage;
   },
 
-  // Render the cover of an STL or 3MF (first build plate) and return it as a PNG blob
-  async renderCover(url, fileType) {
+  // Render the cover of an STL or 3MF (first build plate) and return it as a PNG blob. Covers
+  // share one stage, so they are rendered one after another: card lists and Regenerate Covers
+  // can ask at the same time.
+  renderCover(url, fileType) {
+    const job = (this.coverQueue || Promise.resolve()).then(() => this.renderCoverNow(url, fileType));
+    this.coverQueue = job.catch(() => {});
+    return job;
+  },
+
+  async renderCoverNow(url, fileType) {
     if (typeof THREE === 'undefined' || !THREE.STLLoader) return null;
     if (typeof fflate !== 'undefined') { window.fflate = fflate; THREE.fflate = fflate; }
     const is3MF = fileType === '3mf' || (!fileType && url.toLowerCase().includes('.3mf'));

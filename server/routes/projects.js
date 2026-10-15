@@ -7,7 +7,7 @@ const { get, all, run } = require('../database');
 const { UPLOADS_DIR } = require('../config');
 const { authenticate } = require('../middleware/auth');
 const { heavyLimiter } = require('../middleware/rateLimit');
-const { getFileUrl } = require('../utils/modelHelpers');
+const { getFileUrl, getThumbUrl } = require('../utils/modelHelpers');
 
 // ─── GET /api/projects ────────────────────────────────────────────────────────
 router.get('/', authenticate, (req, res) => {
@@ -84,9 +84,14 @@ router.get('/:id', authenticate, (req, res) => {
       } else if (m.mf_file) {
         stl_url = getFileUrl({ filename: m.mf_file, library_path: m.mf_library_path });
       }
+      // Same shape as GET /api/models, so the cards show the same covers as the model list:
+      // thumbnail and stl_file are URLs (a cover can be an image in the project folder)
+      const thumbnailUrl = getThumbUrl(m.thumbnail, m.library_path);
       return {
         ...m,
-        thumbnail_url: m.thumbnail ? `/uploads/${m.thumbnail}` : null,
+        thumbnail: thumbnailUrl,
+        thumbnail_url: thumbnailUrl,
+        stl_file: stl_url,
         stl_url,
         has_printed: (m.print_count || 0) > 0,
         file_types: m.file_types ? m.file_types.split(',') : []

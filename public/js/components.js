@@ -559,6 +559,7 @@ const UI = {
       <div class="model-card-thumb">${thumb}<div class="model-card-badges"><span class="badge badge-${file.ext || file.type}">${file.ext || file.type}</span></div></div>
       <div class="model-card-body">
         <div class="model-card-name" title="${file.name}">${file.name}</div>
+        <div class="model-card-body-badges"><span class="badge badge-${file.ext || file.type}">${file.ext || file.type}</span></div>
         ${folderLabel}
         <div class="model-card-meta" style="font-size:.75rem;color:var(--text-muted)">${this.formatSize(file.size)}</div>
         ${metaChips}
@@ -604,6 +605,7 @@ const UI = {
           ${plusBtn}
         </div>
         <div class="model-card-meta">${cat} ${printed}</div>
+        ${(adultBadge || types) ? `<div class="model-card-body-badges">${adultBadge}${types}</div>` : ''}
       </div>
       <div class="model-card-footer">
         <span style="font-size:.75rem;color:var(--text-muted)">${m.file_count || 0} files</span>

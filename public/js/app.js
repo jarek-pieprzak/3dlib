@@ -453,8 +453,14 @@ const App = {
     const links = document.querySelectorAll('.sidebar-nav-item, .sidebar-sub-item');
     links.forEach(l => l.classList.remove('active'));
     
-    // Clear selection when navigating
-    this.selectedModelIds = [];
+    // Clear the selection when navigating, except within the model list (other page, filter,
+    // sort): models picked on page 1 stay selected on page 2
+    const stayInList = path === '/models' && this.lastRoutePath === '/models';
+    this.lastRoutePath = path;
+    if (!stayInList) {
+      this.selectedModelIds = [];
+      this.lastSelectedModelId = null;
+    }
     this.selectedBrowsePaths = [];
     this.renderBulkBar();
     this.renderBulkBrowseBar();
@@ -966,8 +972,10 @@ const App = {
   selectAll() {
     if (!this.currentUser || this.currentUser.role === 'viewer') return;
     const cards = document.querySelectorAll('.model-card');
-    this.selectedModelIds = Array.from(cards).map(c => Number(c.dataset.modelId));
-    this.lastSelectedModelId = this.selectedModelIds.at(-1) || null;
+    // Adds this page to models selected on other pages
+    const pageIds = Array.from(cards).map(c => Number(c.dataset.modelId));
+    this.selectedModelIds = Array.from(new Set([...this.selectedModelIds, ...pageIds]));
+    this.lastSelectedModelId = pageIds.at(-1) || null;
     cards.forEach(c => c.classList.add('selected'));
     this.renderBulkBar();
   },

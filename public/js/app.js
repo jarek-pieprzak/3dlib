@@ -398,6 +398,7 @@ const App = {
     document.documentElement.setAttribute('data-theme', nextTheme);
     localStorage.setItem('gv_theme', nextTheme);
     this.updateThemeIcon();
+    document.dispatchEvent(new CustomEvent('gv:theme')); // 3D scenes follow (viewer.js)
   },
 
   updateThemeIcon() {
@@ -510,6 +511,8 @@ const App = {
     const t = document.getElementById('theme-selector').value;
     document.documentElement.setAttribute('data-theme', t);
     localStorage.setItem('gv_theme', t);
+    this.updateThemeIcon();
+    document.dispatchEvent(new CustomEvent('gv:theme')); // 3D scenes follow (viewer.js)
   },
 
   setAccent(a) {

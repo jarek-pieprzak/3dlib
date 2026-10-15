@@ -100,6 +100,30 @@ html[data-theme="light"] {
   --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
 }
 
+/* Active items are white on the dark themes: dark text on the light one */
+html[data-theme="light"] .sidebar-nav-item.active,
+html[data-theme="light"] .sidebar-sub-item.active,
+html[data-theme="light"] .format-pill.active {
+  color: var(--text-primary);
+  background: rgba(15, 23, 42, 0.07);
+}
+html[data-theme="light"] .format-pill.active {
+  border-color: rgba(15, 23, 42, 0.18);
+}
+
+/* 3D viewer toolbars float over a light scene in the light theme */
+html[data-theme="light"] .viewer-pill,
+html[data-theme="light"] .viewer-bottom-dock {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+html[data-theme="light"] .viewer-tool-btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+html[data-theme="light"] .viewer-swatch.active {
+  border-color: var(--text-primary);
+}
+
 html[data-theme="light"] .glass-panel {
   background: #ffffff;
   border-color: #e2e8f0;

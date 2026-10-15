@@ -141,7 +141,7 @@ const Viewer = {
         lastSegmentColor: new THREE.Color(0xffffff).getHex(),
         buildVolume: buildVol,
         initialCameraPosition: [0, 400, 450],
-        backgroundColor: 0x161625
+        backgroundColor: this.sceneColors().background
       });
       
       const viewer = { preview, isGcode: true, animId: null, renderer: { dispose: () => preview.dispose && preview.dispose() } };
@@ -235,9 +235,8 @@ const Viewer = {
     const height = container.clientHeight;
     if (!width || !height) return;
 
-    // Scene
+    // Scene (background and grid follow the light / dark theme, see Viewer.applySceneTheme)
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x161625);
 
     // Camera
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
@@ -280,6 +279,9 @@ const Viewer = {
     // Grid
     const grid = new THREE.GridHelper(200, 30, 0x252545, 0x1a1a35);
     scene.add(grid);
+    this.applySceneTheme(scene, grid);
+    for (const entry of this.themedScenes) if (!entry.canvas.isConnected) this.themedScenes.delete(entry);
+    this.themedScenes.add({ scene, grid, canvas: renderer.domElement });
 
     const escapeText = (t) => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -1080,6 +1082,27 @@ const Viewer = {
   // position buffer three vertices at a time, which only works on non-indexed geometry, while
   // the 3MF loader produces indexed meshes (smoothing them as-is gives black, faceted faces).
   // Build items are clones sharing one geometry, so each geometry is converted only once.
+  // Background and grid colours of the 3D scene for the current theme (html[data-theme])
+  sceneColors() {
+    return document.documentElement.getAttribute('data-theme') === 'light'
+      ? { background: 0xe6ebf2, gridCenter: 0xa7b1c0, grid: 0xccd4df }
+      : { background: 0x161625, gridCenter: 0x252545, grid: 0x1a1a35 };
+  },
+
+  // Open viewers, recoloured when the theme changes (App.toggleTheme fires 'gv:theme')
+  themedScenes: new Set(),
+
+  applySceneTheme(scene, grid) {
+    const c = this.sceneColors();
+    if (scene.background && scene.background.isColor) scene.background.set(c.background);
+    else scene.background = new THREE.Color(c.background);
+    if (grid) {
+      // Same size and divisions, so the colour attribute of a fresh grid fits as it is
+      const fresh = new THREE.GridHelper(200, 30, c.gridCenter, c.grid);
+      grid.geometry.setAttribute('color', fresh.geometry.attributes.color);
+    }
+  },
+
   prepare3MFGeometry(object, smoothFn) {
     const SMOOTH_LIMIT = 250000; // same vertex budget smoothGeometryNormals() works with
     const converted = new Map();
@@ -1107,9 +1130,13 @@ const Viewer = {
 
   async takeSnapshot(modelId, renderer, scene, camera) {
     if (!renderer || !scene || !camera) return;
-    
-    // Render one frame with specific settings for thumbnail
+
+    // Render one frame for the cover: always on the dark studio background, the cover is shown
+    // in both themes
+    const background = scene.background;
+    scene.background = new THREE.Color(0x161625);
     renderer.render(scene, camera);
+    scene.background = background;
     
     return new Promise((resolve) => {
       renderer.domElement.toBlob(async (blob) => {
@@ -1135,7 +1162,6 @@ const Viewer = {
     const width = 300;
     const height = 200;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x161625);
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
@@ -1147,6 +1173,8 @@ const Viewer = {
     const light3 = new THREE.DirectionalLight(0xffffff, 0.4); light3.position.set(0, -1, 2); scene.add(light3);
     const grid = new THREE.GridHelper(200, 30, 0x252545, 0x1a1a35);
     scene.add(grid);
+    // Covers are stored on the server and shown in both themes: always the dark studio
+    scene.background = new THREE.Color(0x161625);
 
     if (typeof fflate !== 'undefined') { window.fflate = fflate; THREE.fflate = fflate; }
 
@@ -1257,3 +1285,11 @@ const Viewer = {
   }
 };
 
+
+// The light / dark theme switch recolours the open 3D scenes
+document.addEventListener('gv:theme', () => {
+  for (const entry of Viewer.themedScenes) {
+    if (entry.canvas.isConnected) Viewer.applySceneTheme(entry.scene, entry.grid);
+    else Viewer.themedScenes.delete(entry);
+  }
+});

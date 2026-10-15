@@ -1236,7 +1236,9 @@ async function runE2ETests() {
 
     await check('Slicer saves: downloads are ignored, changed saves become file versions, STL saves add a 3MF, unmatched saves are assigned by hand', async () => {
       const { meshTo3mf } = require(path.join(ROOT_DIR, 'server/utils/3mf'));
-      const mesh = (n) => meshTo3mf({ verts: [[0, 0, 0], [n, 0, 0], [0, n, 0]], tris: [[0, 1, 2]] });
+      // Each mesh is built once: the 3MF zip stores its creation time, so two builds can differ
+      const meshes = {};
+      const mesh = (n) => (meshes[n] = meshes[n] || meshTo3mf({ verts: [[0, 0, 0], [n, 0, 0], [0, n, 0]], tris: [[0, 1, 2]] }));
       const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
       const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
       const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
@@ -1316,6 +1318,22 @@ async function runE2ETests() {
       const created = await apiReq(`/api/slicer-saves/${s.id}/assign`, { method: 'POST', session: adminSession, body: { new_model: true } });
       assert(created.status === 200 && fs.existsSync(lib('Mystery part/Mystery part.3mf')) && await byName('Mystery part'), `Assigning a new model failed: ${JSON.stringify(created.data)}`);
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
+    });
+
+    await check('Regenerate covers lists viewer-rendered and missing covers, not covers from images', async () => {
+      const pending = async () => (await apiReq('/api/covers/pending', { session: adminSession })).data.models || [];
+      const find = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const gear = await find('Gear Box');
+      const benchy = await find('Loose Benchy');
+      assert((await pending()).some(m => m.id === gear.id && m.reason === 'missing' && m.url), 'A model without a cover must be listed as missing');
+      assert(!(await pending()).some(m => m.id === benchy.id), 'A cover taken from an image of the project must be kept');
+      const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+      const form = new FormData();
+      form.append('thumbnail', new Blob([png], { type: 'image/png' }), `thumb_${gear.id}.png`);
+      const up = await apiReq(`/api/models/${gear.id}/thumbnail`, { method: 'POST', session: adminSession, body: form });
+      assert(up.status === 200, `Uploading a viewer cover failed (${up.status})`);
+      assert((await pending()).some(m => m.id === gear.id && m.reason === 'viewer'), 'A cover rendered by the viewer must be listed for regeneration');
+      assert((await apiReq('/api/covers/pending', { session: viewerSession })).status === 403, 'Only an admin may regenerate covers');
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

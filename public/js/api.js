@@ -141,6 +141,9 @@ const API = {
   },
   emptyTrash() { return this.request('/api/trash/empty', { method: 'POST' }); },
 
+  // Covers the 3D viewer can render again (Settings > Maintenance)
+  getPendingCovers() { return this.request('/api/covers/pending'); },
+
   // File history (.versions)
   getFileVersions(fileId) { return this.request(`/api/files/${fileId}/versions`); },
   restoreFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' }); },

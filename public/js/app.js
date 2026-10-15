@@ -3325,6 +3325,56 @@ const App = {
     this.pendingFilesTab = 'trash';
   },
 
+  // ── Regenerate covers (Settings > Maintenance): rendered in this tab, one model at a time ──
+  async regenerateCovers() {
+    if (this.coversRun) {
+      this.coversRun.cancel = true; // the button reads "Stop" while it runs
+      return;
+    }
+    if (typeof Viewer === 'undefined' || !Viewer.renderCover) return;
+    const el = (id) => document.getElementById(id);
+    let list;
+    try {
+      list = await API.getPendingCovers();
+    } catch (e) {
+      return this.toast(e.message, 'error');
+    }
+    const models = list.models || [];
+    const skippedNote = list.skipped_protected ? ` ${list.skipped_protected} password-protected models were skipped.` : '';
+    if (!models.length) {
+      if (el('regenerate-covers-status')) el('regenerate-covers-status').textContent = `No covers to render.${skippedNote}`;
+      return;
+    }
+
+    const run = this.coversRun = { cancel: false };
+    if (el('regenerate-covers-btn')) el('regenerate-covers-btn').textContent = 'Stop';
+    let done = 0;
+    let failed = 0;
+    for (const m of models) {
+      if (run.cancel) break;
+      const status = el('regenerate-covers-status');
+      if (status) {
+        const pct = Math.round(((done + failed) / models.length) * 100);
+        status.innerHTML = `<div class="covers-progress"><div style="width:${pct}%"></div></div>
+          <div>${done + failed} / ${models.length} · ${UI.escapeHtml(m.name)}</div>`;
+      }
+      try {
+        const blob = await Viewer.renderCover(m.url, m.file_type);
+        if (!blob) throw new Error('Nothing rendered');
+        await API.uploadThumbnail(m.id, new File([blob], `cover_${m.id}.png`, { type: 'image/png' }));
+        done++;
+      } catch (e) {
+        failed++;
+        console.warn('[Covers] Could not render', m.name, e);
+      }
+    }
+    this.coversRun = null;
+    if (el('regenerate-covers-btn')) el('regenerate-covers-btn').textContent = 'Regenerate Covers';
+    if (el('regenerate-covers-status')) {
+      el('regenerate-covers-status').textContent = `${run.cancel ? 'Stopped' : 'Done'}: ${done} covers rendered${failed ? `, ${failed} failed (see the browser console)` : ''}.${skippedNote}`;
+    }
+  },
+
   // ── File history (.versions) ──
   async showFileHistory(el) {
     const entry = this.entryFrom(el);

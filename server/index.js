@@ -41,6 +41,7 @@ const projectFilesRoutes = require('./routes/projectFiles');
 const trashRoutes = require('./routes/trash');
 const fileVersionsRoutes = require('./routes/fileVersions');
 const slicerSavesRoutes = require('./routes/slicerSaves');
+const coversRoutes = require('./routes/covers');
 
 const app = express();
 
@@ -183,6 +184,7 @@ app.use('/api/trash', trashRoutes);
 app.use('/api/files', filesRoutes);
 app.use('/api/files', fileVersionsRoutes);
 app.use('/api/slicer-saves', slicerSavesRoutes);
+app.use('/api/covers', coversRoutes);
 app.post('/api/upload-slicer', uploadSlicerHandler); // Legacy / direct slicer upload hook
 app.use('/api/projects', projectsRoutes);
 app.use('/api/browse', browseRoutes);

@@ -111,6 +111,11 @@ html[data-theme="light"] .format-pill.active {
   border-color: rgba(15, 23, 42, 0.18);
 }
 
+/* Covers have a transparent background: the light theme gives them the light studio colour */
+html[data-theme="light"] .model-card-thumb {
+  background: #e6ebf2;
+}
+
 /* 3D viewer toolbars float over a light scene in the light theme */
 html[data-theme="light"] .viewer-pill,
 html[data-theme="light"] .viewer-bottom-dock {
@@ -620,6 +625,10 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .trash-group-head a:hover{color:var(--accent-cyan)}
 .trash-group-head span{color:var(--text-muted)}
 .trash-group-head .btn{margin-left:auto}
+/* Regenerate covers */
+.covers-status{margin-top:12px;font-size:.8rem;color:var(--text-secondary);display:flex;flex-direction:column;gap:6px;max-width:480px}
+.covers-progress{height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden}
+.covers-progress>div{height:100%;background:var(--accent-cyan);transition:width .2s}
 /* Slicer saves */
 .slicer-hint{font-size:.75rem;color:var(--text-muted);margin-left:auto}
 .trash-meta a{color:var(--accent-cyan);text-decoration:none}

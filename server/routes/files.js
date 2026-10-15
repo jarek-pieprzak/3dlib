@@ -17,11 +17,16 @@ const { hashFileStream } = require('../utils/modelHelpers');
 
 // "Open in slicer" links end with the file's token: remember a hash of what they send, so the
 // copy the slicer drops into .slicer-saves is not taken for a save (services/slicerSaves.js)
+// Resolves once the hash is stored, so the file is sent only after: a save check that runs
+// right after the download must already know it
 function rememberSlicerDownload(req, fileId, data) {
-  if (!tokenFromName(req.params.filename)) return;
+  if (!tokenFromName(req.params.filename)) return Promise.resolve();
   const slicerSaves = require('../services/slicerSaves');
-  if (Buffer.isBuffer(data)) return slicerSaves.recordDownload(fileId, slicerSaves.hashBuffer(data));
-  hashFileStream(data).then(hash => slicerSaves.recordDownload(fileId, hash)).catch(() => {});
+  if (Buffer.isBuffer(data)) {
+    slicerSaves.recordDownload(fileId, slicerSaves.hashBuffer(data));
+    return Promise.resolve();
+  }
+  return hashFileStream(data).then(hash => slicerSaves.recordDownload(fileId, hash)).catch(() => {});
 }
 
 // ─── GET /api/files/:id/stream ────────────────────────────────────────────────
@@ -164,8 +169,7 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
       const confined = validatePathConfinement(baseDir, path.relative(baseDir, p));
       if (!confined) return res.status(403).json({ error: 'Access denied' });
 
-      rememberSlicerDownload(req, file.id, confined);
-      res.download(confined, file.original_name);
+      rememberSlicerDownload(req, file.id, confined).then(() => res.download(confined, file.original_name));
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to download' }); }
   };
 
@@ -237,8 +241,7 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
 
         res.setHeader('Content-Type', 'model/3mf');
         if (file.file_type === '3mf') {
-          rememberSlicerDownload(req, file.id, confined);
-          return res.download(confined, `${name}.3mf`);
+          return rememberSlicerDownload(req, file.id, confined).then(() => res.download(confined, `${name}.3mf`));
         }
 
         if (fs.statSync(confined).size > 300 * 1024 * 1024) {

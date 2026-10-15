@@ -1131,12 +1131,15 @@ const Viewer = {
   async takeSnapshot(modelId, renderer, scene, camera) {
     if (!renderer || !scene || !camera) return;
 
-    // Render one frame for the cover: always on the dark studio background, the cover is shown
-    // in both themes
+    // Render one frame for the cover on a transparent background without the grid: the cover
+    // is shown in both themes (see renderCover)
     const background = scene.background;
-    scene.background = new THREE.Color(0x161625);
+    const grids = [];
+    scene.traverse(c => { if (c.type === 'GridHelper' && c.visible) { grids.push(c); c.visible = false; } });
+    scene.background = null;
     renderer.render(scene, camera);
     scene.background = background;
+    grids.forEach(g => { g.visible = true; });
     
     return new Promise((resolve) => {
       renderer.domElement.toBlob(async (blob) => {
@@ -1153,135 +1156,118 @@ const Viewer = {
     });
   },
 
-  async generateThumbnails() {
-    if (typeof THREE === 'undefined' || !THREE.STLLoader) return;
-    const targets = document.querySelectorAll('.stl-thumb-target');
-    if (targets.length === 0) return;
+  // Covers are stored on the server and shown in both themes: they are rendered on a
+  // transparent background without the grid, so the card colour shows through.
+  // One off-screen stage is kept for all covers (a WebGL context per cover would run out).
+  coverStage: null,
 
-    // Create a single off-screen renderer
-    const width = 300;
-    const height = 200;
+  getCoverStage() {
+    if (this.coverStage) return this.coverStage;
+    const width = 480;
+    const height = 320;
     const scene = new THREE.Scene();
+    scene.background = null;
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
-    
-    // Lighting
+    renderer.setClearColor(0x000000, 0);
     scene.add(new THREE.AmbientLight(0x606080, 0.6));
     const light1 = new THREE.DirectionalLight(0x00d4ff, 0.7); light1.position.set(1, 2, 1); scene.add(light1);
     const light2 = new THREE.DirectionalLight(0x8b5cf6, 0.5); light2.position.set(-2, -1, -1); scene.add(light2);
     const light3 = new THREE.DirectionalLight(0xffffff, 0.4); light3.position.set(0, -1, 2); scene.add(light3);
-    const grid = new THREE.GridHelper(200, 30, 0x252545, 0x1a1a35);
-    scene.add(grid);
-    // Covers are stored on the server and shown in both themes: always the dark studio
-    scene.background = new THREE.Color(0x161625);
+    this.coverStage = { scene, camera, renderer, light1, light2, model: null };
+    return this.coverStage;
+  },
 
+  // Render the cover of an STL or 3MF (first build plate) and return it as a PNG blob
+  async renderCover(url, fileType) {
+    if (typeof THREE === 'undefined' || !THREE.STLLoader) return null;
     if (typeof fflate !== 'undefined') { window.fflate = fflate; THREE.fflate = fflate; }
+    const is3MF = fileType === '3mf' || (!fileType && url.toLowerCase().includes('.3mf'));
+    const loaderClass = is3MF ? (THREE.ThreeMFLoader || THREE['3MFLoader'] || THREE.MFLoader) : THREE.STLLoader;
+    if (!loaderClass) return null;
+    const object = await new Promise((resolve, reject) => new loaderClass().load(url, resolve, undefined, reject));
 
+    const stage = this.getCoverStage();
+    const { scene, camera, renderer, light1, light2 } = stage;
+    if (stage.model) scene.remove(stage.model);
+
+    let model;
+    let modelCenterY;
+    let fileColors = false;
+    if (is3MF) {
+      // The first build plate of multi-plate projects, turned Z-up -> Y-up
+      const plates = Viewer.platesOf(object);
+      model = new THREE.Group();
+      model.rotation.x = -Math.PI / 2;
+      object.children.slice().forEach(child => {
+        if (plates.length < 2 || child.userData.plateIndex === plates[0].index) model.add(child);
+      });
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const scale = 60 / Math.max(size.x, size.y, size.z, 0.001);
+      model.scale.set(scale, scale, scale);
+      model.position.set(-center.x * scale, (-center.y * scale) + (size.y * scale) / 2, -center.z * scale);
+      modelCenterY = (size.y * scale) / 2;
+      fileColors = Boolean(object.userData.hasFileColors);
+    } else {
+      const geometry = object;
+      if (!geometry.attributes.normal || geometry.attributes.normal.count === 0) geometry.computeVertexNormals();
+      geometry.center();
+      geometry.computeBoundingBox();
+      const size = geometry.boundingBox.getSize(new THREE.Vector3());
+      const scale = 60 / Math.max(size.x, size.y, size.z, 0.001);
+      model = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({ color: 0x00ccee, specular: 0x333355, shininess: 35 }));
+      model.scale.set(scale, scale, scale);
+      model.rotation.x = -Math.PI / 2;
+      modelCenterY = (size.z * scale) / 2;
+      model.position.y = modelCenterY;
+    }
+    // Filament colours of the file need white light, the tinted studio light otherwise
+    light1.color.set(fileColors ? 0xffffff : 0x00d4ff);
+    light2.color.set(fileColors ? 0xffffff : 0x8b5cf6);
+    scene.add(model);
+    stage.model = model;
+
+    // Same camera for every cover, for the normalised size (60)
+    camera.position.set(50, 45 + modelCenterY, 65);
+    camera.lookAt(0, modelCenterY, 0);
+    renderer.render(scene, camera);
+    const blob = await new Promise(resolve => renderer.domElement.toBlob(resolve, 'image/png'));
+
+    // Free the model; the stage stays for the next cover
+    scene.remove(model);
+    stage.model = null;
+    model.traverse(c => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => m.dispose());
+    });
+    return blob;
+  },
+
+  // Cards of models without a cover show a rendered one, which is stored as their cover
+  async generateThumbnails() {
+    const targets = document.querySelectorAll('.stl-thumb-target');
     for (const target of targets) {
-      target.classList.remove('stl-thumb-target'); 
+      target.classList.remove('stl-thumb-target');
       const url = target.dataset.stlUrl;
       if (!url) continue;
-
       try {
-        if (typeof fflate !== 'undefined') { window.fflate = fflate; THREE.fflate = fflate; }
-        const is3MF = url.toLowerCase().includes('.3mf');
-        const loaderClass = is3MF ? (THREE.ThreeMFLoader || THREE['3MFLoader'] || THREE.MFLoader) : THREE.STLLoader;
-        if (!loaderClass) continue;
-        const loader = new loaderClass();
-        const object = await new Promise((resolve, reject) => loader.load(url, resolve, undefined, reject));
-        
-        // Remove previous objects
-        while(scene.children.length > 0){ 
-          const child = scene.children[0];
-          if (child.type === 'Mesh' || child.type === 'Group') {
-            scene.remove(child);
-          } else {
-            break; // Keep lights/grid
-          }
-        }
-        // Re-add lights and grid if they were at the end, but better to just filter
-        scene.children.filter(c => c.type === 'Mesh' || c.type === 'Group').forEach(c => scene.remove(c));
-
-        let maxDim = 0;
-        let modelCenterY = 0;
-
-        if (is3MF) {
-          // Thumbnail shows the first build plate of multi-plate projects, turned Z-up -> Y-up.
-          const plates = Viewer.platesOf(object);
-          const display = new THREE.Group();
-          display.rotation.x = -Math.PI / 2;
-          object.children.slice().forEach(child => {
-            if (plates.length < 2 || child.userData.plateIndex === plates[0].index) display.add(child);
-          });
-
-          const box = new THREE.Box3().setFromObject(display);
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          const center = new THREE.Vector3();
-          box.getCenter(center);
-          
-          const maxDim = Math.max(size.x, size.y, size.z);
-          const scale = 60 / maxDim;
-          display.scale.set(scale, scale, scale);
-          
-          display.position.x = -center.x * scale;
-          display.position.y = (-center.y * scale) + (size.y * scale) / 2;
-          display.position.z = -center.z * scale;
-          
-          modelCenterY = (size.y * scale) / 2;
-          scene.add(display);
-          // Filament colours of the file need white light, the tinted studio light otherwise
-          const fileColors = Boolean(object.userData.hasFileColors);
-          light1.color.set(fileColors ? 0xffffff : 0x00d4ff);
-          light2.color.set(fileColors ? 0xffffff : 0x8b5cf6);
-        } else {
-          const geometry = object;
-          if (!geometry.attributes.normal || geometry.attributes.normal.count === 0) geometry.computeVertexNormals();
-          geometry.center();
-          
-          const material = new THREE.MeshPhongMaterial({ color: 0x00ccee, specular: 0x333355, shininess: 35 });
-          const mesh = new THREE.Mesh(geometry, material);
-          
-          geometry.computeBoundingBox();
-          const box = geometry.boundingBox;
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          
-          const maxDim = Math.max(size.x, size.y, size.z);
-          const scale = 60 / maxDim;
-          mesh.scale.set(scale, scale, scale);
-          
-          mesh.rotation.x = -Math.PI / 2;
-          modelCenterY = (size.z * scale) / 2;
-          mesh.position.y = modelCenterY;
-          scene.add(mesh);
-        }
-        
-        // Position camera consistently for normalized object size (60)
-        camera.position.set(50, 45 + modelCenterY, 65);
-        camera.lookAt(0, modelCenterY, 0);
-        
-        renderer.render(scene, camera);
-        const dataUrl = renderer.domElement.toDataURL('image/png');
-        
-        target.innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s" onload="this.style.opacity=1">`;
+        const blob = await this.renderCover(url);
+        if (!blob) continue;
+        const objectUrl = URL.createObjectURL(blob);
+        target.innerHTML = `<img src="${objectUrl}" style="width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s" onload="this.style.opacity=1">`;
         target.style.background = 'transparent';
-
         const modelId = target.closest('[data-model-id]')?.dataset.modelId;
         if (modelId) {
-          fetch(dataUrl).then(res => res.blob()).then(blob => {
-            const file = new File([blob], `thumb_${modelId}.png`, { type: 'image/png' });
-            API.uploadThumbnail(modelId, file).catch(() => {});
-          });
+          const file = new File([blob], `thumb_${modelId}.png`, { type: 'image/png' });
+          API.uploadThumbnail(modelId, file).catch(() => {});
         }
       } catch (e) {
         console.error('Failed to generate thumb for', url, e);
       }
     }
-    
-    renderer.dispose();
-    renderer.forceContextLoss();
   }
 };
 

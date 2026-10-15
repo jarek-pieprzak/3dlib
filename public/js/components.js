@@ -1985,6 +1985,12 @@ const UI = {
           <button type="button" class="btn btn-primary btn-sm" onclick="App.scanForDuplicates()">Scan for Duplicate Files</button>
           <div id="duplicates-results" style="margin-top:16px"></div>
         </div>
+        <div>
+          <h3 style="margin-bottom:8px; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-cyan)"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>Regenerate Covers</h3>
+          <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px">Renders again the covers made by the 3D viewer (now with a transparent background that fits both themes), and covers for STL / 3MF models that have none. Covers from 3MF thumbnails and images are kept. Runs in this browser tab: keep it open until it finishes.</p>
+          <button type="button" class="btn btn-primary btn-sm" id="regenerate-covers-btn" onclick="App.regenerateCovers()">Regenerate Covers</button>
+          <div id="regenerate-covers-status" class="covers-status"></div>
+        </div>
       </div>`;
   },
 

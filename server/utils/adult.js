@@ -53,25 +53,32 @@ function canOpenModelId(req, modelId) {
 
 // Guards /library-files and /uploads: files of a protected model need the unlock cookie.
 // The model's cover thumbnail stays reachable, the lists show it blurred.
-function staticGuard(kind, rootDir) {
+// True when `rel` (a decoded path under /library-files or /uploads) belongs to a locked
+// protected model and is not its cover
+function blocksStatic(req, kind, rootDir, rel) {
+  if (!passwordHash()) return false;
   const { getThumbUrl } = require('./modelHelpers');
   const mount = kind === 'library' ? '/library-files' : '/uploads';
+  const row = kind === 'library'
+    ? get('SELECT m.id, m.is_adult, m.thumbnail, m.library_path FROM files f JOIN models m ON m.id = f.model_id WHERE f.library_path = ?', [path.join(path.resolve(rootDir), rel)])
+    : get('SELECT m.id, m.is_adult, m.thumbnail, m.library_path FROM files f JOIN models m ON m.id = f.model_id WHERE f.filename = ? AND f.library_path IS NULL', [rel.replace(/^\/+/, '')]);
+  if (!row || Number(row.is_adult) !== 1 || isUnlocked(req, row.id)) return false;
+  const thumbUrl = getThumbUrl(row.thumbnail, row.library_path);
+  if (thumbUrl) {
+    let thumbPath = thumbUrl.split('?')[0];
+    try { thumbPath = decodeURIComponent(thumbPath); } catch (e) { /* keep as is */ }
+    if (thumbPath === mount + rel) return false;
+  }
+  return true;
+}
+
+function staticGuard(kind, rootDir) {
   return (req, res, next) => {
-    if (!passwordHash()) return next();
     let rel;
     try { rel = decodeURIComponent(req.path); } catch (e) { return next(); }
-    const row = kind === 'library'
-      ? get('SELECT m.id, m.is_adult, m.thumbnail, m.library_path FROM files f JOIN models m ON m.id = f.model_id WHERE f.library_path = ?', [path.join(path.resolve(rootDir), rel)])
-      : get('SELECT m.id, m.is_adult, m.thumbnail, m.library_path FROM files f JOIN models m ON m.id = f.model_id WHERE f.filename = ? AND f.library_path IS NULL', [rel.replace(/^\/+/, '')]);
-    if (!row || Number(row.is_adult) !== 1 || isUnlocked(req, row.id)) return next();
-    const thumbUrl = getThumbUrl(row.thumbnail, row.library_path);
-    if (thumbUrl) {
-      let thumbPath = thumbUrl.split('?')[0];
-      try { thumbPath = decodeURIComponent(thumbPath); } catch (e) { /* keep as is */ }
-      if (thumbPath === mount + rel) return next();
-    }
-    return res.status(404).type('text/plain').send('Not found');
+    if (blocksStatic(req, kind, rootDir, rel)) return res.status(404).type('text/plain').send('Not found');
+    next();
   };
 }
 
-module.exports = { COOKIE, TOKEN_TTL, passwordHash, isLocked, issueToken, isUnlocked, canOpenModel, canOpenModelId, staticGuard };
+module.exports = { COOKIE, TOKEN_TTL, passwordHash, isLocked, issueToken, isUnlocked, canOpenModel, canOpenModelId, blocksStatic, staticGuard };

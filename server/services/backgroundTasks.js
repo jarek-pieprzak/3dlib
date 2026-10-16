@@ -39,6 +39,9 @@ async function syncLibraryWithDisk() {
       logEvent('info', msg);
     }
 
+    // Small image versions not refreshed for a long time (made again on demand)
+    require('../routes/images').purgeCache();
+
     // Only check physical files on disk; skip virtual entries inside archives (is_archive_entry = 1)
     const files = all('SELECT id, library_path, original_name FROM files WHERE library_path IS NOT NULL AND (is_archive_entry IS NULL OR is_archive_entry = 0)');
     let deletedCount = 0;

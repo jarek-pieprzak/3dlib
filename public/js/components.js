@@ -119,6 +119,15 @@ const UI = {
     return `${stem}${f.slicer_token ? `_gv-${f.slicer_token}` : ''}.${ext}`;
   },
 
+  // A small version of a library image for cards and tiles (server/routes/images.js): a cover
+  // can be a full-size photo, which would cost the browser tens of MB per card
+  imgSrc(url, width) {
+    if (!url || typeof url !== 'string') return url;
+    const plain = url.split('?')[0];
+    if (!/^\/(uploads|library-files)\//.test(plain) || !/\.(png|jpe?g|webp|gif)$/i.test(plain)) return url;
+    return `/thumbs?w=${width}&u=${encodeURIComponent(plain)}`;
+  },
+
   // Icon of a file row: unknown and archive types show their extension
   fileIconType(f) {
     const ext = (String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '';
@@ -201,7 +210,7 @@ const UI = {
     const modelRows = models.map(m => `
       <div class="trash-row">
         <a class="trash-thumb${m.is_adult ? ' is-protected' : ''}" href="#/models/${m.id}?trash=1" title="Open">
-          ${m.thumbnail_url ? `<img src="${this.escapeHtml(m.thumbnail_url)}" alt="" loading="lazy">` : placeholder}
+          ${m.thumbnail_url ? `<img src="${this.escapeHtml(this.imgSrc(m.thumbnail_url, 160))}" alt="" loading="lazy">` : placeholder}
         </a>
         <div class="trash-info">
           <a class="trash-name" href="#/models/${m.id}?trash=1">${this.escapeHtml(m.name)}</a>
@@ -502,9 +511,9 @@ const UI = {
       <div class="model-card-thumb">
         ${folder.thumbnails && folder.thumbnails.length > 0 
           ? (folder.thumbnails.length === 1
-            ? `<img src="${folder.thumbnails[0]}" style="width:100%;height:100%;object-fit:cover" loading="lazy">`
+            ? `<img src="${this.imgSrc(folder.thumbnails[0], 480)}" style="width:100%;height:100%;object-fit:cover" loading="lazy" decoding="async">`
             : `<div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:${folder.thumbnails.length > 2 ? '1fr 1fr' : '1fr'};width:100%;height:100%;gap:1px;background:var(--bg-card)">
-                ${folder.thumbnails.map((t, i) => `<img src="${t}" style="width:100%;height:100%;object-fit:cover;${folder.thumbnails.length === 3 && i === 2 ? 'grid-column:span 2' : ''}" loading="lazy">`).join('')}
+                ${folder.thumbnails.map((t, i) => `<img src="${this.imgSrc(t, 320)}" style="width:100%;height:100%;object-fit:cover;${folder.thumbnails.length === 3 && i === 2 ? 'grid-column:span 2' : ''}" loading="lazy">`).join('')}
               </div>`)
           : `<div class="model-card-placeholder" style="background:linear-gradient(135deg, hsl(220,50%,22%), hsl(240,40%,16%));display:flex;align-items:center;justify-content:center;color:var(--text-muted);opacity:.5"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>`
         }
@@ -521,12 +530,12 @@ const UI = {
     const isGcode = file.type === 'gcode';
     let thumb;
     if (file.thumbnailUrl) {
-      thumb = `<img src="${file.thumbnailUrl}" alt="${file.name}" loading="lazy" decoding="async">`;
+      thumb = `<img src="${this.imgSrc(file.thumbnailUrl, 480)}" alt="${file.name}" loading="lazy" decoding="async">`;
     } else if (is3D) {
       // Rendered when the card comes into view and stored as the file's preview (viewer.js)
       thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${file.url}"${file.id ? ` data-file-id="${file.id}"` : ''} data-size="${Number(file.size) || 0}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else if (file.type === 'image') {
-      thumb = `<img src="${file.url}" alt="${file.name}" loading="lazy" decoding="async">`;
+      thumb = `<img src="${this.imgSrc(file.url, 480)}" alt="${file.name}" loading="lazy" decoding="async">`;
     } else if (isGcode) {
       thumb = `<div class="model-card-placeholder" style="background:linear-gradient(135deg, #78350f, #b45309);color:#fbbf24;display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.6"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></div>`;
     } else {
@@ -573,7 +582,7 @@ const UI = {
     let thumb;
     if (m.thumbnail) {
       const thumbUrl = m.thumbnail.startsWith('/') ? m.thumbnail : `/uploads/${m.thumbnail}`;
-      thumb = `<img src="${thumbUrl}" alt="${m.name}" loading="lazy" decoding="async">`;
+      thumb = `<img src="${this.imgSrc(thumbUrl, 480)}" alt="${m.name}" loading="lazy" decoding="async">`;
     } else if (m.stl_file) {
       const stlUrl = m.stl_file.startsWith('/') ? m.stl_file : `/uploads/${m.stl_file}`;
       thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${stlUrl}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
@@ -2088,7 +2097,7 @@ const UI = {
     return `
       <div class="model-card" onclick="App.navigate('/projects/${p.id}')">
         <div class="model-card-thumb">
-          ${p.thumbnail ? `<img src="/uploads/${p.thumbnail}">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);opacity:.35"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>'}
+          ${p.thumbnail ? `<img src="${this.imgSrc('/uploads/' + p.thumbnail, 480)}" loading="lazy" decoding="async">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);opacity:.35"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>'}
         </div>
         <div class="model-card-body">
           <div class="model-card-title">${p.visibility === 'private' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;color:var(--accent-purple)"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' : ''}${p.name}</div>

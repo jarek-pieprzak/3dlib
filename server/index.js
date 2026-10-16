@@ -165,6 +165,10 @@ if (fs.existsSync(LIBRARY_PATH)) {
 // the 3D viewer would otherwise try to parse index.html as an STL ("Invalid typed array length")
 app.use('/library-files', (req, res) => res.status(404).type('text/plain').send('File not found in library'));
 
+// Small versions of cover images (sharp, cached); outside /api so card grids do not count
+// against its rate limit
+app.use('/thumbs', require('./routes/images').router);
+
 // Direct file access fallback for uploads
 app.get('/uploads/:filename', (req, res) => {
   const filePath = path.join(UPLOADS_DIR, req.params.filename);

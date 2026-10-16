@@ -1361,6 +1361,44 @@ async function runE2ETests() {
         'An image cover of a collection model must load');
     });
 
+    await check('Small cover images: /thumbs resizes and caches library images, with the same access rules', async () => {
+      const sharp = require('sharp');
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      const dir = path.join(tmpLibDir, 'Photo Project');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'part.stl'), stl);
+      const photo = (r) => sharp({ create: { width: 2000, height: 1500, channels: 3, background: { r, g: 80, b: 120 } } }).png().toBuffer();
+      fs.writeFileSync(path.join(dir, 'a-photo.png'), await photo(200));
+      fs.writeFileSync(path.join(dir, 'b-photo.png'), await photo(20));
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 60; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        if (!(await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning) break;
+      }
+      const model = ((await apiReq('/api/models?search=Photo%20Project', { session: adminSession })).data.models || []).find(m => m.name === 'Photo Project');
+      assert(model && /^\/library-files\/.*\.png$/.test(model.thumbnail), `The project cover must be one of its photos, got ${model && model.thumbnail}`);
+
+      const img = (u, w = 480, cookie = adminSession.cookie) => fetch(`${baseUrl}/thumbs?w=${w}&u=${encodeURIComponent(u)}`, { headers: { Cookie: cookie }, redirect: 'manual' });
+      const small = await img(model.thumbnail);
+      assert(small.status === 200 && small.headers.get('content-type') === 'image/webp', `/thumbs must answer a WebP, got ${small.status} ${small.headers.get('content-type')}`);
+      const meta = await sharp(Buffer.from(await small.arrayBuffer())).metadata();
+      assert(meta.width === 480 && meta.height === 360, `A 2000x1500 photo must come back as 480x360, got ${meta.width}x${meta.height}`);
+      const cacheDir = path.join(tmpDataDir, 'cache', 'img');
+      const cachedCount = fs.readdirSync(cacheDir).length;
+      assert((await img(model.thumbnail)).status === 200 && fs.readdirSync(cacheDir).length === cachedCount, 'The second request must come from the cache');
+      assert((await img('/library-files/../../etc/passwd.png')).status === 400, 'Paths outside the library must be refused');
+      assert((await img('/library-files/Photo%20Project/part.stl')).status === 400, 'Only images are resized');
+
+      // A protected model keeps its other images hidden; its cover stays reachable
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: true } });
+      await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
+      const other = model.thumbnail.includes('a-photo') ? '/library-files/Photo%20Project/b-photo.png' : '/library-files/Photo%20Project/a-photo.png';
+      assert((await img(other)).status === 404, 'An image of a locked protected model must be 404');
+      assert((await img(model.thumbnail)).status === 200, 'The cover of a protected model stays reachable (shown blurred)');
+      await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: '' } });
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: false } });
+    });
+
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {
       const delRes = await apiReq(`/api/models/${createdModelId}?deleteDisk=true`, {
         method: 'DELETE',

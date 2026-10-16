@@ -226,6 +226,17 @@ const API = {
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Upload failed'); }
     return res.json();
   },
+  // A preview rendered in the browser for one 3D file (Folder Explorer), stored on the server
+  async uploadFileThumbnail(fileId, file) {
+    const form = new FormData();
+    form.append('thumbnail', file);
+    const csrfToken = localStorage.getItem('pv_csrf_token');
+    const headers = {};
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    const res = await fetch(`/api/files/${fileId}/thumbnail`, { method: 'POST', body: form, headers, credentials: 'same-origin' });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Upload failed'); }
+    return res.json();
+  },
   setPreviewFile(modelId, fileId) {
     return this.request(`/api/models/${modelId}/preview-file`, {
       method: 'PUT',

@@ -1335,6 +1335,19 @@ async function runE2ETests() {
       assert((await pending()).some(m => m.id === gear.id && m.reason === 'viewer'), 'A cover rendered by the viewer must be listed for regeneration');
       assert((await apiReq('/api/covers/pending', { session: viewerSession })).status === 403, 'Only an admin may regenerate covers');
 
+      // A preview rendered for a file in the Folder Explorer is stored, so it is rendered once
+      const gearFile = (await apiReq(`/api/models/${gear.id}`, { session: adminSession })).data.files.find(f => f.file_type === '3mf');
+      const fileForm = new FormData();
+      fileForm.append('thumbnail', new Blob([png], { type: 'image/png' }), `preview_${gearFile.id}.png`);
+      const fileUp = await apiReq(`/api/files/${gearFile.id}/thumbnail`, { method: 'POST', session: adminSession, body: fileForm });
+      assert(fileUp.status === 200, `Storing a file preview failed (${fileUp.status})`);
+      const browsed = (await apiReq('/api/browse?path=Gear%20Box', { session: adminSession })).data.files || [];
+      const gearCard = browsed.find(f => f.id === gearFile.id);
+      assert(gearCard && gearCard.thumbnailUrl === `/uploads/${fileUp.data.thumbnail}`, `The Folder Explorer must show the stored preview, got ${gearCard && gearCard.thumbnailUrl}`);
+      const viewerForm = new FormData();
+      viewerForm.append('thumbnail', new Blob([png], { type: 'image/png' }), 'x.png');
+      assert((await apiReq(`/api/files/${gearFile.id}/thumbnail`, { method: 'POST', session: viewerSession, body: viewerForm })).status === 403, 'A viewer must not store file previews');
+
       // A collection shows the covers of the model list (a cover may be an image in the project folder)
       const col = await apiReq('/api/projects', { method: 'POST', session: adminSession, body: { name: 'Cover check' } });
       await apiReq(`/api/projects/${col.data.id}/models/bulk`, { method: 'POST', session: adminSession, body: { model_ids: [gear.id, benchy.id] } });

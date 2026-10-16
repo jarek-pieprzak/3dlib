@@ -5,7 +5,18 @@ const Viewer = {
   cleanup() {
     for (const v of this.activeViewers) {
       if (v.animId) cancelAnimationFrame(v.animId);
-      if (v.renderer) { v.renderer.dispose(); }
+      // Free the model and the WebGL context now, not whenever the garbage collector runs
+      if (v.scene) {
+        v.scene.traverse(c => {
+          if (c.geometry) c.geometry.dispose();
+          if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach(m => m.dispose());
+        });
+      }
+      if (v.renderer) {
+        v.renderer.dispose();
+        if (v.renderer.forceContextLoss) v.renderer.forceContextLoss();
+        for (const entry of this.themedScenes) if (entry.canvas === v.renderer.domElement) this.themedScenes.delete(entry);
+      }
       if (v.controls) v.controls.dispose();
       if (v.resizeObserver) v.resizeObserver.disconnect();
       if (v.onKeyDown) window.removeEventListener('keydown', v.onKeyDown);
@@ -1035,7 +1046,7 @@ const Viewer = {
     const initialLoad = renderPartSelection(activePartVal || 'all');
 
     // Animation loop
-    viewer = { renderer, controls, animId: null, resizeObserver: null, onKeyDown, ready: initialLoad };
+    viewer = { renderer, scene, controls, animId: null, resizeObserver: null, onKeyDown, ready: initialLoad };
     window.addEventListener('error', (e) => {
       const msg = e.message || (e.error && e.error.message);
       if (msg && (msg.includes('signalUnknownCredential') || msg.includes('webauthnInterceptor'))) {
@@ -1182,8 +1193,9 @@ const Viewer = {
   // Render the cover of an STL or 3MF (first build plate) and return it as a PNG blob. Covers
   // share one stage, so they are rendered one after another: card lists and Regenerate Covers
   // can ask at the same time.
-  renderCover(url, fileType) {
-    const job = (this.coverQueue || Promise.resolve()).then(() => this.renderCoverNow(url, fileType));
+  // stillWanted: checked when its turn comes; a cover nobody waits for any more is skipped
+  renderCover(url, fileType, stillWanted = () => true) {
+    const job = (this.coverQueue || Promise.resolve()).then(() => (stillWanted() ? this.renderCoverNow(url, fileType) : null));
     this.coverQueue = job.catch(() => {});
     return job;
   },
@@ -1221,7 +1233,8 @@ const Viewer = {
       fileColors = Boolean(object.userData.hasFileColors);
     } else {
       const geometry = object;
-      if (!geometry.attributes.normal || geometry.attributes.normal.count === 0) geometry.computeVertexNormals();
+      // Some exporters write zero normals: the model would render black
+      geometry.computeVertexNormals();
       geometry.center();
       geometry.computeBoundingBox();
       const size = geometry.boundingBox.getSize(new THREE.Vector3());
@@ -1255,26 +1268,56 @@ const Viewer = {
   },
 
   // Cards of models without a cover show a rendered one, which is stored as their cover
-  async generateThumbnails() {
-    const targets = document.querySelectorAll('.stl-thumb-target');
-    for (const target of targets) {
-      target.classList.remove('stl-thumb-target');
-      const url = target.dataset.stlUrl;
-      if (!url) continue;
-      try {
-        const blob = await this.renderCover(url);
-        if (!blob) continue;
-        const objectUrl = URL.createObjectURL(blob);
-        target.innerHTML = `<img src="${objectUrl}" style="width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s" onload="this.style.opacity=1">`;
-        target.style.background = 'transparent';
-        const modelId = target.closest('[data-model-id]')?.dataset.modelId;
-        if (modelId) {
-          const file = new File([blob], `thumb_${modelId}.png`, { type: 'image/png' });
-          API.uploadThumbnail(modelId, file).catch(() => {});
-        }
-      } catch (e) {
-        console.error('Failed to generate thumb for', url, e);
+  // Cards without a cover get a rendered preview, but only when they come into view and one at
+  // a time; a card that left the page before its turn is skipped. Model cards store it as the
+  // model's cover, Folder Explorer cards as the file's preview: each file is rendered once.
+  // Files over 50 MB are not rendered on their own (their card keeps the placeholder).
+  MAX_AUTO_PREVIEW_BYTES: 50 * 1024 * 1024,
+  coverObserver: null,
+
+  generateThumbnails() {
+    if (typeof IntersectionObserver === 'undefined') return;
+    // Cards of an earlier page are gone: start over with the ones on this page
+    if (this.coverObserver) this.coverObserver.disconnect();
+    this.coverObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        this.coverObserver.unobserve(entry.target);
+        this.renderCardPreview(entry.target);
       }
+    }, { rootMargin: '200px' });
+    document.querySelectorAll('.stl-thumb-target').forEach(target => {
+      if (Number(target.dataset.size || 0) > this.MAX_AUTO_PREVIEW_BYTES) return;
+      this.coverObserver.observe(target);
+    });
+  },
+
+  async renderCardPreview(target) {
+    target.classList.remove('stl-thumb-target');
+    const url = target.dataset.stlUrl;
+    if (!url) return;
+    try {
+      const blob = await this.renderCover(url, undefined, () => target.isConnected);
+      if (!blob) return;
+      // The decoded image stays on the card; the blob behind the URL is freed once it loaded
+      const objectUrl = URL.createObjectURL(blob);
+      const img = document.createElement('img');
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
+      img.onload = () => { img.style.opacity = '1'; URL.revokeObjectURL(objectUrl); };
+      img.onerror = () => URL.revokeObjectURL(objectUrl);
+      img.src = objectUrl;
+      target.innerHTML = '';
+      target.appendChild(img);
+      target.style.background = 'transparent';
+      const modelId = target.closest('[data-model-id]')?.dataset.modelId;
+      const fileId = target.dataset.fileId;
+      if (modelId) {
+        API.uploadThumbnail(modelId, new File([blob], `thumb_${modelId}.png`, { type: 'image/png' })).catch(() => {});
+      } else if (fileId && App.currentUser && App.currentUser.role !== 'viewer') {
+        API.uploadFileThumbnail(fileId, new File([blob], `preview_${fileId}.png`, { type: 'image/png' })).catch(() => {});
+      }
+    } catch (e) {
+      console.error('Failed to generate thumb for', url, e);
     }
   }
 };

@@ -9,7 +9,7 @@ const { authenticate } = require('../middleware/auth');
 const { heavyLimiter } = require('../middleware/rateLimit');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement } = require('../middleware/security');
-const { getSettingBool, getZipEntryBuffer } = require('../utils/modelHelpers');
+const { getSettingBool, getZipEntryBuffer, canEditModel } = require('../utils/modelHelpers');
 const adultLock = require('../utils/adult');
 const { trashFiles } = require('../utils/trash');
 const { tokenFromName } = require('../utils/slicerToken');
@@ -282,6 +282,25 @@ router.delete('/:id', authenticate, (req, res) => {
     trashFiles([file.id]);
     res.json({ success: true, trashed: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to delete file' }); }
+});
+
+// ─── POST /api/files/:id/thumbnail ────────────────────────────────────────────
+// A preview the browser rendered for a file (Folder Explorer cards), stored once so the file is
+// not downloaded and rendered again on every visit
+router.post('/:id/thumbnail', authenticate, upload.single('thumbnail'), (req, res) => {
+  try {
+    const file = get('SELECT f.*, m.user_id as model_owner FROM files f JOIN models m ON f.model_id = m.id WHERE f.id=? AND f.deleted_at IS NULL', [Number(req.params.id)]);
+    const discard = () => { if (req.file) { try { fs.unlinkSync(req.file.path); } catch (e) { /* gone */ } } };
+    if (!file) { discard(); return res.status(404).json({ error: 'File not found' }); }
+    if (!canEditModel(req.user, { user_id: file.model_owner })) { discard(); return res.status(403).json({ error: 'Forbidden' }); }
+    if (!req.file || !/\.png$/i.test(req.file.filename)) { discard(); return res.status(400).json({ error: 'A PNG image is required' }); }
+    // Only 3D files get a rendered preview; an image is its own thumbnail
+    if (!['stl', '3mf', 'obj', 'step'].includes(file.file_type)) { discard(); return res.status(400).json({ error: 'Not a 3D file' }); }
+    const old = file.thumbnail && /^\d{10,}-[0-9a-f]{16}\.png$/i.test(file.thumbnail) ? path.join(UPLOADS_DIR, file.thumbnail) : null;
+    run('UPDATE files SET thumbnail = ? WHERE id = ?', [req.file.filename, file.id]);
+    if (old) { try { fs.unlinkSync(old); } catch (e) { /* gone */ } }
+    res.json({ thumbnail: req.file.filename });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to store the preview' }); }
 });
 
 // ─── POST /api/files/:id/send-to-printer ──────────────────────────────────────

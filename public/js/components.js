@@ -521,11 +521,12 @@ const UI = {
     const isGcode = file.type === 'gcode';
     let thumb;
     if (file.thumbnailUrl) {
-      thumb = `<img src="${file.thumbnailUrl}" alt="${file.name}">`;
+      thumb = `<img src="${file.thumbnailUrl}" alt="${file.name}" loading="lazy" decoding="async">`;
     } else if (is3D) {
-      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${file.url}?t=${Date.now()}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
+      // Rendered when the card comes into view and stored as the file's preview (viewer.js)
+      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${file.url}"${file.id ? ` data-file-id="${file.id}"` : ''} data-size="${Number(file.size) || 0}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else if (file.type === 'image') {
-      thumb = `<img src="${file.url}" alt="${file.name}">`;
+      thumb = `<img src="${file.url}" alt="${file.name}" loading="lazy" decoding="async">`;
     } else if (isGcode) {
       thumb = `<div class="model-card-placeholder" style="background:linear-gradient(135deg, #78350f, #b45309);color:#fbbf24;display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.6"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></div>`;
     } else {
@@ -572,10 +573,10 @@ const UI = {
     let thumb;
     if (m.thumbnail) {
       const thumbUrl = m.thumbnail.startsWith('/') ? m.thumbnail : `/uploads/${m.thumbnail}`;
-      thumb = `<img src="${thumbUrl}" alt="${m.name}">`;
+      thumb = `<img src="${thumbUrl}" alt="${m.name}" loading="lazy" decoding="async">`;
     } else if (m.stl_file) {
       const stlUrl = m.stl_file.startsWith('/') ? m.stl_file : `/uploads/${m.stl_file}`;
-      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${stlUrl}?t=${Date.now()}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
+      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${stlUrl}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else {
       thumb = `<div class="model-card-placeholder" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     }

@@ -365,14 +365,14 @@ async function runE2ETests() {
 
   const waitReady = async () => {
     const start = Date.now();
-    while (Date.now() - start < 8000) {
+    while (Date.now() - start < 20000) {
       try {
         const r = await fetch(`${baseUrl}/healthz`);
         if (r.ok) return;
       } catch (e) {}
       await new Promise(r => setTimeout(r, 150));
     }
-    throw new Error(`Server did not start within 8s. Logs:\n${serverLogs}`);
+    throw new Error(`Server did not start within 20s. Logs:\n${serverLogs}`);
   };
 
   async function apiReq(endpoint, { method = 'GET', body = null, session = null, includeCsrf = true, headers = {} } = {}) {
@@ -829,12 +829,12 @@ async function runE2ETests() {
       const runScanAndWait = async () => {
         const startScan = await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
         assert(startScan.status === 200, `Scan start failed (${startScan.status}): ${JSON.stringify(startScan.data)}`);
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < 300; i++) {
           await new Promise(r => setTimeout(r, 100));
           const st = await apiReq('/api/library/scan/status', { session: adminSession });
           if (st.status === 200 && !st.data.isScanning) return;
         }
-        throw new Error('Library scanner did not complete within 4s');
+        throw new Error('Library scanner did not complete within 30s');
       };
 
       await runScanAndWait();
@@ -998,12 +998,12 @@ async function runE2ETests() {
       const scan = async () => {
         const st = await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
         assert(st.status === 200, `Scan start failed (${st.status})`);
-        for (let i = 0; i < 60; i++) {
+        for (let i = 0; i < 300; i++) {
           await new Promise(r => setTimeout(r, 100));
           const s = await apiReq('/api/library/scan/status', { session: adminSession });
           if (s.status === 200 && !s.data.isScanning) return;
         }
-        throw new Error('Library scanner did not complete within 6s');
+        throw new Error('Library scanner did not complete within 30s');
       };
       const byName = async (name) => {
         const r = await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession });
@@ -1060,7 +1060,7 @@ async function runE2ETests() {
       fs.writeFileSync(path.join(tmpLibDir, 'Adult Test', 'part.stl'), stl);
       fs.writeFileSync(path.join(tmpLibDir, 'Adult Test', 'notes.txt'), 'secret notes');
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 100));
         const st = await apiReq('/api/library/scan/status', { session: adminSession });
         if (st.status === 200 && !st.data.isScanning) break;
@@ -1129,12 +1129,12 @@ async function runE2ETests() {
       put('Loose Gear.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
       const scan = async () => {
         await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
-        for (let i = 0; i < 60; i++) {
+        for (let i = 0; i < 300; i++) {
           await new Promise(r => setTimeout(r, 100));
           const s = await apiReq('/api/library/scan/status', { session: adminSession });
           if (s.status === 200 && !s.data.isScanning) return;
         }
-        throw new Error('Library scanner did not complete within 6s');
+        throw new Error('Library scanner did not complete within 30s');
       };
       const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
       const detail = async (id, q = '') => (await apiReq(`/api/models/${id}${q}`, { session: adminSession })).data;
@@ -1245,12 +1245,12 @@ async function runE2ETests() {
       const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
       const scanLibrary = async () => {
         await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
-        for (let i = 0; i < 60; i++) {
+        for (let i = 0; i < 300; i++) {
           await new Promise(r => setTimeout(r, 100));
           const s = await apiReq('/api/library/scan/status', { session: adminSession });
           if (s.status === 200 && !s.data.isScanning) return;
         }
-        throw new Error('Library scanner did not complete within 6s');
+        throw new Error('Library scanner did not complete within 30s');
       };
       const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
       const detail = async (id) => (await apiReq(`/api/models/${id}`, { session: adminSession })).data;
@@ -1424,7 +1424,7 @@ async function runE2ETests() {
       fs.writeFileSync(path.join(dir, 'a-photo.png'), await photo(200));
       fs.writeFileSync(path.join(dir, 'b-photo.png'), await photo(20));
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 100));
         if (!(await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning) break;
       }

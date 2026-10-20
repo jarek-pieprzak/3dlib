@@ -223,7 +223,8 @@ async function runStaticAndUiChecks() {
         { id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf', status: 'unmatched', file_size: 10, mtime_ms: Date.now() },
         { id: 3, name: 'x.3mf', clean_name: 'x.3mf', status: 'imported', file_size: 10, mtime_ms: Date.now(), message: 'New version of x.3mf', imported_model_id: 1, imported_model_name: 'Box', imported_name: 'x.3mf' },
         { id: 4, name: 'y.3mf', clean_name: 'y.3mf', status: 'error', file_size: 10, mtime_ms: Date.now(), message: 'Read-only' },
-        { id: 5, name: 'z.stl', clean_name: 'z.stl', status: 'download', file_size: 10, mtime_ms: Date.now() }] })],
+        { id: 5, name: 'z.stl', clean_name: 'z.stl', status: 'download', file_size: 10, mtime_ms: Date.now() },
+        { id: 6, name: 'z_gv-abcdefgh(2).3mf', clean_name: 'z.3mf', status: 'superseded', file_size: 10, mtime_ms: Date.now(), message: 'A newer save of this file is already in the library', model_id: 1, model_name: 'Box', file_name: 'z.3mf' }] })],
       ['UI.slicerSavesPage (empty)', () => UI.slicerSavesPage({ quiet_minutes: 5, cleanup_days: 7, now: Date.now(), saves: [] })],
       ['UI.slicerAssignForm', () => UI.slicerAssignForm({ id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf' })]
     ];
@@ -1317,6 +1318,58 @@ async function runE2ETests() {
       assert(s.status === 'unmatched' && s.clean_name === 'Mystery part.3mf', `A save without a match must wait, got ${s.status}`);
       const created = await apiReq(`/api/slicer-saves/${s.id}/assign`, { method: 'POST', session: adminSession, body: { new_model: true } });
       assert(created.status === 200 && fs.existsSync(lib('Mystery part/Mystery part.3mf')) && await byName('Mystery part'), `Assigning a new model failed: ${JSON.stringify(created.data)}`);
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
+    });
+
+    await check('Slicer saves of one file ("x_gv-t.3mf", "x_gv-t(2).3mf"): newest wins, older copies are cleaned up', async () => {
+      const { meshTo3mf } = require(path.join(ROOT_DIR, 'server/utils/3mf'));
+      const meshes = {};
+      const mesh = (n) => (meshes[n] = meshes[n] || meshTo3mf({ verts: [[0, 0, 0], [n, 0, 0], [0, n, 0]], tris: [[0, 1, 2]] }));
+      const saves = path.join(tmpLibDir, '.slicer-saves');
+      const libFile = path.join(tmpLibDir, 'Gear Box', 'gear.3mf');
+      const same = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
+      const check = async () => {
+        assert((await apiReq('/api/slicer-saves/scan', { method: 'POST', session: adminSession })).status === 200, 'Checking .slicer-saves failed');
+        return (await apiReq('/api/slicer-saves', { session: adminSession })).data.saves;
+      };
+      const gearModel = ((await apiReq('/api/models?search=Gear%20Box', { session: adminSession })).data.models || []).find(m => m.name === 'Gear Box');
+      const gear = (await apiReq(`/api/models/${gearModel.id}`, { session: adminSession })).data.files.find(f => f.original_name === 'gear.3mf');
+      const name = (suffix) => `gear_gv-${gear.slicer_token}${suffix}.3mf`;
+      const put = (suffix, data, mtimeSec) => {
+        const p = path.join(saves, name(suffix));
+        fs.writeFileSync(p, data);
+        if (mtimeSec) fs.utimesSync(p, mtimeSec, mtimeSec);
+      };
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '0' } });
+      // Modification times in whole seconds, never in the future (a save still being written)
+      const nowSec = async (waitMs) => { await new Promise(r => setTimeout(r, waitMs)); return Math.floor(Date.now() / 1000); };
+      const t0 = await nowSec(1100); // newer than the save imported by the test above
+
+      // Opened again while the first copy is still there: the new copy replaces it
+      put('(2)', mesh(50), t0);
+      let list = await check();
+      assert(same(fs.readFileSync(libFile), mesh(50)), 'The newest save must be in the library');
+      assert(!fs.existsSync(path.join(saves, name(''))) && fs.existsSync(path.join(saves, name('(2)'))), 'The older, imported copy must be deleted at once');
+
+      // An older save turning up later must not replace a newer one
+      put('(3)', mesh(60), t0 - 3600);
+      list = await check();
+      assert(same(fs.readFileSync(libFile), mesh(50)), 'An older save must not go back in time');
+      assert(!fs.existsSync(path.join(saves, name('(3)'))) && !list.some(s => s.name === name('(3)')), 'An older save of a file with a newer copy is deleted at once');
+
+      // Two new saves in one pass: imported oldest first, whatever their names
+      const t1 = await nowSec(2100);
+      put('(7)', mesh(70), t1);
+      put('(8)', mesh(80), t1 - 1);
+      list = await check();
+      assert(same(fs.readFileSync(libFile), mesh(70)), 'Saves must be imported in the order they were saved');
+      assert(fs.existsSync(path.join(saves, name('(7)'))) && !fs.existsSync(path.join(saves, name('(8)'))) && !fs.existsSync(path.join(saves, name('(2)'))),
+        'Only the newest copy of a file may stay');
+
+      // Clean up now: nothing that holds anything new is left
+      const cleaned = await apiReq('/api/slicer-saves/cleanup', { method: 'POST', session: adminSession });
+      assert(cleaned.status === 200 && cleaned.data.removed >= 2, `Clean up now failed: ${JSON.stringify(cleaned.data)}`);
+      assert(!fs.readdirSync(saves).some(n => n.startsWith(`gear_gv-${gear.slicer_token}`)), 'Clean up now must delete imported and older copies');
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
     });
 

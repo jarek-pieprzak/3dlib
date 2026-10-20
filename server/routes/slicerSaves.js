@@ -53,6 +53,13 @@ router.post('/scan', authenticate, requireAdmin, async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
+// ─── POST /api/slicer-saves/cleanup: delete every file that holds nothing new ─
+router.post('/cleanup', authenticate, requireAdmin, async (req, res) => {
+  try {
+    res.json({ success: true, removed: await slicerSaves.cleanupNow() });
+  } catch (e) { fail(res, e); }
+});
+
 // ─── GET /api/slicer-saves/:id/file/:name? (preview) ─────────────────────────
 router.get('/:id/file/:name?', authenticate, requireAdmin, (req, res) => {
   const rec = loadSave(req, res);

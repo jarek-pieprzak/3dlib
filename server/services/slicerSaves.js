@@ -8,7 +8,8 @@
 //    "<name>.3mf" next to it and the model's main file;
 //  * a file that matches nothing waits on the "Slicer saves" page to be assigned by hand.
 // Files are copied, never moved, so a slicer that keeps the project open can save again.
-// Downloads and imported files untouched for slicer_cleanup_days (default 7) are deleted.
+// Downloads and imported files are deleted slicer_cleanup_days (default 1) after the last save,
+// older copies of a file saved again at once.
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
@@ -31,7 +32,7 @@ function numberSetting(key, def) {
   return Number.isFinite(n) && n >= 0 ? n : def;
 }
 const quietMinutes = () => numberSetting('slicer_quiet_minutes', 5);
-const cleanupDays = () => numberSetting('slicer_cleanup_days', 7);
+const cleanupDays = () => numberSetting('slicer_cleanup_days', 1);
 
 function hashBuffer(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -118,6 +119,22 @@ function processSaves(opts) {
   return pass;
 }
 
+// The library file a save would replace (null: the save adds a new file next to the target)
+function destinationOf(target, saveExt) {
+  if (path.extname(target.library_path).toLowerCase() === saveExt) return target;
+  const sibling = path.join(path.dirname(target.library_path), projectFiles.stemOf(target.filename) + saveExt);
+  return get('SELECT * FROM files WHERE library_path = ? AND deleted_at IS NULL', [sibling]);
+}
+
+// Statuses whose file holds nothing the library does not have
+const SPENT = ['download', 'imported', 'superseded'];
+
+async function removeSave(rec) {
+  try { await fsp.unlink(savePath(rec)); } catch (err) { if (err.code !== 'ENOENT') return false; }
+  run('DELETE FROM slicer_saves WHERE id = ?', [rec.id], true);
+  return true;
+}
+
 // One pass over the save folder. importNow: ids of saves to import without waiting
 async function processOnce({ importNow = [] } = {}) {
   let entries;
@@ -127,17 +144,21 @@ async function processOnce({ importNow = [] } = {}) {
     try { await fsp.mkdir(SAVES_DIR); } catch (err) { /* read-only library: nothing to watch */ }
     entries = [];
   }
-  const seen = new Set();
+  const files = [];
   for (const e of entries) {
     if (!e.isFile() || e.name.startsWith('.') || !SAVE_EXTS.includes(path.extname(e.name).toLowerCase())) continue;
-    const p = path.join(SAVES_DIR, e.name);
-    let st;
-    try { st = await fsp.stat(p); } catch (err) { continue; }
-    seen.add(e.name);
-    let rec = get('SELECT * FROM slicer_saves WHERE name = ?', [e.name]);
+    try { files.push({ name: e.name, p: path.join(SAVES_DIR, e.name), st: await fsp.stat(path.join(SAVES_DIR, e.name)) }); } catch (err) { /* gone */ }
+  }
+  // Oldest first: when the slicer saved one file twice ("Lamp_gv-x.3mf", "Lamp_gv-x(2).3mf"),
+  // the newest save is imported last and stays the library file
+  files.sort((a, b) => a.st.mtimeMs - b.st.mtimeMs);
+
+  const seen = new Set(files.map(f => f.name));
+  for (const { name, p, st } of files) {
+    let rec = get('SELECT * FROM slicer_saves WHERE name = ?', [name]);
     if (!rec) {
-      run('INSERT INTO slicer_saves (name) VALUES (?)', [e.name], true);
-      rec = get('SELECT * FROM slicer_saves WHERE name = ?', [e.name]);
+      run('INSERT INTO slicer_saves (name) VALUES (?)', [name], true);
+      rec = get('SELECT * FROM slicer_saves WHERE name = ?', [name]);
     }
     const mtime = Math.floor(st.mtimeMs);
     let hash = rec.hash;
@@ -146,7 +167,8 @@ async function processOnce({ importNow = [] } = {}) {
       run('UPDATE slicer_saves SET file_size = ?, mtime_ms = ?, hash = ? WHERE id = ?', [st.size, mtime, hash, rec.id], true);
     }
 
-    const target = matchSave(e.name);
+    const target = matchSave(name);
+    const destination = target && destinationOf(target, path.extname(name).toLowerCase());
     let status;
     let message = null;
     if (hash === rec.imported_hash) {
@@ -156,10 +178,15 @@ async function processOnce({ importNow = [] } = {}) {
       status = 'download';
     } else if (!target) {
       status = 'unmatched';
+    } else if (destination && destination.slicer_saved_at && mtime < destination.slicer_saved_at) {
+      // A newer save of this file is in the library already: do not go back to this one
+      status = 'superseded';
+      message = 'A newer save of this file is already in the library';
     } else if (Date.now() - st.mtimeMs >= quietMinutes() * 60000 || importNow.includes(rec.id)) {
       try {
         const r = importSave(p, target);
         run("UPDATE slicer_saves SET imported_hash = ?, imported_file_id = ?, imported_at = datetime('now') WHERE id = ?", [hash, r.fileId, rec.id], true);
+        run('UPDATE files SET slicer_saved_at = ? WHERE id = ?', [mtime, r.fileId], true);
         status = 'imported';
         message = r.message;
       } catch (err) {
@@ -171,19 +198,43 @@ async function processOnce({ importNow = [] } = {}) {
       status = 'pending';
     }
     run('UPDATE slicer_saves SET status = ?, file_id = ?, message = ? WHERE id = ?', [status, target ? target.id : null, message, rec.id], true);
-
-    // Nothing left to bring in: delete it after a while (a slicer still open saves it again)
-    const days = cleanupDays();
-    if ((status === 'download' || status === 'imported') && days > 0 && Date.now() - st.mtimeMs > days * 86400000) {
-      try { await fsp.unlink(p); seen.delete(e.name); } catch (err) { /* keep */ }
-    }
   }
+
+  // Spent copies go: older copies of a file saved again at once (the slicer names a new download
+  // "(2)" while the old one is still here), the others after slicer_cleanup_days. Deleting is
+  // safe: a slicer that still has the project open writes the file again on its next save.
+  const days = cleanupDays();
+  const newestByToken = {};
+  const rows = all('SELECT * FROM slicer_saves ORDER BY mtime_ms');
+  for (const r of rows) {
+    const token = tokenFromName(r.name);
+    if (token) newestByToken[token] = r.id;
+  }
+  for (const r of rows) {
+    if (!seen.has(r.name) || !SPENT.includes(r.status)) continue;
+    const token = tokenFromName(r.name);
+    const replaced = token && newestByToken[token] !== r.id;
+    const old = days > 0 && Date.now() - r.mtime_ms > days * 86400000;
+    if ((replaced || old) && await removeSave(r)) seen.delete(r.name);
+  }
+
   for (const r of all('SELECT id, name FROM slicer_saves')) {
     if (!seen.has(r.name)) run('DELETE FROM slicer_saves WHERE id = ?', [r.id], true);
   }
   run("DELETE FROM slicer_downloads WHERE created_at < datetime('now', '-90 days')", [], true);
   saveDb();
   return true;
+}
+
+// "Clean up now": every file that holds nothing new
+async function cleanupNow() {
+  await processSaves();
+  let removed = 0;
+  for (const r of all(`SELECT * FROM slicer_saves WHERE status IN (${SPENT.map(() => '?').join(',')})`, SPENT)) {
+    if (await removeSave(r)) removed++;
+  }
+  saveDb();
+  return removed;
 }
 
 function savePath(rec) {
@@ -195,6 +246,7 @@ function assignToFile(rec, fileId) {
   const target = activeFile(fileId);
   if (!target) throw new projectFiles.FsError(404, 'File not found');
   const r = importSave(savePath(rec), target);
+  run('UPDATE files SET slicer_saved_at = ? WHERE id = ?', [rec.mtime_ms, r.fileId], true);
   run("UPDATE slicer_saves SET status = 'imported', imported_hash = hash, imported_file_id = ?, imported_at = datetime('now'), message = ? WHERE id = ?", [r.fileId, r.message, rec.id]);
   return r;
 }
@@ -241,6 +293,6 @@ function stop() {
 }
 
 module.exports = {
-  SAVES_DIR, hashBuffer, recordDownload, processSaves, importSave, assignToFile, addToModel, newModel,
+  SAVES_DIR, hashBuffer, recordDownload, processSaves, cleanupNow, importSave, assignToFile, addToModel, newModel,
   cleanName, savePath, quietMinutes, cleanupDays, start, stop
 };

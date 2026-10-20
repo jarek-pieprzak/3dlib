@@ -152,6 +152,7 @@ const API = {
   // Projects saved by the slicer into .slicer-saves
   getSlicerSaves() { return this.request('/api/slicer-saves'); },
   checkSlicerSaves() { return this.request('/api/slicer-saves/scan', { method: 'POST' }); },
+  cleanupSlicerSaves() { return this.request('/api/slicer-saves/cleanup', { method: 'POST' }); },
   importSlicerSave(id) { return this.request(`/api/slicer-saves/${id}/import`, { method: 'POST' }); },
   assignSlicerSave(id, target) { return this.request(`/api/slicer-saves/${id}/assign`, { method: 'POST', body: JSON.stringify(target) }); },
   deleteSlicerSave(id) { return this.request(`/api/slicer-saves/${id}`, { method: 'DELETE' }); },

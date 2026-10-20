@@ -327,6 +327,7 @@ const UI = {
     const unmatched = by('unmatched').map(s => row(s, 'no matching file',
       `${preview(s)}<button type="button" class="btn btn-primary btn-xs" onclick="App.showAssignSlicerSave(${s.id})">Assign...</button>${discard(s)}`));
     const imported = by('imported').map(s => row(s, `${this.escapeHtml(s.message || 'Imported')} · ${modelLink(s.imported_model_id, s.imported_model_name, s.imported_name)}`, ''));
+    const superseded = by('superseded').map(s => row(s, `${this.escapeHtml(s.message || '')} · ${modelLink(s.model_id, s.model_name, s.file_name)}`, `${preview(s)}<button type="button" class="btn btn-secondary btn-xs" onclick="App.showAssignSlicerSave(${s.id})">Assign...</button>${discard(s)}`));
     const downloads = by('download').map(s => row(s, `opened from ${modelLink(s.model_id, s.model_name, s.file_name) || 'the library'}, not changed`, ''));
     const empty = !saves.length;
 
@@ -337,13 +338,17 @@ const UI = {
           <div class="page-subtitle">Projects your slicer saves to the library's <code>.slicer-saves</code> folder. A changed file replaces the file it was opened from
             ${data.quiet_minutes > 0 ? `${data.quiet_minutes} minute${data.quiet_minutes === 1 ? '' : 's'} after the last save` : 'right away'}; the old content stays in its History.</div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="App.checkSlicerSaves()">Check now</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="App.checkSlicerSaves()">Check now</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.cleanupSlicerSaves()" title="Delete the files that hold nothing new: imported, older or unchanged">Clean up now</button>
+        </div>
       </div>
       ${empty ? `<div class="empty-state"><div class="empty-state-text">Nothing saved by the slicer yet</div><div class="empty-state-sub">Set the slicer's save folder to <code>.slicer-saves</code> in the library share.</div></div>` : ''}
       ${section('Needs a decision', 'These files match no library file.', unmatched)}
       ${section('Failed', '', errors)}
       ${section('Waiting', 'Imported once the slicer has not saved them for a while.', pending)}
-      ${section('Imported', data.cleanup_days > 0 ? `Deleted from .slicer-saves ${data.cleanup_days} days after the last save.` : '', imported)}
+      ${section('Imported', data.cleanup_days > 0 ? `Deleted from .slicer-saves ${data.cleanup_days} day${data.cleanup_days === 1 ? '' : 's'} after the last save, or as soon as the file is saved again.` : 'Deleted as soon as the file is saved again.', imported)}
+      ${section('Older saves', 'A newer save of the same file is in the library already; they are not imported on their own.', superseded)}
       ${section('Opened, not changed', '', downloads)}`;
   },
 
@@ -1909,8 +1914,8 @@ const UI = {
         </div>
         <div class="form-group">
           <label>Slicer Saves: Clean Up After (Days)</label>
-          <input type="number" name="slicer_cleanup_days" value="${config.slicer_cleanup_days !== undefined ? config.slicer_cleanup_days : 7}" min="0" max="3650" class="form-input">
-          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Unchanged downloads and imported files are deleted from <code>.slicer-saves</code> this long after the last save. Unimported changes are never deleted. 0 = never. Default is 7.</p>
+          <input type="number" name="slicer_cleanup_days" value="${config.slicer_cleanup_days !== undefined ? config.slicer_cleanup_days : 1}" min="0" max="3650" class="form-input">
+          <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Unchanged downloads and imported files are deleted from <code>.slicer-saves</code> this long after the last save, older copies of a file saved again at once. Unimported changes are never deleted. 0 = only older copies. Default is 1.</p>
         </div>
         <div class="form-group">
           <label>File History: Versions Kept per File</label>

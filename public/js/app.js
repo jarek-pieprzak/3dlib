@@ -3451,6 +3451,14 @@ const App = {
     } catch (err) { this.toast(err.message, 'error'); }
   },
 
+  async cleanupSlicerSaves() {
+    try {
+      const r = await API.cleanupSlicerSaves();
+      this.toast(r.removed ? `${r.removed} file${r.removed === 1 ? '' : 's'} deleted from .slicer-saves` : 'Nothing to clean up');
+      this.renderSlicerSaves();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
   async importSlicerSave(id) {
     try {
       await API.importSlicerSave(id);

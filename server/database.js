@@ -318,6 +318,9 @@ async function initDatabase() {
     // slicer can be matched back to the file it came from (server/utils/slicerToken.js)
     if (!all("PRAGMA table_info(files)").some(c => c.name === 'slicer_token')) db.run('ALTER TABLE files ADD COLUMN slicer_token TEXT');
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_files_slicer_token ON files(slicer_token)');
+    // Modification time (ms) of the last slicer save imported into the file: an older save that
+    // turns up later must not replace it
+    if (!all("PRAGMA table_info(files)").some(c => c.name === 'slicer_saved_at')) db.run('ALTER TABLE files ADD COLUMN slicer_saved_at INTEGER');
   } catch (e) { console.error('User migration failed:', e); }
 
   // Ensure metadata and library_path columns exist for existing databases

@@ -1805,3 +1805,20 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .kit-tower-modes .kit-seg-btn{padding:3px 10px;font-size:.75rem}
 .kit-open-btn[hidden]{display:none}
 .kit-preview-panel>.panel-header>.panel-title{margin-right:auto}
+/* Printer fit check: sizes of 3D files, the bar in the corner of a file list (App.paintFit) */
+.fit-bar{display:flex;flex:none;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:7px 16px;font-size:.78rem;background:var(--bg-input);border-bottom:1px solid var(--border)}
+.fit-bar:empty{display:none}
+.fit-select{width:auto;max-width:220px;padding:4px 26px 4px 8px;font-size:.78rem;background-position:right 8px center}
+.fit-status{color:var(--text-muted)}
+.fit-status.is-ok{color:var(--success)}
+.fit-status.is-bad{color:var(--error);font-weight:600}
+.fit-dim{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-muted);white-space:nowrap}
+.file-meta .fit-dim:not(:empty)::before{content:'·'}
+.fit-flag{font-weight:700;cursor:help}
+.fit-flag.is-ok{color:var(--success)}
+.fit-flag.is-bad{color:var(--error)}
+/* Settings -> Printers: build volumes */
+.bed-head,.bed-row{display:grid;grid-template-columns:minmax(140px,1fr) repeat(4, 84px) auto;align-items:center;gap:8px}
+.bed-head{margin-bottom:6px;font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+.bed-row{margin-bottom:8px}
+@media(max-width:700px){.bed-head{display:none}.bed-row{grid-template-columns:repeat(4, 1fr)}.bed-row .bed-name{grid-column:1/-1}}

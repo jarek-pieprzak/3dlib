@@ -130,6 +130,8 @@ function startBackgroundServices() {
   setupBackgroundScanner();
   // Projects saved by the slicer into .slicer-saves
   require('./slicerSaves').start();
+  // Sizes of 3D files for the printer fit check
+  require('./dimensions').start();
 }
 
 /**
@@ -139,6 +141,7 @@ function stopBackgroundServices() {
   if (syncIntervalId) clearInterval(syncIntervalId);
   if (scanIntervalId) clearInterval(scanIntervalId);
   require('./slicerSaves').stop();
+  require('./dimensions').stop();
 }
 
 module.exports = {

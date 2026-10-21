@@ -1,5 +1,8 @@
 /* ─── UI Components ───────────────────────────────────────────────────── */
 const UI = {
+  // The 3D file types the server measures for the printer fit check (server/utils/meshSize.js)
+  MEASURABLE: ['stl', 'obj', '3mf', 'step'],
+
   // HTML entity escaping helper
   escapeHtml(str) {
     if (str === null || str === undefined) return '';
@@ -1139,6 +1142,7 @@ const UI = {
               </div>
               <div class="file-meta" style="font-size:0.72rem;color:var(--text-muted);display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
                 <span>${this.formatSize(f.file_size)}</span>
+                ${this.MEASURABLE.includes(f.file_type) ? `<span class="fit-dim" data-dim-file="${Number(f.id)}"></span>` : ''}
                 <span>·</span>
                 <span>${this.formatDateShort(f.uploaded_at)}</span>
                 <span>·</span>
@@ -1328,6 +1332,7 @@ const UI = {
                 </div>
               </div>
             </div>
+            ${(model.files || []).some(f => this.MEASURABLE.includes(f.file_type)) ? '<div class="fit-bar" data-fit-bar="files"></div>' : ''}
             <div class="panel-body no-pad detail-files-body">
               <div id="tab-content-files">
                 ${filesHtml || '<div class="empty-state" style="padding:30px"><div class="empty-state-text">No files yet</div><div class="empty-state-sub">Upload STL, Gcode, or 3MF files</div></div>'}
@@ -1732,6 +1737,7 @@ const UI = {
             <div class="kit-part-path">${esc(path)}</div>
           </div>
           ${p.auto !== undefined ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
+          ${this.MEASURABLE.includes(p.file.file_type) ? `<span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}
           <span class="kit-part-size">${this.formatSize(p.file.file_size)}</span>
           ${extra ? `<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
         </div>`);
@@ -1753,6 +1759,7 @@ const UI = {
           ${kit.loggedIn ? `<button type="button" class="btn btn-primary btn-sm" onclick="App.kitDownload()"${t.files ? '' : ' disabled'}>Download ZIP</button>` : ''}
         </div>
       </div>
+      <div class="fit-bar" data-fit-bar="parts"></div>
       <div class="kit-parts-body">
         ${notes ? `<ul class="kit-notes">${notes}</ul>` : ''}
         ${rows.join('') || '<div class="kit-empty">Nothing to print yet.</div>'}
@@ -2251,6 +2258,65 @@ const UI = {
           <button type="submit" class="btn btn-primary">Reset Password</button>
         </div>
       </form>`;
+  },
+
+  // ─── Printer fit check (public/js/printfit.js, App.paintFit) ────────────
+  // The bar in the corner of a file list: the printer to check against and how the files fare.
+  // s: PrintFit.summarize(); what: 'files' or 'parts'
+  fitBar(beds, chosen, s, what = 'files') {
+    const esc = (t) => this.escapeHtml(t);
+    const bed = (beds || []).find(b => b.id === chosen);
+    const target = bed ? bed.name : 'one of your printers';
+    let status = '';
+    if (!(beds || []).length) status = '<span class="fit-status">Add your printers in Settings → Printers</span>';
+    else if (!s.total) status = '';
+    else if (s.misfit.length) status = `<span class="fit-status is-bad" title="Too big for ${esc(bed ? bed.name : 'all of your printers')}: marked ✗ in the list">✗ ${s.misfit.length} of ${s.total} ${what} too big for ${esc(bed ? bed.name : 'all your printers')}</span>`;
+    else if (s.pending) status = `<span class="fit-status">Measuring ${s.pending} of ${s.total} ${what}...</span>`;
+    else status = `<span class="fit-status is-ok">✓ All ${s.measured} ${what} fit ${esc(target)}${s.failed ? ` (${s.failed} could not be measured)` : ''}</span>`;
+    if (s.misfit.length && s.pending) status += `<span class="fit-status">, measuring ${s.pending}...</span>`;
+    return `
+      <select class="form-select fit-select" onchange="App.setFitPrinter(this.value)" title="Check the files against this printer" aria-label="Printer">
+        <option value="any"${chosen === 'any' ? ' selected' : ''}>Any of my printers</option>
+        ${(beds || []).map(b => `<option value="${esc(b.id)}"${b.id === chosen ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
+      </select>
+      ${status}`;
+  },
+
+  // The size of one 3D file and whether it fits: ✓, or ✗ with the printers it does fit
+  fitDim(size, error, beds, chosen) {
+    if (error) return '<span class="fit-dim-text" title="This file could not be measured">size unknown</span>';
+    if (!size) return '<span class="fit-dim-text">measuring...</span>';
+    const list = chosen && chosen !== 'any' ? (beds || []).filter(b => b.id === chosen) : (beds || []);
+    const ok = PrintFit.fitting(size, list);
+    const all = PrintFit.fitting(size, beds || []);
+    const turn = (f) => (f.fit.angle ? ` turned ${f.fit.angle}°` : '');
+    const title = all.length ? `Fits: ${all.map(f => `${f.bed.name}${turn(f)}`).join(', ')}` : 'Too big for all of your printers';
+    const flag = !(beds || []).length ? '' : ok.length
+      ? `<span class="fit-flag is-ok" title="${this.escapeHtml(title)}">✓${ok[0].fit.angle ? ` ${ok[0].fit.angle}°` : ''}</span>`
+      : `<span class="fit-flag is-bad" title="${this.escapeHtml(title)}">✗ too big</span>`;
+    return `<span class="fit-dim-text">${PrintFit.sizeText(size)}</span>${flag}`;
+  },
+
+  // Settings -> Printers: the build volumes the fit check uses
+  printerBedsForm(beds = []) {
+    const row = (b) => `
+      <div class="bed-row" data-bed-id="${this.escapeHtml(b.id || '')}">
+        <input class="form-input bed-name" value="${this.escapeHtml(b.name || '')}" placeholder="Printer name" maxlength="60" aria-label="Printer name">
+        <input class="form-input bed-num" type="number" min="10" max="2000" step="0.1" value="${b.x ?? ''}" placeholder="X" aria-label="Width X (mm)">
+        <input class="form-input bed-num" type="number" min="10" max="2000" step="0.1" value="${b.y ?? ''}" placeholder="Y" aria-label="Depth Y (mm)">
+        <input class="form-input bed-num" type="number" min="10" max="2000" step="0.1" value="${b.z ?? ''}" placeholder="Z" aria-label="Height Z (mm)">
+        <input class="form-input bed-num" type="number" min="0" max="50" step="0.5" value="${b.margin ?? 0}" placeholder="0" aria-label="Margin at the edges (mm)">
+        <button type="button" class="btn btn-ghost btn-xs" onclick="this.closest('.bed-row').remove()" title="Remove">Remove</button>
+      </div>`;
+    return `
+      <p class="form-hint" style="margin:0 0 12px;font-size:.8rem;color:var(--text-muted)">The model page and the configurator check every 3D file against these build volumes: the height must fit, the footprint straight, turned 90° or on the diagonal. Margin: space kept free at the edges of the bed.</p>
+      <div class="bed-head"><span>Printer</span><span>X mm</span><span>Y mm</span><span>Z mm</span><span>Margin</span><span></span></div>
+      <div id="bed-rows">${beds.map(row).join('')}</div>
+      <template id="bed-row-template">${row({ margin: 0 })}</template>
+      <div class="form-actions" style="justify-content:flex-start">
+        <button type="button" class="btn btn-secondary" onclick="App.addPrinterBedRow()">+ Add printer</button>
+        <button type="button" class="btn btn-primary" onclick="App.savePrinterBeds()">Save</button>
+      </div>`;
   },
 
   printersSettingsForm(printers = []) {

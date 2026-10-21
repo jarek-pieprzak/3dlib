@@ -2216,7 +2216,10 @@ const App = {
       const view = kit && opts.view !== 'files' ? 'configure' : 'files';
       this.el.innerHTML = `
         ${UI.modelDetail(model, hasPrinters, { kit, view })}`;
-      if (view === 'configure') return this.initKit(model, opts);
+      // Sizes of the 3D files and the printer fit check (after the configurator has its parts:
+      // initKit sets them before its first await)
+      if (view === 'configure') { const ready = this.initKit(model, opts); this.fitPoll(model.id); return ready; }
+      this.fitPoll(model.id);
       this.kit = null;
       this.fitFileTree(document.getElementById('tab-content-files'));
       // Coming from the Trash page: open the model's Trash tab
@@ -2332,6 +2335,7 @@ const App = {
     el.innerHTML = UI.kitParts(this.kitState());
     const next = el.querySelector('.kit-parts-body');
     if (next) next.scrollTop = top;
+    this.paintFit();
   },
 
   // Changes to a copy of the configuration; the kit checks it against the archive
@@ -2822,6 +2826,96 @@ const App = {
         this.kitHideTip(true);
       });
     }
+  },
+
+  // ─── Printer fit check (public/js/printfit.js) ───────────────────────
+  // The server measures every 3D file once (services/dimensions.js); the page shows the size of
+  // each listed file and, in the corner of the list, whether the files fit the printer chosen
+  // there or any of mine. While files wait to be measured the page asks again every few seconds.
+  async loadPrinterBeds() {
+    try { this.printerBeds = await API.getPrinterBeds(); } catch (e) { this.printerBeds = this.printerBeds || []; }
+    return this.printerBeds;
+  },
+
+  fitPrinterId() {
+    let id = 'any';
+    try { id = localStorage.getItem('gv_fit_printer') || 'any'; } catch (e) {}
+    return id === 'any' || (this.printerBeds || []).some(b => b.id === id) ? id : 'any';
+  },
+
+  setFitPrinter(id) {
+    try { localStorage.setItem('gv_fit_printer', id || 'any'); } catch (e) {}
+    this.paintFit();
+  },
+
+  // Size and error of a file of the open model: the latest answer of the server, else the model
+  fitSizeOf(file) {
+    const data = this.fitData && this.currentModel && this.fitData.modelId === this.currentModel.id ? this.fitData : null;
+    if (data && data.errors[file.id]) return { error: data.errors[file.id] };
+    if (data && data.sizes[file.id]) return { size: data.sizes[file.id] };
+    if (file.dim_error && file.dim_bytes === file.file_size) return { error: file.dim_error };
+    if (file.dim_x !== null && file.dim_x !== undefined && file.dim_bytes === file.file_size) return { size: [file.dim_x, file.dim_y, file.dim_z] };
+    return {};
+  },
+
+  // Sizes next to the listed files and the summary bars ('files': every 3D file of the model,
+  // 'parts': the files the configurator picked)
+  paintFit() {
+    const model = this.currentModel;
+    if (!model || typeof PrintFit === 'undefined') return;
+    const beds = this.printerBeds || [];
+    const chosen = this.fitPrinterId();
+    const byId = new Map((model.files || []).map(f => [f.id, f]));
+    document.querySelectorAll('[data-dim-file]').forEach(el => {
+      const f = byId.get(Number(el.dataset.dimFile));
+      if (!f) return;
+      const s = this.fitSizeOf(f);
+      el.innerHTML = UI.fitDim(s.size, s.error, beds, chosen);
+    });
+    document.querySelectorAll('[data-fit-bar]').forEach(bar => {
+      const measurable = (f) => UI.MEASURABLE.includes(f.file_type);
+      const files = bar.dataset.fitBar === 'parts' && this.kit
+        ? this.kit.bom.parts.filter(p => p.qty > 0 && measurable(p.file)).map(p => byId.get(p.file.id) || p.file)
+        : (model.files || []).filter(measurable);
+      const parts = files.map(f => ({ id: f.id, ...this.fitSizeOf(f) }));
+      bar.innerHTML = UI.fitBar(beds, chosen, PrintFit.summarize(parts, beds, chosen), bar.dataset.fitBar === 'parts' ? 'parts' : 'files');
+    });
+  },
+
+  // Ask the server for the model's sizes (its files are measured first) until none is waiting
+  async fitPoll(modelId) {
+    clearTimeout(this.fitPollTimer);
+    if (!this.printerBeds) await this.loadPrinterBeds();
+    try {
+      // The configurator's parts first
+      const first = this.kit && this.kit.modelId === modelId ? this.kit.bom.parts.filter(p => p.qty > 0).map(p => p.file.id) : [];
+      const data = await API.getModelSizes(modelId, first);
+      if (!this.currentModel || this.currentModel.id !== modelId) return;
+      this.fitData = { modelId, sizes: data.sizes || {}, errors: data.errors || {} };
+      this.paintFit();
+      if (data.pending > 0 && location.hash.startsWith(`#/models/${modelId}`)) {
+        this.fitPollTimer = setTimeout(() => this.fitPoll(modelId), 4000);
+      }
+    } catch (e) {}
+  },
+
+  // Settings -> Printers: the build volumes
+  addPrinterBedRow() {
+    const rows = document.getElementById('bed-rows');
+    const template = document.getElementById('bed-row-template');
+    if (rows && template) rows.appendChild(template.content.cloneNode(true));
+  },
+
+  async savePrinterBeds() {
+    const list = [...document.querySelectorAll('#bed-rows .bed-row')].map(row => {
+      const [x, y, z, margin] = [...row.querySelectorAll('.bed-num')].map(i => i.value);
+      return { id: row.dataset.bedId || undefined, name: row.querySelector('.bed-name').value, x, y, z, margin };
+    });
+    try {
+      this.printerBeds = await API.savePrinterBeds(list);
+      this.toast('Printers saved');
+      this.renderSettings('printers');
+    } catch (e) { this.toast(e.message, 'error'); }
   },
 
   // ─── Password-protected models ───────────────────────────────────────
@@ -3571,7 +3665,12 @@ const App = {
           const config = await API.getSystemSettings();
           let printers = [];
           try { if (config.printers) printers = JSON.parse(config.printers); } catch(e){}
+          const beds = await this.loadPrinterBeds();
           content.innerHTML = `
+            <div class="glass-panel" style="margin-bottom:24px">
+              <div class="panel-header"><div class="panel-title">Build volumes (fit check)</div></div>
+              <div class="panel-body">${UI.printerBedsForm(beds)}</div>
+            </div>
             <div class="glass-panel">
               <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>3D Printers (Moonraker)</div></div>
               <div class="panel-body">${UI.printersSettingsForm(printers)}</div>

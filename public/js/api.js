@@ -149,6 +149,11 @@ const API = {
   restoreFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' }); },
   deleteFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}`, { method: 'DELETE' }); },
 
+  // Printer fit check: build volumes (Settings -> Printers) and the sizes of a model's 3D files
+  getPrinterBeds() { return this.request('/api/printer-beds'); },
+  savePrinterBeds(list) { return this.request('/api/printer-beds', { method: 'PUT', body: JSON.stringify(list) }); },
+  getModelSizes(modelId, first = []) { return this.request(`/api/models/${modelId}/sizes${first.length ? `?first=${first.join(',')}` : ''}`); },
+
   // Kit configurators (public/js/kits): a ZIP of the chosen files, saved configurations
   prepareSelectionDownload(modelId, data) { return this.request(`/api/models/${modelId}/download-selection`, { method: 'POST', body: JSON.stringify(data) }); },
   getKitConfigs(modelId, kit) { return this.request(`/api/models/${modelId}/kit-configs?kit=${encodeURIComponent(kit)}`); },

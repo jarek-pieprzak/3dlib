@@ -338,6 +338,11 @@ async function initDatabase() {
     // Modification time (ms) of the last slicer save imported into the file: an older save that
     // turns up later must not replace it
     if (!all("PRAGMA table_info(files)").some(c => c.name === 'slicer_saved_at')) db.run('ALTER TABLE files ADD COLUMN slicer_saved_at INTEGER');
+    // Size of a 3D file in mm as placed in it (services/dimensions.js); dim_bytes: the file size it
+    // was measured at, so a changed file is measured again
+    for (const col of ['dim_x REAL', 'dim_y REAL', 'dim_z REAL', 'dim_bytes INTEGER', 'dim_error TEXT']) {
+      if (!all("PRAGMA table_info(files)").some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE files ADD COLUMN ${col}`);
+    }
   } catch (e) { console.error('User migration failed:', e); }
 
   // Ensure metadata and library_path columns exist for existing databases

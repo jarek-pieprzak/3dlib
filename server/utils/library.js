@@ -539,6 +539,8 @@ async function scanLibrary(libraryPath) {
     isScanning = false;
     scanStatus.isScanning = false;
     shouldCancel = false;
+    // New files get their sizes measured (printer fit check)
+    try { require('../services/dimensions').kick(); } catch (e) {}
   }
 }
 

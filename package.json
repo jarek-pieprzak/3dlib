@@ -43,6 +43,7 @@
     "occt-import-js": "^0.0.23",
     "sharp": "^0.34.5",
     "sql.js": "^1.11.0",
+    "yauzl": "^3.4.0",
     "yazl": "^3.3.1"
   },
   "devDependencies": {

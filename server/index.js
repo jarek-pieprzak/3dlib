@@ -43,6 +43,7 @@ const fileVersionsRoutes = require('./routes/fileVersions');
 const slicerSavesRoutes = require('./routes/slicerSaves');
 const coversRoutes = require('./routes/covers');
 const kitConfigsRoutes = require('./routes/kitConfigs');
+const printFitRoutes = require('./routes/printFit');
 
 const app = express();
 
@@ -186,6 +187,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/models', modelsRoutes);
 app.use('/api/models', projectFilesRoutes);
 app.use('/api/models', kitConfigsRoutes);
+app.use('/api', printFitRoutes);
 app.use('/api/trash', trashRoutes);
 app.use('/api/files', filesRoutes);
 app.use('/api/files', fileVersionsRoutes);

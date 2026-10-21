@@ -487,6 +487,57 @@ async function runStaticAndUiChecks() {
     assert(K.decodeConfig('%%%') === null, 'A broken ?c= is ignored');
   });
 
+  await check('Printer fit: sizes of STL / OBJ / 3MF files, parts checked straight, turned and on the diagonal', async () => {
+    const os = require('os');
+    const { measure } = require(path.join(ROOT_DIR, 'server/utils/meshSize'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gv-size-'));
+    try {
+      // Binary STL: one triangle 0..30 × 0..20 × 0..10
+      const bin = Buffer.alloc(84 + 50 * 2);
+      bin.writeUInt32LE(2, 80);
+      [[0, 0, 0, 30, 0, 0, 0, 20, 0], [0, 0, 0, 30, 20, 10, 0, 20, 10]].forEach((t, i) => t.forEach((v, k) => bin.writeFloatLE(v, 84 + i * 50 + 12 + k * 4)));
+      fs.writeFileSync(path.join(dir, 'a.stl'), bin);
+      fs.writeFileSync(path.join(dir, 'b.stl'), 'solid t\nfacet normal 0 0 1\nouter loop\nvertex -5 0 0\nvertex 5 2 0\nvertex 0 0 7.5\nendloop\nendfacet\nendsolid t\n');
+      fs.writeFileSync(path.join(dir, 'c.obj'), '# x\nv 0 0 0\nv 12 0 0\nv 0 4 3\nvt 1 1\nf 1 2 3\n');
+      // A Bambu / Orca style 3MF: the mesh in 3D/Objects, a component shifted, the item turned 90°
+      const yazl = require('yazl');
+      const zip = new yazl.ZipFile();
+      zip.addBuffer(Buffer.from('<?xml version="1.0"?><model xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"><resources><object id="2" type="model"><components><component p:path="/3D/Objects/object_1.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 5 5 0"/></components></object></resources><build><item objectid="2" transform="0 1 0 -1 0 0 0 0 1 100 100 0"/></build></model>'), '3D/3dmodel.model');
+      zip.addBuffer(Buffer.from('<?xml version="1.0"?><model><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="40" y="10" z="0"/><vertex x="0" y="10" z="5"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources></model>'), '3D/Objects/object_1.model');
+      zip.end();
+      const chunks = [];
+      for await (const c of zip.outputStream) chunks.push(c);
+      fs.writeFileSync(path.join(dir, 'd.3mf'), Buffer.concat(chunks));
+      const sizes = {
+        stl: await measure(path.join(dir, 'a.stl'), 'stl'), ascii: await measure(path.join(dir, 'b.stl'), 'stl'),
+        obj: await measure(path.join(dir, 'c.obj'), 'obj'), threemf: await measure(path.join(dir, 'd.3mf'), '3mf')
+      };
+      assert(JSON.stringify(sizes) === JSON.stringify({ stl: [30, 20, 10], ascii: [10, 2, 7.5], obj: [12, 4, 3], threemf: [10, 40, 5] }), `Unexpected sizes: ${JSON.stringify(sizes)}`);
+      let failed = false;
+      try { await measure(path.join(dir, 'c.obj'), 'gcode'); } catch (e) { failed = true; }
+      assert(failed, 'Other file types are not measured');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+
+    const ctx = {};
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(ROOT_DIR, 'public/js/printfit.js'), 'utf8'), ctx);
+    const PF = ctx.PrintFit;
+    const p1s = { id: 'p1s', name: 'P1S', x: 256, y: 256, z: 256, margin: 0 };
+    const u1 = { id: 'u1', name: 'U1', x: 270, y: 270, z: 270, margin: 0 };
+    const l3 = [268.2, 268.2, 146.1]; // the L3 module, already on the diagonal in its file
+    assert(!PF.fits(l3, p1s).ok && PF.fits(l3, u1).ok && PF.fits(l3, u1).angle === 0, 'The L3 module fits the U1 only');
+    assert(PF.fits([200, 250, 100], { ...p1s, x: 260, y: 210 }).angle === 90, 'Turned 90° on a long bed');
+    const diag = PF.fits([300, 30, 20], p1s);
+    assert(diag.ok && diag.angle > 30 && diag.angle < 60, `A long thin part fits the diagonal: ${JSON.stringify(diag)}`);
+    assert(PF.fits([100, 100, 300], u1).reason === 'height', 'Too tall is too tall');
+    assert(PF.fits([250, 250, 10], p1s).ok && !PF.fits([250, 250, 10], { ...p1s, margin: 5 }).ok, 'The margin keeps the edges free');
+    const s = PF.summarize([{ id: 1, size: l3 }, { id: 2, size: [50, 50, 50] }, { id: 3 }, { id: 4, error: 'x' }], [p1s, u1], 'p1s');
+    assert(s.total === 4 && s.fit === 1 && s.misfit.join() === '1' && s.pending === 1 && s.failed === 1, `Summary for one printer: ${JSON.stringify(s)}`);
+    assert(PF.summarize([{ id: 1, size: l3 }], [p1s, u1], 'any').misfit.length === 0, 'Any printer: the U1 takes it');
+  });
+
     await check('Every API.* method called in app.js & components.js exists on API in api.js', () => {
     const frontendSources = `${compCode}\n${appCode}`;
     const apiCallRegex = /\bAPI\.([a-zA-Z0-9_]+)\s*\(/g;
@@ -1704,6 +1755,36 @@ async function runE2ETests() {
       assert((await apiReq(`${url}/${saved.data.id}`, { method: 'DELETE', session: maker })).status === 404, "Another user must not delete someone's configuration");
       assert((await apiReq(`${url}/${saved.data.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'The owner deletes a configuration');
       assert((await apiReq(url, { session: adminSession })).data.length === 0, 'A deleted configuration is gone');
+    });
+
+    await check('Printer fit: the three default printers, an edited list, sizes of a model measured in the background', async () => {
+      const beds = await apiReq('/api/printer-beds');
+      assert(beds.status === 200 && beds.data.map(b => b.id).join() === 'bambu-p1s,snapmaker-u1,creality-sparkx-i8', `Default printers: ${JSON.stringify(beds.data)}`);
+      assert(beds.data[2].x === 260 && beds.data[2].z === 255, 'SparkX i8: 260 × 260 × 255 mm');
+      assert((await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [{ name: 'Tiny', x: 5, y: 5, z: 5 }] })).status === 400, 'A build volume under 10 mm is refused');
+      const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
+      const maker = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
+      assert((await apiReq('/api/printer-beds', { method: 'PUT', session: maker, body: beds.data })).status === 403, 'Only an admin changes the printers');
+      const saved = await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [...beds.data, { name: 'Voron 2.4 350', x: 350, y: 350, z: 340, margin: 2 }] });
+      assert(saved.status === 200 && saved.data.length === 4 && saved.data[3].id === 'voron-2-4-350', `Saved printers: ${JSON.stringify(saved.data)}`);
+      assert((await apiReq('/api/printer-beds')).data.length === 4, 'The edited list is kept');
+      await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: beds.data });
+
+      // The STL files of a library project get their sizes
+      const model = ((await apiReq('/api/models?search=Zip%20Project', { session: adminSession })).data.models || []).find(m => m.name === 'Zip Project');
+      let sizes;
+      for (let i = 0; i < 100; i++) {
+        sizes = await apiReq(`/api/models/${model.id}/sizes`, { session: adminSession });
+        if (sizes.data.pending === 0) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+      const files = (await apiReq(`/api/models/${model.id}`, { session: adminSession })).data.files;
+      const part = files.find(f => f.original_name === 'part.stl');
+      const big = files.find(f => f.original_name === 'Sub Folder/big.stl');
+      assert(sizes.data.pending === 0, `All files measured, ${sizes.data.pending} still waiting`);
+      assert(JSON.stringify(sizes.data.sizes[part.id]) === '[5,5,0]', `part.stl is 5 × 5 × 0 mm, got ${JSON.stringify(sizes.data.sizes[part.id])}`);
+      assert(sizes.data.errors[big.id] || sizes.data.sizes[big.id], 'Random bytes as an STL are measured or marked as failed, never left waiting');
+      assert(part.dim_x === 5 && part.dim_bytes === part.file_size, 'The model page gets the size with its files');
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

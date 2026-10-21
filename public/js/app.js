@@ -2226,7 +2226,10 @@ const App = {
       if (firstPreview && !previewCadFile) {
         setTimeout(() => this.previewFile(model.id, firstPreview.id, { initial: true }), 100);
       }
-      if (previewCadFile && typeof Viewer !== 'undefined') {
+      // A large 3D file (USSA VAULT has 350 MB STLs) is loaded only on request
+      if (previewCadFile && typeof Viewer !== 'undefined' && Number(previewCadFile.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES) {
+        setTimeout(() => this.showLargePreviewPrompt(model.id, previewCadFile), 100);
+      } else if (previewCadFile && typeof Viewer !== 'undefined') {
         const stlUrl = `${previewCadFile.url || '/uploads/'+previewCadFile.filename}?t=${Date.now()}`;
         setTimeout(async () => {
           const v = Viewer.create(`stl-viewer-${model.id}`, stlUrl, previewCadFile.file_type, {
@@ -2633,6 +2636,20 @@ const App = {
     if (!opts.initial && (r.top < 56 || r.bottom > window.innerHeight)) {
       (container.closest('.glass-panel') || container).scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+  },
+
+  // The preview area of a 3D file too large to load by itself: its name, size and a load button
+  showLargePreviewPrompt(modelId, file) {
+    const container = document.getElementById(`stl-viewer-${modelId}`);
+    if (!container) return;
+    const name = String(file.original_name || file.filename || '').split('/').pop();
+    container.innerHTML = `
+      <div class="large-preview">
+        <div class="large-preview-name">${UI.escapeHtml(name)}</div>
+        <div>${UI.formatSize(file.file_size)}: too large to load automatically.</div>
+        <button class="btn btn-secondary btn-sm" onclick="App.previewFile(${Number(modelId)}, ${Number(file.id)})">Load 3D preview</button>
+      </div>`;
+    this.highlightPreviewFile(file.id);
   },
 
   // The strip under the preview: viewer hints for 3D, file name and open / download links otherwise

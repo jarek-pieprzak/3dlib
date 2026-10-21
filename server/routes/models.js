@@ -8,7 +8,8 @@ const { LIBRARY_PATH, UPLOADS_DIR } = require('../config');
 const { authenticate, requireUploader } = require('../middleware/auth');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement, safeUrl } = require('../middleware/security');
-const { getFileUrl, getThumbUrl, getZipEntryBuffer, getSettingBool, canEditModel } = require('../utils/modelHelpers');
+const { getFileUrl, getThumbUrl, getZipEntryBuffer, zipEntriesForFiles, getSettingBool, canEditModel } = require('../utils/modelHelpers');
+const { sendZip } = require('../utils/zipStream');
 const adultLock = require('../utils/adult');
 const trashUtil = require('../utils/trash');
 const projectFiles = require('../utils/projectFiles');
@@ -288,57 +289,10 @@ router.get('/:id/download', (req, res) => {
     const files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at ASC', [id]);
     if (!files.length) return res.status(400).json({ error: 'No files in this model to download' });
 
-    const AdmZip = require('adm-zip');
-    const zip = new AdmZip();
-    const physicalZipPaths = new Set(
-      files.filter(f => !f.is_archive_entry && f.file_type === 'zip' && f.library_path).map(f => f.library_path)
-    );
-
-    let addedCount = 0;
-    for (const file of files) {
-      if (file.is_archive_entry && file.library_path && file.library_path.includes('::')) {
-        const [zipPath, entryPath] = file.library_path.split('::');
-        if (physicalZipPaths.has(zipPath)) continue;
-        const confinedZip = validatePathConfinement(LIBRARY_PATH, path.relative(LIBRARY_PATH, zipPath));
-        if (confinedZip && fs.existsSync(confinedZip)) {
-          try {
-            const srcZip = new AdmZip(confinedZip);
-            const entry = srcZip.getEntry(entryPath);
-            if (entry) {
-              const entryName = (file.archive_entry_path || file.original_name || file.filename).replace(/^[/\\]+/, '');
-              zip.addFile(entryName, getZipEntryBuffer(entry));
-              addedCount++;
-            }
-          } catch (e) {}
-        }
-        continue;
-      }
-
-      let filePath = null;
-      if (file.library_path && fs.existsSync(file.library_path)) {
-        filePath = validatePathConfinement(LIBRARY_PATH, path.relative(LIBRARY_PATH, file.library_path));
-      } else if (file.filename) {
-        const upCandidate = path.join(UPLOADS_DIR, file.filename);
-        if (fs.existsSync(upCandidate)) {
-          filePath = validatePathConfinement(UPLOADS_DIR, path.relative(UPLOADS_DIR, upCandidate));
-        }
-      }
-      if (filePath) {
-        zip.addLocalFile(filePath, '', file.original_name || file.filename);
-        addedCount++;
-      }
-    }
-
-    if (addedCount === 0) {
+    // Streamed from disk: a project can be many GB
+    if (!sendZip(res, model.name || 'model', zipEntriesForFiles(files))) {
       return res.status(404).json({ error: 'No physical files found on disk for this model' });
     }
-
-    const zipBuffer = zip.toBuffer();
-    const safeName = (model.name || 'model').replace(/[/\\?%*:|"<>]/g, '_');
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}.zip"`);
-    res.setHeader('Content-Length', zipBuffer.length);
-    res.send(zipBuffer);
   } catch (e) {
     console.error('Error creating model zip:', e);
     res.status(500).json({ error: 'Failed to create model zip' });

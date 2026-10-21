@@ -161,8 +161,48 @@ function getZipEntryBuffer(entry) {
   }
 }
 
+/**
+ * ZIP download entries (utils/zipStream) for model files: library and uploaded files are read
+ * from disk; files found inside a ZIP archive are read from it, unless the archive itself is
+ * in the list. folder: optional folder inside the download (collections: one per model).
+ */
+function zipEntriesForFiles(files, folder = '') {
+  const AdmZip = require('adm-zip');
+  const { validatePathConfinement } = require('../middleware/security');
+  const prefix = folder ? `${folder}/` : '';
+  const physicalZips = new Set(files.filter(f => !f.is_archive_entry && f.file_type === 'zip' && f.library_path).map(f => f.library_path));
+  const archives = new Map(); // archive path -> AdmZip, opened once per download
+  const entries = [];
+  for (const file of files) {
+    if (file.is_archive_entry && file.library_path && file.library_path.includes('::')) {
+      const [zipPath, entryPath] = file.library_path.split('::');
+      if (physicalZips.has(zipPath)) continue;
+      const confinedZip = validatePathConfinement(LIBRARY_PATH, path.relative(LIBRARY_PATH, zipPath));
+      if (!confinedZip || !fs.existsSync(confinedZip)) continue;
+      try {
+        if (!archives.has(confinedZip)) archives.set(confinedZip, new AdmZip(confinedZip));
+        const entry = archives.get(confinedZip).getEntry(entryPath);
+        if (entry) {
+          entries.push({ name: prefix + (file.archive_entry_path || file.original_name || file.filename), size: entry.header.size, read: () => getZipEntryBuffer(entry) });
+        }
+      } catch (e) {}
+      continue;
+    }
+    let filePath = null;
+    if (file.library_path && fs.existsSync(file.library_path)) {
+      filePath = validatePathConfinement(LIBRARY_PATH, path.relative(LIBRARY_PATH, file.library_path));
+    } else if (file.filename) {
+      const upCandidate = path.join(UPLOADS_DIR, file.filename);
+      if (fs.existsSync(upCandidate)) filePath = validatePathConfinement(UPLOADS_DIR, path.relative(UPLOADS_DIR, upCandidate));
+    }
+    if (filePath) entries.push({ name: prefix + (file.original_name || file.filename), path: filePath });
+  }
+  return entries;
+}
+
 module.exports = {
   getZipEntryBuffer,
+  zipEntriesForFiles,
   getFileUrl,
   getThumbUrl,
   deleteModelInternal,

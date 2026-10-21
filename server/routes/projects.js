@@ -1,13 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs');
-const path = require('path');
 
 const { get, all, run } = require('../database');
-const { UPLOADS_DIR } = require('../config');
 const { authenticate } = require('../middleware/auth');
 const { heavyLimiter } = require('../middleware/rateLimit');
-const { getFileUrl, getThumbUrl } = require('../utils/modelHelpers');
+const { getFileUrl, getThumbUrl, zipEntriesForFiles } = require('../utils/modelHelpers');
+const { sendZip } = require('../utils/zipStream');
 
 // ─── GET /api/projects ────────────────────────────────────────────────────────
 router.get('/', authenticate, (req, res) => {
@@ -255,7 +253,6 @@ router.delete('/:id/models/:modelId', authenticate, (req, res) => {
 // ─── GET /api/projects/:id/download ───────────────────────────────────────────
 router.get('/:id/download', authenticate, heavyLimiter, (req, res) => {
   try {
-    const AdmZip = require('adm-zip');
     const projectId = Number(req.params.id);
     const project = get('SELECT * FROM projects WHERE id=?', [projectId]);
     if (!project) return res.status(404).json({ error: 'Collection not found' });
@@ -274,27 +271,15 @@ router.get('/:id/download', authenticate, heavyLimiter, (req, res) => {
 
     if (!models.length) return res.status(400).json({ error: 'No models in this collection to download' });
 
-    const zip = new AdmZip();
-
+    // One folder per model, files keep their subfolders; streamed from disk
+    const entries = [];
     for (const model of models) {
-      const files = all('SELECT filename, library_path FROM files WHERE model_id=? AND deleted_at IS NULL', [model.id]);
-      const folderName = model.name.replace(/[/\\?%*:|"<>]/g, '_');
-      for (const file of files) {
-        const filePath = (file.library_path && fs.existsSync(file.library_path))
-          ? file.library_path
-          : (file.filename && fs.existsSync(path.join(UPLOADS_DIR, file.filename)) ? path.join(UPLOADS_DIR, file.filename) : null);
-        if (filePath) {
-          zip.addLocalFile(filePath, folderName);
-        }
-      }
+      const files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at ASC', [model.id]);
+      entries.push(...zipEntriesForFiles(files, model.name.replace(/[/\\?%*:|"<>]/g, '_')));
     }
-
-    const zipBuffer = zip.toBuffer();
-    const safeName = (project.name || 'collection').replace(/[/\\?%*:|"<>]/g, '_');
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
-    res.setHeader('Content-Length', zipBuffer.length);
-    res.send(zipBuffer);
+    if (!sendZip(res, project.name || 'collection', entries)) {
+      return res.status(404).json({ error: 'No physical files found on disk for this collection' });
+    }
   } catch (e) {
     console.error('Error creating collection zip:', e);
     res.status(500).json({ error: 'Failed to create collection zip' });

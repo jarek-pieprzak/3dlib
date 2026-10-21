@@ -1452,6 +1452,44 @@ async function runE2ETests() {
       await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: false } });
     });
 
+    await check('ZIP downloads stream from disk: subfolders kept, exact Content-Length, one folder per model in collections', async () => {
+      const AdmZip = require('adm-zip');
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      const big = require('crypto').randomBytes(3 * 1024 * 1024);
+      const dir = path.join(tmpLibDir, 'Zip Project');
+      fs.mkdirSync(path.join(dir, 'Sub Folder'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'part.stl'), stl);
+      fs.writeFileSync(path.join(dir, 'Sub Folder', 'inner.stl'), stl);
+      fs.writeFileSync(path.join(dir, 'Sub Folder', 'big.stl'), big);
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        if (!(await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning) break;
+      }
+      const model = ((await apiReq('/api/models?search=Zip%20Project', { session: adminSession })).data.models || []).find(m => m.name === 'Zip Project');
+      assert(model, 'The library folder "Zip Project" must become a model');
+
+      const download = async (url) => {
+        const res = await fetch(`${baseUrl}${url}`, { headers: { Cookie: adminSession.cookie } });
+        assert(res.status === 200, `${url} must answer 200, got ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        assert(Number(res.headers.get('content-length')) === buf.length, `${url}: Content-Length ${res.headers.get('content-length')} must be the exact size ${buf.length}`);
+        return { zip: new AdmZip(buf), disposition: res.headers.get('content-disposition') || '' };
+      };
+      const names = (zip) => zip.getEntries().map(e => e.entryName).sort().join(', ');
+
+      const one = await download(`/api/models/${model.id}/download`);
+      assert(one.disposition.includes('filename="Zip Project.zip"'), `Unexpected Content-Disposition: ${one.disposition}`);
+      assert(names(one.zip) === 'Sub Folder/big.stl, Sub Folder/inner.stl, part.stl', `The model ZIP must keep the subfolders, got: ${names(one.zip)}`);
+      assert(one.zip.getEntry('Sub Folder/big.stl').getData().equals(big), 'A file must come out of the ZIP unchanged');
+
+      const coll = await apiReq('/api/projects', { method: 'POST', session: adminSession, body: { name: 'Zip Collection', visibility: 'public' } });
+      await apiReq(`/api/projects/${coll.data.id}/models`, { method: 'POST', session: adminSession, body: { model_id: model.id } });
+      const all = await download(`/api/projects/${coll.data.id}/download`);
+      assert(names(all.zip) === 'Zip Project/Sub Folder/big.stl, Zip Project/Sub Folder/inner.stl, Zip Project/part.stl', `The collection ZIP must hold one folder per model, got: ${names(all.zip)}`);
+      await apiReq(`/api/projects/${coll.data.id}`, { method: 'DELETE', session: adminSession });
+    });
+
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {
       const delRes = await apiReq(`/api/models/${createdModelId}?deleteDisk=true`, {
         method: 'DELETE',

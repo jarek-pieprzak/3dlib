@@ -1361,11 +1361,13 @@ const UI = {
         <div class="kit-result">
           <div class="glass-panel detail-viewer-panel kit-preview-panel" style="overflow:visible">
             <div class="panel-header">
-              <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">3D Studio</span></div>
+              <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">Tower</span></div>
+              <div class="kit-seg kit-tower-modes" hidden><button type="button" class="kit-seg-btn" data-mode="3d" onclick="App.kitTowerMode('3d')">3D</button><button type="button" class="kit-seg-btn" data-mode="2d" onclick="App.kitTowerMode('2d')">Drawing</button></div>
+              <button type="button" class="btn btn-secondary btn-xs kit-tower-btn" onclick="App.kitShowTower()" hidden>Show the tower</button>
             </div>
             <div class="panel-body no-pad">
               <div class="viewer-container" id="stl-viewer-${model.id}">
-                <div class="large-preview">Click a part in the list to preview it.</div>
+                <div class="large-preview">Loading...</div>
               </div>
               <div class="detail-viewer-hint" style="padding:10px 16px;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);background:rgba(0,0,0,0.1)">Drag to rotate · Scroll to zoom · Right-click to pan</div>
             </div>
@@ -1405,15 +1407,200 @@ const UI = {
       </div>`;
   },
 
+  // The ⓘ button of an option: hover shows its tip (VaultKit.TIPS), a click pins it. set: where
+  // its value lives ('cfg:roof', 'mod:base', 'floor:0:layout', 'slot:0:1:interior'), so a pinned
+  // tip with choices can change it
+  kitTip(key, set) {
+    const tip = VaultKit.TIPS[key];
+    if (!tip) return '';
+    return `<button type="button" class="kit-tip-btn" data-tip="${key}"${set ? ` data-tip-set="${set}"` : ''} onclick="App.kitShowTip(this, true)" aria-label="About: ${this.escapeHtml(tip.title)}">i</button>`;
+  },
+
+  // A tip: its text, the illustration (or one card per choice, the current one marked; a click
+  // on a card picks it), what it adds to the lists and where the manual shows it.
+  // ctx: { value, relevant (choices that apply here), available, set }
+  kitTipContent(tip, ctx = {}) {
+    const esc = (s) => this.escapeHtml(s);
+    const img = (name, alt) => (name ? `<img class="kit-tip-img" src="/img/kits/ussa-vault/${esc(name)}.webp" alt="${esc(alt || '')}" loading="lazy">` : '');
+    const manual = (m) => (m ? `<button type="button" class="kit-tip-manual" onclick="App.kitShowManual('${esc(m[0])}', ${Number(m[1])})">Manual: ${esc(m[0].replace(/^\d+_/, '').replace(/\.pdf$/i, ''))}, page ${Number(m[1])}</button>` : '');
+    const choices = tip.choices || null;
+    const keys = choices ? (ctx.relevant || Object.keys(choices)).filter(k => choices[k]) : [];
+    const current = choices && choices[ctx.value];
+    const cards = keys.map(k => {
+      const c = choices[k];
+      const off = ctx.available && !ctx.available.includes(k);
+      return `<button type="button" class="kit-tip-choice${k === ctx.value ? ' is-current' : ''}"${off || !ctx.set ? ' disabled' : ''}${off ? ' title="Not available for this size"' : ''} onclick="App.kitTipPick('${esc(ctx.set || '')}', '${esc(k)}')">
+          ${img(c.image, c.label)}
+          <span class="kit-tip-choice-label">${esc(c.label)}${k === ctx.value ? ' <small>current</small>' : ''}</span>
+          <span class="kit-tip-choice-text">${esc(c.text)}</span>
+        </button>`;
+    }).join('');
+    return `
+      <div class="kit-tip-head"><span class="kit-tip-title">${esc(tip.title)}</span><button type="button" class="kit-icon-btn" aria-label="Close" onclick="App.kitHideTip(true)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+      ${tip.text ? `<p class="kit-tip-text">${esc(tip.text)}</p>` : ''}
+      ${!choices ? img(tip.image, tip.title) : ''}
+      ${cards ? `<div class="kit-tip-choices${keys.some(k => choices[k].image) ? ' has-images' : ''}">${cards}</div>` : ''}
+      ${tip.adds ? `<p class="kit-tip-adds">${esc(tip.adds)}</p>` : ''}
+      <div class="kit-tip-foot">${manual((current && current.manual) || tip.manual)}</div>`;
+  },
+
+  // The tower to scale, front and side (millimetres; 48 mm per F), shown in the 3D Studio panel
+  // while no part is open. Floors are clickable (App.kitFocusFloor). height: the tower height
+  // estimate of the parts list.
+  kitDrawing(cfg, height) {
+    const mm = { S: 165, M: 254, L: 330, XL: 419 };
+    const F = { '1F': 1, '2F': 2, '4F': 4 };
+    const P = 48;
+    const W = mm[cfg.width] || 330;
+    const D = 146 + 42 * (Number(cfg.depth) - 3);
+    const mods = cfg.mods || {};
+    const floors = cfg.floors || [];
+    const layouts = VaultKit.LAYOUTS[cfg.width] || [];
+    const layoutOf = (f) => layouts.find(l => l.id === f.layout) || layouts[0];
+    const hasBase = mods.base && mods.base !== 'none';
+    const lift = mods.base === 'wheels' ? 40 : mods.base === 'casters' ? 46 : (hasBase && mods.feet ? 24 : 0);
+    const baseH = hasBase ? 34 : 0;
+    const floorsH = floors.reduce((n, f) => n + (F[f.height] || 1) * P, 0);
+    const roofKind = cfg.roof && cfg.roof !== 'none' ? cfg.roof : null;
+    const roofH = { grid: 36, table: 8, bowl: 22, heavy: 62, undertable: 30 }[roofKind] || 0;
+    const topY = -lift - baseH - floorsH;
+    const handleTop = mods.pullHandle && mods.backbone !== 'none' ? topY - roofH - 150 : topY - roofH;
+    const fs = Math.round(Math.max(W + D + 200, floorsH + 250) / 30);
+    const wheelX = mods.base === 'wheels' ? 30 : 0;
+    const sx = W + wheelX + 40 + fs * 2;
+    const back = sx + D;
+    const r = (cls, x, y, w, h, rx = 0) => `<rect class="${cls}" x="${x}" y="${y}" width="${Math.max(0, w)}" height="${Math.max(0, h)}"${rx ? ` rx="${rx}"` : ''}/>`;
+    const text = (x, y, s, anchor = 'middle', extra = '') => `<text class="kd-text" x="${x}" y="${y}" font-size="${fs}" text-anchor="${anchor}"${extra}>${this.escapeHtml(s)}</text>`;
+    const dimH = (x1, x2, y, label) => `<path class="kd-dim" d="M${x1} ${y}H${x2}M${x1} ${y - 8}V${y + 8}M${x2} ${y - 8}V${y + 8}"/>${text((x1 + x2) / 2, y + fs + 4, label)}`;
+
+    // A drawer column: one facade with key and label per box; a sustainer: facade, two locks
+    const column = (slot, x, y, w, h, floorHeight) => {
+      if (slot.type === 'sustainer') {
+        return r('kd-sus', x + 5, y + 5, w - 10, h - 10, 3) + r('kd-dark', x + w * 0.22 - 9, y + 8, 18, 12, 2) + r('kd-dark', x + w * 0.78 - 9, y + 8, 18, 12, 2) + r('kd-label', x + w / 2 - 16, y + h / 2 - 5, 32, 10, 2);
+      }
+      let out = '';
+      let by = y;
+      for (const bh of String(slot.boxes || floorHeight).split('+')) {
+        const bH = (F[bh] || 1) * P;
+        out += r('kd-drawer', x + 5, by + 4, w - 10, bH - 8, 3) + `<circle class="kd-dark" cx="${x + w - 24}" cy="${by + bH / 2}" r="7"/>` + r('kd-label', x + 16, by + bH / 2 - 5, 28, 10, 2);
+        by += bH;
+      }
+      return out;
+    };
+
+    let y = -lift - baseH;
+    const front = [];
+    const side = [];
+    floors.forEach((floor, fi) => {
+      const h = (F[floor.height] || 1) * P;
+      y -= h;
+      const layout = layoutOf(floor);
+      const slots = VaultKit.slotsOf(layout);
+      let mx = 0;
+      let parts = '';
+      layout.modules.forEach((mod, mi) => {
+        const mw = mm[mod.w];
+        parts += r('kd-mod', mx + 1, y + 1, mw - 2, h - 2, 4);
+        let cx = mx;
+        slots.forEach((s, si) => {
+          if (s.mi !== mi) return;
+          parts += column(floor.slots[si] || {}, cx, y, mm[s.w], h, floor.height);
+          if (cx > mx) parts += `<path class="kd-wall" d="M${cx} ${y + 3}V${y + h - 3}"/>`;
+          cx += mm[s.w];
+        });
+        mx += mw;
+      });
+      const label = `Floor ${fi + 1}: ${floor.height}, ${layout.label}`;
+      const hover = `data-fi="${fi}" onclick="App.kitFocusFloor(${fi})" onmouseenter="App.kitHoverFloor(${fi})" onmouseleave="App.kitHoverFloor(null)"`;
+      front.push(`<g class="kd-floor" ${hover}><title>${this.escapeHtml(label)}</title>${parts}${text(-14, y + h / 2 + fs / 3, String(fi + 1), 'end')}</g>`);
+      const firstType = (floor.slots[0] || {}).type === 'sustainer' ? 'kd-sus' : 'kd-drawer';
+      let boards = '';
+      if (mods.backbone && mods.backbone !== 'none') {
+        const units = floor.height === '4F' ? [h / 2, h / 2] : [h];
+        let uy = y;
+        units.forEach(uh => { boards += r('kd-dark', back, uy + 2, 14, uh - 4, 2); uy += uh; });
+        if (mods.pegboard && mods.pegboard !== 'none') boards += r('kd-peg', back + 14, y + 6, 8, h - 12, 1);
+      }
+      if (mods.wallMount) boards += r('kd-mount', back + (mods.backbone && mods.backbone !== 'none' ? 14 : 0), y + 3, 10, h - 6, 1);
+      side.push(`<g class="kd-floor" ${hover}><title>${this.escapeHtml(label)}</title>${r('kd-mod', sx, y + 1, D, h - 2, 4)}${r(firstType, sx - 5, y + 5, 7, h - 10, 2)}${boards}</g>`);
+    });
+
+    // Roof on the drawer modules of the top floor (sustainers have their own lids)
+    let roof = '';
+    const top = floors[floors.length - 1];
+    if (roofKind && top) {
+      const layout = layoutOf(top);
+      const slots = VaultKit.slotsOf(layout);
+      let mx = 0;
+      layout.modules.forEach((mod, mi) => {
+        const mw = mm[mod.w];
+        const first = slots.findIndex(s => s.mi === mi);
+        const drawer = mod.cols || (top.slots[first] || {}).type !== 'sustainer';
+        if (drawer) {
+          if (roofKind === 'grid') roof += r('kd-roof', mx + 2, topY - 10, mw - 4, 10, 2) + r('kd-dark', mx + mw / 2 - Math.min(60, mw * 0.3), topY - 36, Math.min(120, mw * 0.6), 26, 9);
+          if (roofKind === 'table') roof += r('kd-roof', mx - 2, topY - 8, mw + 4, 8, 2);
+          if (roofKind === 'bowl') roof += r('kd-roof', mx + 2, topY - 22, mw - 4, 22, 4) + r('kd-hollow', mx + 10, topY - 18, mw - 20, 9, 3);
+          if (roofKind === 'heavy') roof += r('kd-roof', mx + 2, topY - 8, mw - 4, 8, 2) + r('kd-roof', mx + 4, topY - 62, mw * 0.3, 54, 4) + r('kd-roof', mx + mw * 0.7 - 4, topY - 62, mw * 0.3, 54, 4) + r('kd-dark', mx + mw * 0.3 + 4, topY - 44, mw * 0.4 - 8, 14, 5);
+          if (roofKind === 'undertable') roof += r('kd-roof', mx - 10, topY - 8, mw + 20, 8, 2);
+        }
+        mx += mw;
+      });
+      if (roofKind === 'undertable') roof += r('kd-table', -60, topY - 30, W + 120, 22, 2);
+      const sideRoof = { grid: r('kd-roof', sx + 2, topY - 10, D - 4, 10, 2) + r('kd-dark', sx + D / 2 - 22, topY - 36, 44, 26, 9), table: r('kd-roof', sx - 2, topY - 8, D + 4, 8, 2),
+        bowl: r('kd-roof', sx + 2, topY - 22, D - 4, 22, 4), heavy: r('kd-roof', sx + 4, topY - 62, D - 8, 62, 4), undertable: r('kd-roof', sx - 10, topY - 8, D + 20, 8, 2) + r('kd-table', sx - 40, topY - 30, D + 80, 22, 2) }[roofKind];
+      if (roof && sideRoof) roof += sideRoof;
+    }
+
+    // Base, wheels, casters, feet, handles
+    let under = '';
+    let sideWheel = '';
+    if (hasBase) under += r('kd-base', 0, -lift - baseH, W, baseH, 4) + r('kd-base', sx, -lift - baseH, D, baseH, 4);
+    if (mods.base === 'wheels') {
+      under += r('kd-wheel', -28, -142, 24, 142, 9) + r('kd-wheel', W + 4, -142, 24, 142, 9);
+      // Seen from the side the wheel is in front of the modules
+      sideWheel = `<circle class="kd-wheel" cx="${back - 60}" cy="-71" r="71"/><circle class="kd-hub" cx="${back - 60}" cy="-71" r="28"/>`;
+    }
+    if (mods.base === 'casters') {
+      [16, W - 16].forEach(x => { under += r('kd-dark', x - 4, -lift, 8, 18) + `<circle class="kd-wheel" cx="${x}" cy="-14" r="14"/>`; });
+      [sx + 22, back - 22].forEach(x => { under += r('kd-dark', x - 4, -lift, 8, 18) + `<circle class="kd-wheel" cx="${x}" cy="-14" r="14"/>`; });
+    }
+    if (hasBase && mods.feet && lift) under += r('kd-dark', W * 0.25, -lift, W * 0.5, lift, 3) + r('kd-dark', sx + 6, -lift, 70, lift, 3);
+    let handles = '';
+    if (mods.backbone && mods.backbone !== 'none' && top) {
+      if (mods.pullHandle) handles += `<path class="kd-rod" d="M${back + 26} ${-lift - baseH}V${handleTop + 14}"/>` + r('kd-dark', back + 12, handleTop, 30, 14, 4);
+      if (mods.stationaryHandle) {
+        const th = (F[top.height] || 1) * P;
+        handles += `<path class="kd-handle" d="M${back + 14} ${topY + th * 0.25}h46v${th * 0.5}h-46"/>`;
+      }
+    }
+    const wall = mods.wallMount ? r('kd-wallside', back + (mods.backbone && mods.backbone !== 'none' ? 24 : 10), handleTop - 30, 14, -handleTop + 30) : '';
+
+    const minY = Math.min(handleTop, topY - roofH) - fs * 1.5;
+    const maxX = back + 90;
+    const minX = -fs * 3 - 40;
+    const maxY = 30 + fs * 3.2;
+    const dims = dimH(0, W, 26, `${W} mm`) + dimH(sx, back, 26, `${D} mm`) +
+      `<path class="kd-dim" d="M${minX + fs} 0V${topY}M${minX + fs - 8} 0H${minX + fs + 8}M${minX + fs - 8} ${topY}H${minX + fs + 8}"/>` +
+      text(minX + fs * 0.6, topY / 2, `about ${height} mm`, 'middle', ` transform="rotate(-90 ${minX + fs * 0.6} ${topY / 2})"`) +
+      text(W / 2, 30 + fs * 2.6, 'Front', 'middle', ' class="kd-text kd-caption"') + text(sx + D / 2, 30 + fs * 2.6, 'Side', 'middle', ' class="kd-text kd-caption"');
+    return `
+      <svg class="kit-drawing" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="The tower from the front and the side">
+        <path class="kd-ground" d="M${minX + fs * 2} 0H${maxX - 10}"/>
+        ${wall}${under}${front.join('')}${side.join('')}${sideWheel}${roof}${handles}${dims}
+      </svg>`;
+  },
+
   // The builder: saved configurations, footprint, floors (top floor first), roof, options and
   // modifications. kit: the configurator state of App (cfg, choices, bom, saved, savedId) plus
-  // loggedIn and dirty
+  // loggedIn and dirty. Controls with data-tip show their tip on hover and focus.
   kitBuilder(kit) {
     const { cfg, choices: ch } = kit;
     const esc = (s) => this.escapeHtml(s);
+    const tip = (key, set) => this.kitTip(key, set);
+    const on = (key, set) => ` data-tip="${key}" data-tip-set="${set}"`;
     const opt = (value, label, selected, disabled) => `<option value="${esc(value)}"${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}>${esc(label)}</option>`;
-    const seg = (field, values, current, available) => `<div class="kit-seg">${values.map(v => `<button type="button" class="kit-seg-btn${String(v) === String(current) ? ' is-active' : ''}"${available.includes(v) ? '' : ' disabled'} onclick="App.kitSet('${field}', '${v}')">${v}</button>`).join('')}</div>`;
-    const check = (label, checked, onchange, disabled, hint) => `<label class="kit-check${disabled ? ' is-disabled' : ''}"${hint ? ` title="${esc(hint)}"` : ''}><input type="checkbox"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''} onchange="${onchange}">${esc(label)}</label>`;
+    const seg = (field, values, current, available) => `<div class="kit-seg"${on(field, `cfg:${field}`)}>${values.map(v => `<button type="button" class="kit-seg-btn${String(v) === String(current) ? ' is-active' : ''}"${available.includes(v) ? '' : ' disabled'} onclick="App.kitSet('${field}', '${v}')">${v}</button>`).join('')}</div>`;
+    const check = (label, checked, onchange, disabled, tipKey, set) => `<span class="kit-check-wrap"><label class="kit-check${disabled ? ' is-disabled' : ''}"${tipKey ? on(tipKey, set || '') : ''}><input type="checkbox"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''} onchange="${onchange}">${esc(label)}</label>${tipKey ? tip(tipKey, set) : ''}</span>`;
     const icon = (path) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
     const boxLabels = { '1F': 'One 1F box', '2F': 'One 2F box', '4F': 'One 4F box', '1F+1F': 'Two 1F boxes', '2F+2F': 'Two 2F boxes', '2F+1F+1F': '2F + two 1F boxes', '1F+1F+1F+1F': 'Four 1F boxes' };
     const drawerInteriors = { empty: 'Empty', gridfinity: 'Gridfinity baseplate', dividers: 'Grid dividers' };
@@ -1423,31 +1610,32 @@ const UI = {
 
     const floors = cfg.floors.map((floor, fi) => {
       const fc = ch.floors[fi];
-      const layoutSelect = fc.layouts.length > 1 ? `<select class="form-select kit-select" onchange="App.kitFloor(${fi}, 'layout', this.value)" title="Modules side by side">${fc.layouts.map(l => opt(l.id, l.label, l.id === floor.layout, !l.available)).join('')}</select>` : '';
+      const layoutSelect = fc.layouts.length > 1 ? `<select class="form-select kit-select" onchange="App.kitFloor(${fi}, 'layout', this.value)"${on('layout', `floor:${fi}:layout`)}>${fc.layouts.map(l => opt(l.id, l.label, l.id === floor.layout, !l.available)).join('')}</select>` : '';
       const slots = floor.slots.map((slot, si) => {
         const sc = fc.slots[si];
         const name = sc.double ? `${sc.width} drawer ${si === 0 ? 'left' : 'right'}` : (floor.slots.length > 1 ? `${sc.width} ${si === 0 ? 'left' : 'right'}` : sc.width);
+        const set = (field) => `slot:${fi}:${si}:${field}`;
         const type = sc.types.length > 1
-          ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'type', this.value)">${sc.types.map(t => opt(t, t === 'drawer' ? 'Drawer' : 'Sustainer', t === slot.type)).join('')}</select>`
-          : `<span class="kit-slot-type">${slot.type === 'drawer' ? 'Drawer' : 'Sustainer'}</span>`;
+          ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'type', this.value)"${on('type', set('type'))}>${sc.types.map(t => opt(t, t === 'drawer' ? 'Drawer' : 'Sustainer', t === slot.type)).join('')}</select>`
+          : `<span class="kit-slot-type"${on('type', set('type'))}>${slot.type === 'drawer' ? 'Drawer' : 'Sustainer'}</span>`;
         let rest;
         if (slot.type === 'sustainer') {
-          rest = `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'interior', this.value)">${sc.interiors.map(i => opt(i, sustainerInteriors[i] || i, i === slot.interior)).join('')}</select>`;
+          rest = `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'interior', this.value)"${on('sustainerInterior', set('interior'))}>${sc.interiors.map(i => opt(i, sustainerInteriors[i] || i, i === slot.interior)).join('')}</select>`;
         } else {
           rest = [
-            sc.boxes.length > 1 ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'boxes', this.value)">${sc.boxes.map(b => opt(b, boxLabels[b] || b, b === slot.boxes)).join('')}</select>` : '',
-            `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'interior', this.value)">${sc.interiors.map(i => opt(i, drawerInteriors[i] || i, i === slot.interior)).join('')}</select>`,
-            slot.interior === 'gridfinity' && sc.handles.length > 1 ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'handles', this.value)">${sc.handles.map(h => opt(h, h === '0' ? 'No handles' : `${h} handle${h === '1' ? '' : 's'}`, h === slot.handles)).join('')}</select>` : '',
-            slot.interior === 'dividers' ? check('Low (20 mm)', slot.low, `App.kitSlot(${fi}, ${si}, 'low', this.checked)`) : ''
+            sc.boxes.length > 1 ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'boxes', this.value)"${on('boxes', set('boxes'))}>${sc.boxes.map(b => opt(b, boxLabels[b] || b, b === slot.boxes)).join('')}</select>` : '',
+            `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'interior', this.value)"${on('drawerInterior', set('interior'))}>${sc.interiors.map(i => opt(i, drawerInteriors[i] || i, i === slot.interior)).join('')}</select>`,
+            slot.interior === 'gridfinity' && sc.handles.length > 1 ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'handles', this.value)"${on('handles', set('handles'))}>${sc.handles.map(h => opt(h, h === '0' ? 'No handles' : `${h} handle${h === '1' ? '' : 's'}`, h === slot.handles)).join('')}</select>` : '',
+            slot.interior === 'dividers' ? check('Low (20 mm)', slot.low, `App.kitSlot(${fi}, ${si}, 'low', this.checked)`, false, 'low') : ''
           ].join('');
         }
         return `<div class="kit-slot"><span class="kit-slot-name">${esc(name)}</span><div class="kit-slot-controls">${type}${rest}</div></div>`;
       }).join('');
       return `
-        <div class="kit-floor">
+        <div class="kit-floor" data-fi="${fi}" onmouseenter="App.kitHoverFloor(${fi})" onmouseleave="App.kitHoverFloor(null)">
           <div class="kit-floor-head">
             <span class="kit-floor-title">Floor ${fi + 1}${fi === 0 ? '<small>bottom</small>' : ''}${fi === n - 1 && n > 1 ? '<small>top</small>' : ''}</span>
-            <select class="form-select kit-select kit-select-height" onchange="App.kitFloor(${fi}, 'height', this.value)" title="Height">${fc.heights.map(h => opt(h, h, h === floor.height)).join('')}</select>
+            <select class="form-select kit-select kit-select-height" onchange="App.kitFloor(${fi}, 'height', this.value)"${on('height', `floor:${fi}:height`)}>${fc.heights.map(h => opt(h, h, h === floor.height)).join('')}</select>
             ${layoutSelect}
             <span class="kit-floor-tools">
               <button type="button" class="kit-icon-btn" title="Move up" onclick="App.kitMoveFloor(${fi}, 1)"${fi === n - 1 ? ' disabled' : ''}>${icon('<polyline points="18 15 12 9 6 15"/>')}</button>
@@ -1470,6 +1658,7 @@ const UI = {
         <button type="button" class="btn btn-secondary btn-xs" onclick="App.kitSaveAs()">${kit.savedId ? 'Save as...' : 'Save...'}</button>
         ${kit.savedId ? `<button type="button" class="kit-icon-btn" title="Rename" onclick="App.kitRenameSaved()">${icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>')}</button>
         <button type="button" class="kit-icon-btn is-danger" title="Delete this saved configuration" onclick="App.kitDeleteSaved()">${icon('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>')}</button>` : ''}
+        ${tip('saved')}
       </div>` : '';
 
     const mods = cfg.mods;
@@ -1481,39 +1670,40 @@ const UI = {
       <div class="kit-section kit-footprint">
         ${this.kitTower(cfg)}
         <div class="kit-footprint-fields">
-          <div class="kit-field"><span class="kit-label">Width</span>${seg('width', VaultKit.WIDTHS, cfg.width, ch.widths)}</div>
-          <div class="kit-field"><span class="kit-label">Depth</span>${seg('depth', VaultKit.DEPTHS, cfg.depth, ch.depths)}</div>
+          <div class="kit-field"><span class="kit-label">Width</span>${seg('width', VaultKit.WIDTHS, cfg.width, ch.widths)}${tip('width', 'cfg:width')}</div>
+          <div class="kit-field"><span class="kit-label">Depth</span>${seg('depth', VaultKit.DEPTHS, cfg.depth, ch.depths)}${tip('depth', 'cfg:depth')}</div>
           <div class="kit-dims">About ${widthMm} × ${depthMm} mm, ${kit.bom.height} mm high${mods.base !== 'none' ? ' with the base' : ''}</div>
           <button type="button" class="btn btn-ghost btn-xs" onclick="App.kitReset()">Start over</button>
         </div>
       </div>
       <div class="kit-section">
-        <div class="kit-section-head"><span class="kit-label">Floors, top to bottom</span><button type="button" class="btn btn-secondary btn-xs" onclick="App.kitAddFloor()">+ Floor on top</button></div>
+        <div class="kit-section-head"><span class="kit-label">Floors, top to bottom ${tip('floors')}</span><button type="button" class="btn btn-secondary btn-xs" onclick="App.kitAddFloor()">+ Floor on top</button></div>
         ${floors || '<div class="kit-empty">No floors yet.</div>'}
       </div>
       <div class="kit-section">
         <div class="kit-field"><span class="kit-label">Roof</span>${ch.roofs.length
-          ? `<select class="form-select kit-select" onchange="App.kitSet('roof', this.value)">${opt('none', 'No roof', cfg.roof === 'none')}${ch.roofs.map(r => opt(r, (VaultKit.ROOFS.find(x => x.id === r) || {}).label || r, r === cfg.roof)).join('')}</select>`
+          ? `<select class="form-select kit-select" onchange="App.kitSet('roof', this.value)"${on('roof', 'cfg:roof')}>${opt('none', 'No roof', cfg.roof === 'none')}${ch.roofs.map(r => opt(r, (VaultKit.ROOFS.find(x => x.id === r) || {}).label || r, r === cfg.roof)).join('')}</select>${tip('roof', 'cfg:roof')}`
           : '<span class="kit-muted">Sustainers on top have their own lids.</span>'}</div>
-        <div class="kit-field"><span class="kit-label">Drawer key</span><select class="form-select kit-select" onchange="App.kitSet('key', this.value)">${opt('standard', 'Key with cap', cfg.key === 'standard')}${opt('hidden', 'Hidden key', cfg.key === 'hidden')}</select></div>
-        ${hasSustainer ? `<div class="kit-field"><span class="kit-label">Sustainer facades</span><select class="form-select kit-select" onchange="App.kitSet('sustainerFacade', this.value)">${opt('family', 'Standard', cfg.sustainerFacade === 'family')}${opt('universal', 'Plain (Universal folder)', cfg.sustainerFacade === 'universal')}</select></div>` : ''}
+        <div class="kit-field"><span class="kit-label">Drawer key</span><select class="form-select kit-select" onchange="App.kitSet('key', this.value)"${on('key', 'cfg:key')}>${opt('standard', 'Key with cap', cfg.key === 'standard')}${opt('hidden', 'Hidden key', cfg.key === 'hidden')}</select>${tip('key', 'cfg:key')}</div>
+        ${hasSustainer ? `<div class="kit-field"><span class="kit-label">Sustainer facades</span><select class="form-select kit-select" onchange="App.kitSet('sustainerFacade', this.value)"${on('sustainerFacade', 'cfg:sustainerFacade')}>${opt('family', 'Standard', cfg.sustainerFacade === 'family')}${opt('universal', 'Plain (Universal folder)', cfg.sustainerFacade === 'universal')}</select>${tip('sustainerFacade', 'cfg:sustainerFacade')}</div>` : ''}
         <div class="kit-checks">
-          ${ch.canSplit ? check('Bases and sustainer lids in two parts', cfg.split, "App.kitSet('split', this.checked)", false, 'Depths 6 and 7 come whole or in two parts with a connector') : ''}
-          ${check('Geared rails in every box', cfg.gearedRails === 'all', "App.kitSet('gearedRails', this.checked ? 'all' : 'auto')", false, 'Always used when a module holds several boxes; optional for extra locking force')}
-          ${check('Manual supports for boxes', cfg.manualSupports, "App.kitSet('manualSupports', this.checked)")}
+          ${ch.canSplit ? check('Bases and sustainer lids in two parts', cfg.split, "App.kitSet('split', this.checked)", false, 'split') : ''}
+          ${check('Geared rails in every box', cfg.gearedRails === 'all', "App.kitSet('gearedRails', this.checked ? 'all' : 'auto')", false, 'gearedRails')}
+          ${check('Manual supports for boxes', cfg.manualSupports, "App.kitSet('manualSupports', this.checked)", false, 'manualSupports')}
         </div>
       </div>
       <div class="kit-section">
         <div class="kit-section-head"><span class="kit-label">Modifications</span></div>
-        <div class="kit-field"><span class="kit-label">Base</span><select class="form-select kit-select" onchange="App.kitMod('base', this.value)">${ch.bases.map(b => opt(b, { none: 'None', plain: 'Base', wheels: 'Base with wheels', casters: 'Base with casters' }[b], b === mods.base)).join('')}</select>
-          ${mods.base !== 'none' ? check('Feet', mods.feet, "App.kitMod('feet', this.checked)") : ''}</div>
-        <div class="kit-field"><span class="kit-label">Backbone</span><select class="form-select kit-select" onchange="App.kitMod('backbone', this.value)">${ch.backbones.map(b => opt(b, { none: 'None', wide: `${cfg.width} boards`, universal: 'Universal boards' }[b], b === mods.backbone)).join('')}</select></div>
-        <div class="kit-field"><span class="kit-label">Pegboard</span><select class="form-select kit-select" onchange="App.kitMod('pegboard', this.value)"${noBackbone ? ' disabled title="Pegboards attach to the backbone"' : ''}>${VaultKit.PEGBOARDS.map(p => opt(p, { none: 'None', ikea: 'IKEA Skådis', ussa: 'USSA' }[p], p === mods.pegboard)).join('')}</select></div>
+        <div class="kit-field"><span class="kit-label">Base</span><select class="form-select kit-select" onchange="App.kitMod('base', this.value)"${on('base', 'mod:base')}>${ch.bases.map(b => opt(b, { none: 'None', plain: 'Base', wheels: 'Base with wheels', casters: 'Base with casters' }[b], b === mods.base)).join('')}</select>${tip('base', 'mod:base')}
+          ${mods.base !== 'none' ? check('Feet', mods.feet, "App.kitMod('feet', this.checked)", false, 'feet') : ''}</div>
+        <div class="kit-field"><span class="kit-label">Backbone</span><select class="form-select kit-select" onchange="App.kitMod('backbone', this.value)"${on('backbone', 'mod:backbone')}>${ch.backbones.map(b => opt(b, { none: 'None', wide: `${cfg.width} boards`, universal: 'Universal boards' }[b], b === mods.backbone)).join('')}</select>${tip('backbone', 'mod:backbone')}</div>
+        <div class="kit-field"><span class="kit-label">Pegboard</span><select class="form-select kit-select" onchange="App.kitMod('pegboard', this.value)"${noBackbone ? ' disabled' : ''}${on('pegboard', 'mod:pegboard')}>${VaultKit.PEGBOARDS.map(p => opt(p, { none: 'None', ikea: 'IKEA Skådis', ussa: 'USSA' }[p], p === mods.pegboard)).join('')}</select>${tip('pegboard', noBackbone ? '' : 'mod:pegboard')}</div>
         <div class="kit-checks">
-          ${check('Pull-out handle', mods.pullHandle, "App.kitMod('pullHandle', this.checked)", noBackbone, noBackbone ? 'Handles attach to the backbone' : '')}
-          ${check('Stationary handle', mods.stationaryHandle, "App.kitMod('stationaryHandle', this.checked)", noBackbone, noBackbone ? 'Handles attach to the backbone' : '')}
-          ${check('Wall mount', mods.wallMount, "App.kitMod('wallMount', this.checked)")}
+          ${check('Pull-out handle', mods.pullHandle, "App.kitMod('pullHandle', this.checked)", noBackbone, 'pullHandle')}
+          ${check('Stationary handle', mods.stationaryHandle, "App.kitMod('stationaryHandle', this.checked)", noBackbone, 'stationaryHandle')}
+          ${check('Wall mount', mods.wallMount, "App.kitMod('wallMount', this.checked)", false, 'wallMount')}
         </div>
+        ${noBackbone ? '<div class="kit-muted">Handles and pegboards attach to the backbone.</div>' : ''}
       </div>`;
   },
 
@@ -1568,7 +1758,7 @@ const UI = {
         </div>
         ${hardware ? `<div class="kit-group-title">Hardware to buy</div>${hardware}` : ''}
         ${kit.cat.docs.length ? `<div class="kit-group-title">Instructions</div>
-        <label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>` : ''}
+        <span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>${this.kitTip('docs')}</span>` : ''}
       </div>`;
   },
 

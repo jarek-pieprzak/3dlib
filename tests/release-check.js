@@ -261,6 +261,47 @@ async function runStaticAndUiChecks() {
     assert(filesView.includes('tab-content-files') && filesView.includes('?view=files') && !filesView.includes('id="kit-builder"'), 'The Files view keeps the file list and the view switch');
     assert(!UI.modelDetail(mockModel, false).includes('detail-views'), 'Other models have no view switch');
     assert(App.kitFor(vault) === 'ussa-vault' && App.kitFor(mockModel) === null, 'Only the VAULT archive opens in the configurator');
+
+    // Tips: every option of the builder has one, every picture and manual page exists
+    const tipKeys = [...new Set([...builder.matchAll(/data-tip="([^"]+)"/g), ...parts.matchAll(/data-tip="([^"]+)"/g)].map(m => m[1]))];
+    const missingTips = tipKeys.filter(k => !K.TIPS[k]);
+    assert(tipKeys.length >= 20 && !missingTips.length, `Every option needs a tip (${tipKeys.length} used), missing: ${missingTips.join(', ')}`);
+    const docs = new Set(cat.docs.map(f => f.original_name));
+    for (const [key, tip] of Object.entries(K.TIPS)) {
+      for (const t of [tip, ...Object.values(tip.choices || {})]) {
+        if (t.image) assert(fs.existsSync(path.join(ROOT_DIR, 'public/img/kits/ussa-vault', `${t.image}.webp`)), `Tip ${key}: no picture ${t.image}.webp`);
+        if (t.manual) assert(docs.has(t.manual[0]) && t.manual[1] >= 1, `Tip ${key}: no manual ${t.manual[0]}`);
+      }
+    }
+    const roofTip = UI.kitTipContent(K.TIPS.roof, { value: 'bowl', set: 'cfg:roof', available: ['none', 'grid', 'bowl'] });
+    assert(/is-current[^>]*onclick="App.kitTipPick\('cfg:roof', 'bowl'\)"/.test(roofTip) && /disabled[^>]*onclick="App.kitTipPick\('cfg:roof', 'heavy'\)"/.test(roofTip), 'A tip marks the current choice and disables the unavailable ones');
+
+    // The drawing: every roof, base and modification, no broken numbers
+    for (const roof of ['grid', 'table', 'bowl', 'heavy', 'undertable', 'none']) {
+      for (const base of ['none', 'plain', 'wheels', 'casters']) {
+        const c = { ...bom.cfg, roof, mods: { base, feet: true, backbone: 'universal', pullHandle: true, stationaryHandle: true, pegboard: 'ussa', wallMount: true } };
+        const svg = UI.kitDrawing(c, 450);
+        assert(svg.includes('<svg') && !/NaN|undefined/.test(svg), `Tower drawing broken for roof ${roof}, base ${base}`);
+      }
+    }
+    const drawing = UI.kitDrawing(bom.cfg, bom.height);
+    assert((drawing.match(/class="kd-floor"/g) || []).length === bom.cfg.floors.length * 2, 'Every floor is drawn from the front and the side');
+
+    // The 3D tower, built with the real three.js (no WebGL needed to build it)
+    const three = { console };
+    vm.createContext(three);
+    vm.runInContext(`${fs.readFileSync(path.join(ROOT_DIR, 'public/js/vendor/three.min.js'), 'utf8')}\n${kitCode}\n${fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/ussa-vault-3d.js'), 'utf8')}`, three);
+    const F = { '1F': 1, '2F': 2, '4F': 4 };
+    for (const roof of ['grid', 'heavy', 'undertable', 'none']) {
+      const c = { ...bom.cfg, roof, mods: { base: 'wheels', feet: true, backbone: 'universal', pullHandle: true, stationaryHandle: true, pegboard: 'ikea', wallMount: roof === 'none' } };
+      const model = three.VaultKit3D.build(c);
+      const floorsH = c.floors.reduce((n, f) => n + F[f.height] * 48, 0);
+      assert(model.floorMeshes.length === c.floors.length && model.floorMeshes.every(m => m && m.length >= 2), `3D: every floor needs its meshes (roof ${roof})`);
+      assert(model.size.height >= 40 + 34 + floorsH && model.size.height <= 40 + 34 + floorsH + 70, `3D: tower height ${model.size.height} (roof ${roof})`);
+      let bad = 0;
+      model.group.traverse(o => { if (o.isMesh && ![o.position.x, o.position.y, o.position.z].every(Number.isFinite)) bad++; });
+      assert(!bad && model.group.children.length > 40, `3D: ${model.group.children.length} meshes, ${bad} with broken positions (roof ${roof})`);
+    }
   });
 
   await check('Every onclick / onchange / onsubmit App.* handler in HTML & components.js exists on App', () => {

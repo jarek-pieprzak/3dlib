@@ -443,6 +443,8 @@ const App = {
     const params = new URLSearchParams(query || '');
 
     this.toggleMobileSidebar(false);
+    this.kitHideTip(true);
+    this.kitDispose3D();
 
     // Leaving an unlocked protected model locks it again: the next visit asks for the password
     if (this.adultUnlock && path !== `/models/${this.adultUnlock.id}`) {
@@ -2197,6 +2199,7 @@ const App = {
   // opts.trash: the model is in the Trash and opened from there
   async renderModelDetail(id, opts = {}) {
     if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    this.kitDispose3D();
     this.currentModelOpts = opts;
     this.el.innerHTML = '<div style="padding:40px;text-align:center"><div class="skeleton" style="width:200px;height:30px;margin:0 auto 20px"></div><div class="skeleton" style="width:100%;height:200px"></div></div>';
     try {
@@ -2273,8 +2276,9 @@ const App = {
     const last = stored(`gv_kit_${model.id}`) || {};
     // A link with another configuration is not the saved one that was open (a reload is)
     const otherLink = fromUrl && JSON.stringify(fromUrl) !== JSON.stringify(last.cfg);
-    this.kit = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], savedId: otherLink ? null : last.savedId || null, previewId: null };
+    this.kit = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], savedId: otherLink ? null : last.savedId || null, previewId: null, view: 'tower' };
     this.kitApply(fromUrl || last.cfg || VaultKit.defaultConfig());
+    this.kitBindTips();
     if (!this.currentUser) return;
     try {
       const saved = await API.getKitConfigs(model.id, 'ussa-vault');
@@ -2297,6 +2301,12 @@ const App = {
     }
     this.kitRenderBuilder();
     this.kitRenderParts();
+    if (kit.view === 'tower') this.kitShowTower();
+    // A pinned tip follows the configuration (its control was redrawn)
+    if (this.kitTipPinned && this.kitTipAnchor) {
+      const el = this.kitTipAnchorEl();
+      if (el) this.kitShowTip(el, true); else this.kitHideTip(true);
+    }
   },
 
   kitState() {
@@ -2418,6 +2428,9 @@ const App = {
     const file = model && (model.files || []).find(f => f.id === Number(fileId));
     if (!file || !this.kit) return;
     this.kit.previewId = file.id;
+    this.kitLeaveTower('part');
+    const title = document.querySelector('.kit-preview-panel .detail-viewer-title');
+    if (title) title.textContent = '3D Studio';
     document.querySelectorAll('.kit-part.is-active').forEach(el => el.classList.remove('is-active'));
     document.querySelectorAll(`.kit-part[data-file-id="${file.id}"]`).forEach(el => el.classList.add('is-active'));
     if (!force && UI.previewKind(file) === '3d' && typeof Viewer !== 'undefined' && Number(file.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES) {
@@ -2532,6 +2545,268 @@ const App = {
       this.kitApply(kit.cfg);
       this.toast('Configuration deleted');
     } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  // ── The tower drawing and the manual in the preview panel ──
+  // The panel shows the tower (front and side, to scale) until a part or a manual page is opened;
+  // "Show the tower" brings it back
+  kitShowTower() {
+    const kit = this.kit;
+    const container = kit && document.getElementById(`stl-viewer-${kit.modelId}`);
+    if (!container) return;
+    if (kit.view !== 'tower' && typeof Viewer !== 'undefined') Viewer.cleanup();
+    kit.view = 'tower';
+    kit.previewId = null;
+    document.querySelectorAll('.kit-part.is-active').forEach(el => el.classList.remove('is-active'));
+    const mode = this.kitTowerModeNow();
+    let shown3d = false;
+    if (mode === '3d' && typeof VaultKit3D !== 'undefined') {
+      // The scene stays and only rebuilds the tower; it is made again when it left the panel
+      if (kit.scene3d && container.contains(kit.scene3d.canvas)) {
+        kit.scene3d.update(kit.cfg);
+        shown3d = true;
+      } else {
+        this.kitDispose3D();
+        kit.scene3d = VaultKit3D.mount(container, kit.cfg, {
+          background: typeof Viewer !== 'undefined' ? Viewer.sceneColors().background : undefined,
+          onHover: (fi) => this.kitHoverFloor(fi),
+          onClick: (fi) => this.kitFocusFloor(fi)
+        });
+        shown3d = Boolean(kit.scene3d);
+      }
+    }
+    if (!shown3d) {
+      this.kitDispose3D();
+      container.innerHTML = UI.kitDrawing(kit.cfg, kit.bom.height);
+    }
+    const panel = container.closest('.detail-viewer-panel');
+    const title = panel && panel.querySelector('.detail-viewer-title');
+    const hint = panel && panel.querySelector('.detail-viewer-hint');
+    const button = panel && panel.querySelector('.kit-tower-btn');
+    const modes = panel && panel.querySelector('.kit-tower-modes');
+    if (title) title.textContent = 'Tower';
+    if (button) button.hidden = true;
+    if (modes) {
+      modes.hidden = false;
+      modes.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('is-active', b.dataset.mode === (shown3d ? '3d' : '2d')));
+    }
+    if (hint) {
+      if (hint.dataset.defaultHtml === undefined) hint.dataset.defaultHtml = hint.innerHTML;
+      hint.classList.remove('is-media');
+      hint.textContent = shown3d
+        ? 'Drag to turn · scroll to zoom · right-drag to move · click a floor to edit it'
+        : 'Front and side, to scale · click a floor to edit it · click a part in the list to see it in 3D';
+    }
+  },
+
+  // The tower in 3D (a model of simple shapes) or as the drawing with dimensions; remembered
+  kitTowerModeNow() {
+    try { return localStorage.getItem('gv_kit_tower') === '2d' ? '2d' : '3d'; } catch (e) { return '3d'; }
+  },
+
+  kitTowerMode(mode) {
+    try { localStorage.setItem('gv_kit_tower', mode === '2d' ? '2d' : '3d'); } catch (e) {}
+    if (this.kit) { this.kit.view = 'tower'; this.kitShowTower(); }
+  },
+
+  // Free the 3D tower's WebGL context (leaving the tower view or the page)
+  kitDispose3D() {
+    if (this.kit && this.kit.scene3d) {
+      this.kit.scene3d.dispose();
+      this.kit.scene3d = null;
+    }
+  },
+
+  // Something else than the tower is in the panel: offer the way back
+  kitLeaveTower(view) {
+    if (!this.kit) return;
+    this.kitDispose3D();
+    this.kit.view = view;
+    const button = document.querySelector('.kit-preview-panel .kit-tower-btn');
+    const modes = document.querySelector('.kit-preview-panel .kit-tower-modes');
+    if (button) button.hidden = false;
+    if (modes) modes.hidden = true;
+  },
+
+  // A page of an instruction PDF from the archive in the preview panel (the browser's viewer)
+  kitShowManual(name, page) {
+    const model = this.currentModel;
+    const file = model && (model.files || []).find(f => f.original_name === name);
+    const container = model && document.getElementById(`stl-viewer-${model.id}`);
+    if (!file || !container) return this.toast(`${name} is not in this project`, 'error');
+    this.kitHideTip(true);
+    if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    const url = file.url || `/uploads/${file.filename}`;
+    container.dataset.previewToken = String(Date.now() + Math.random());
+    this.setPreviewHint(container, file, 'pdf', url);
+    this.renderMediaPreview(container, file, 'pdf', `${url}#page=${Number(page) || 1}`);
+    this.kitLeaveTower('manual');
+    const r = container.getBoundingClientRect();
+    if (r.top < 56 || r.bottom > window.innerHeight) (container.closest('.glass-panel') || container).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+
+  // A floor of the drawing was clicked: bring its card into view in the builder
+  kitFocusFloor(fi) {
+    const card = document.querySelector(`.kit-floor[data-fi="${Number(fi)}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    card.classList.remove('is-focused');
+    void card.offsetWidth;
+    card.classList.add('is-focused');
+  },
+
+  // The floor under the pointer is marked in the builder and in the drawing (fi null: none)
+  kitHoverFloor(fi) {
+    document.querySelectorAll('.kit-floor.is-hover, .kd-floor.is-hover').forEach(el => el.classList.remove('is-hover'));
+    if (this.kit && this.kit.scene3d) this.kit.scene3d.highlight(fi === null || fi === undefined ? null : Number(fi));
+    if (fi === null || fi === undefined) return;
+    document.querySelectorAll(`.kit-floor[data-fi="${Number(fi)}"], .kd-floor[data-fi="${Number(fi)}"]`).forEach(el => el.classList.add('is-hover'));
+  },
+
+  // ── Tips (VaultKit.TIPS) ──
+  // A control with data-tip shows its tip after a short hover or on focus; its ⓘ button pins the
+  // tip, which then stays until a click outside or Escape. A pinned tip with choices changes the
+  // option with a click on a card. data-tip-set says where the value lives:
+  // 'cfg:<field>', 'mod:<field>', 'floor:<fi>:<field>', 'slot:<fi>:<si>:<field>'.
+  kitTipValue(set) {
+    const cfg = this.kit && this.kit.cfg;
+    const [kind, a, b, c] = String(set || '').split(':');
+    if (!cfg || !kind) return undefined;
+    if (kind === 'cfg') return String(cfg[a]);
+    if (kind === 'mod') return String(cfg.mods[a]);
+    if (kind === 'floor') return cfg.floors[a] && String(cfg.floors[a][b]);
+    if (kind === 'slot') return cfg.floors[a] && cfg.floors[a].slots[b] && String(cfg.floors[a].slots[b][c]);
+    return undefined;
+  },
+
+  // { relevant, available } choices of a tip: the layouts of this width, what the archive offers
+  kitTipOptions(set) {
+    const ch = this.kit && this.kit.choices;
+    const [kind, a, b, c] = String(set || '').split(':');
+    if (!ch) return {};
+    if (kind === 'cfg' && a === 'roof') return { available: ['none', ...ch.roofs] };
+    if (kind === 'mod' && a === 'base') return { available: ch.bases };
+    if (kind === 'mod' && a === 'backbone') return { available: ch.backbones };
+    if (kind === 'floor' && b === 'layout' && ch.floors[a]) return { relevant: ch.floors[a].layouts.map(l => l.id), available: ch.floors[a].layouts.filter(l => l.available).map(l => l.id) };
+    if (kind === 'slot' && ch.floors[a] && ch.floors[a].slots[b]) {
+      const sc = ch.floors[a].slots[b];
+      if (c === 'type') return { available: sc.types };
+      if (c === 'interior') return { relevant: sc.interiors, available: sc.interiors };
+    }
+    return {};
+  },
+
+  kitShowTip(el, pinned = false) {
+    const key = el && el.dataset.tip;
+    const tip = key && typeof VaultKit !== 'undefined' && VaultKit.TIPS[key];
+    if (!tip || !this.kit) return;
+    if (!pinned && this.kitTipPinned) return;
+    let box = document.getElementById('kit-tip');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'kit-tip';
+      box.className = 'kit-tip';
+      box.setAttribute('role', 'tooltip');
+      box.addEventListener('mouseenter', () => clearTimeout(this.kitTipTimer));
+      box.addEventListener('mouseleave', () => this.kitHideTip());
+      document.body.appendChild(box);
+    }
+    const set = el.dataset.tipSet || '';
+    // A second click on the ⓘ of the pinned tip closes it
+    if (pinned && this.kitTipPinned && !box.hidden && this.kitTipAnchor && this.kitTipAnchor.key === key && this.kitTipAnchor.set === set && el.classList.contains('kit-tip-btn') && this.kitTipClicked === el) {
+      this.kitTipClicked = null;
+      return this.kitHideTip(true);
+    }
+    if (pinned) this.kitTipClicked = el;
+    this.kitTipPinned = pinned;
+    this.kitTipAnchor = { key, set };
+    box.classList.toggle('is-pinned', pinned);
+    box.innerHTML = UI.kitTipContent(tip, { value: this.kitTipValue(set), set, ...this.kitTipOptions(set) });
+    box.hidden = false;
+    this.kitPlaceTip(box, el);
+  },
+
+  // Next to the builder when there is room, else under (or over) the control
+  kitPlaceTip(box, el) {
+    const r = el.getBoundingClientRect();
+    const panel = document.querySelector('.kit-builder-panel');
+    const p = panel ? panel.getBoundingClientRect() : r;
+    const w = Math.min(380, window.innerWidth - 16);
+    box.style.width = `${w}px`;
+    const h = box.offsetHeight;
+    let left;
+    let top;
+    if (window.innerWidth - p.right >= w + 16) {
+      left = p.right + 10;
+      top = Math.min(Math.max(r.top - 24, 12), window.innerHeight - h - 12);
+    } else {
+      left = Math.min(Math.max(r.left, 8), window.innerWidth - w - 8);
+      top = r.bottom + 8 + h <= window.innerHeight ? r.bottom + 8 : Math.max(8, r.top - h - 8);
+    }
+    box.style.left = `${Math.round(left)}px`;
+    box.style.top = `${Math.round(Math.max(8, top))}px`;
+  },
+
+  kitHideTip(force = false) {
+    clearTimeout(this.kitTipTimer);
+    if (this.kitTipPinned && !force) return;
+    const box = document.getElementById('kit-tip');
+    if (box) box.hidden = true;
+    this.kitTipPinned = false;
+  },
+
+  // A card of a pinned tip changes the option; kitApply shows the tip again with the new value
+  kitTipPick(set, value) {
+    const [kind, a, b, c] = String(set || '').split(':');
+    if (kind === 'cfg') this.kitSet(a, value);
+    else if (kind === 'mod') this.kitMod(a, value);
+    else if (kind === 'floor') this.kitFloor(Number(a), b, value);
+    else if (kind === 'slot') this.kitSlot(Number(a), Number(b), c, value);
+  },
+
+  // The ⓘ button of the pinned tip after the builder was redrawn
+  kitTipAnchorEl() {
+    const a = this.kitTipAnchor;
+    if (!a) return null;
+    const set = a.set ? `[data-tip-set="${a.set}"]` : ':not([data-tip-set])';
+    return document.querySelector(`.kit-tip-btn[data-tip="${a.key}"]${set}`);
+  },
+
+  // Hover and focus on the builder's controls; once per page, the builder is redrawn inside
+  kitBindTips() {
+    const target = (e) => e.target.closest && e.target.closest('[data-tip]');
+    for (const id of ['kit-builder', 'kit-parts']) {
+      const root = document.getElementById(id);
+      if (!root || root.dataset.tips) continue;
+      root.dataset.tips = '1';
+      // The ⓘ answers at once, the controls after a short pause (so moving across them is quiet)
+      root.addEventListener('mouseover', (e) => {
+        const el = target(e);
+        if (!el) return;
+        clearTimeout(this.kitTipTimer);
+        this.kitTipTimer = setTimeout(() => this.kitShowTip(el), el.classList.contains('kit-tip-btn') ? 120 : 450);
+      });
+      root.addEventListener('mouseout', (e) => {
+        if (!target(e)) return;
+        clearTimeout(this.kitTipTimer);
+        this.kitTipTimer = setTimeout(() => this.kitHideTip(), 200);
+      });
+      root.addEventListener('focusin', (e) => { const el = target(e); if (el) this.kitShowTip(el); });
+      root.addEventListener('focusout', () => this.kitHideTip());
+    }
+    if (!this.kitTipDocBound) {
+      this.kitTipDocBound = true;
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.kitHideTip(true); });
+      // The 3D tower follows the light / dark theme like the other scenes
+      document.addEventListener('gv:theme', () => {
+        if (this.kit && this.kit.scene3d && typeof Viewer !== 'undefined') this.kit.scene3d.setBackground(Viewer.sceneColors().background);
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (!this.kitTipPinned) return;
+        if (e.target.closest && (e.target.closest('#kit-tip') || e.target.closest('.kit-tip-btn'))) return;
+        this.kitHideTip(true);
+      });
+    }
   },
 
   // ─── Password-protected models ───────────────────────────────────────

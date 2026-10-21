@@ -36,7 +36,7 @@ const BROWSER_GLOBALS = new Set([
   'Float32Array', 'Float64Array', 'ArrayBuffer', 'DataView', 'TextEncoder', 'TextDecoder',
   'XMLHttpRequest', 'WebSocket', 'Worker', 'atob', 'btoa',
   // GyroidVault frontend globals
-  'API', 'UI', 'App', 'Viewer', 'VaultKit', 'lucide', 'THREE', 'OcctImportJs', 'bootstrap', 'GCodePreview', 'fflate'
+  'API', 'UI', 'App', 'Viewer', 'VaultKit', 'VaultKit3D', 'lucide', 'THREE', 'OcctImportJs', 'bootstrap', 'GCodePreview', 'fflate'
 ]);
 
 class Scope {

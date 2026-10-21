@@ -60,6 +60,117 @@ globalThis.VaultKit = (function () {
   const GROUPS = ['Drawer modules', 'Drawer boxes', 'Small drawer parts', 'Sustainers', 'Sustainer parts',
     'Interiors', 'Roof', 'Base & wheels', 'Backbone & handles', 'Wall mount', 'Extra files'];
 
+  // ── Help for the builder: what an option does and how it looks ──
+  // image: an illustration cropped from the archive's PDFs (public/img/kits/ussa-vault/<image>.webp);
+  // manual: [PDF in the archive root, page]; adds: what the option puts on the lists. choices:
+  // the same for every value of a select.
+  const MANUAL = '01_Instructions Manual.pdf';
+  const DRAWER_PDF = '02_Drawer Assembly.pdf';
+  const SUSTAINER_PDF = '03_Sustainers Assembly.pdf';
+  const MODS_PDF = '04_Modifications.pdf';
+  const MOUNT_PDF = '05_Mounting Instructions.pdf';
+  const TIPS = {
+    saved: { title: 'Saved configurations', text: 'Keep a tower under a name and open it again later, on any device. Save stores the changes into the open one, Save as makes a copy.' },
+    width: { title: 'Width', image: 'sizes', manual: [MANUAL, 6],
+      text: 'How wide the tower is: S 165 mm, M 254 mm, L 330 mm, XL 419 mm. L is as wide as two S modules and XL as an S and an M, so an L or XL tower can have floors of smaller modules side by side. XL modules exist only in 1F.' },
+    depth: { title: 'Depth', image: 'sizes', manual: [MANUAL, 6],
+      text: 'Depth in Gridfinity units of 42 mm: 3 is about 146 mm deep, every step adds 42 mm, 7 is about 314 mm. Deeper modules hold more but need a bigger print bed; 6 and 7 deep bases and sustainer lids can be printed in two parts.' },
+    floors: { title: 'Floors', image: 'stacking', manual: [MANUAL, 8],
+      text: 'The tower from top to bottom. Every floor is one or more modules side by side; modules of the same width and depth stack on each other, drawers and sustainers mix freely. Use the arrows to move a floor, the copy button to repeat it.' },
+    height: { title: 'Floor height', image: 'sizes', manual: [MANUAL, 6],
+      text: '1F, 2F or 4F: 48 mm per F (a 1F module is 57 mm tall with its stacking lip). There is no 3F, everything divides by two. A 2F or 4F drawer module can hold several lower boxes.' },
+    layout: { title: 'Modules side by side', image: 'stacking', manual: [MANUAL, 8],
+      text: 'One module as wide as the tower, or smaller modules next to each other.',
+      choices: {
+        S: { label: 'S', text: 'One S module.' }, M: { label: 'M', text: 'One M module.' },
+        L: { label: 'L', text: 'One L module: one wide drawer or sustainer.' },
+        L2: { label: 'L² (two S drawers)', text: 'One L module printed in one piece with a wall in the middle: two S drawers side by side. Drawers only.' },
+        'S+S': { label: 'S + S', text: 'Two separate S modules; each can be a drawer or a sustainer.' },
+        XL: { label: 'XL', text: 'One XL module (1F only).' },
+        XL2: { label: 'XL² (S + M drawers)', text: 'One XL module with a wall in the middle: an S and an M drawer side by side. Drawers only, 1F only.' },
+        'S+M': { label: 'S + M', text: 'Separate S and M modules, the S on the left.' },
+        'M+S': { label: 'M + S', text: 'Separate M and S modules, the M on the left.' }
+      } },
+    type: { title: 'Drawer or sustainer', manual: [MANUAL, 5],
+      choices: {
+        drawer: { label: 'Drawer', image: 'type-drawer', text: 'A box that slides out on runners, with a turn key in the facade. Good for small parts you reach for often.' },
+        sustainer: { label: 'Sustainer', image: 'type-sustainer', text: 'A module with a hinged lid and two locks at the front. Good for bigger or longer items and sealed compartments.' }
+      } },
+    boxes: { title: 'Boxes in the module', image: 'geared-rails', manual: [DRAWER_PDF, 4],
+      text: 'A 2F or 4F drawer module holds one tall box or several lower boxes stacked inside, each with its own facade and key. With more than one box, geared rails (added automatically) keep them in place.' },
+    drawerInterior: { title: 'Drawer interior', manual: [MANUAL, 9],
+      choices: {
+        empty: { label: 'Empty', image: 'drawer-empty', text: 'The bare box with its perforated floor.' },
+        gridfinity: { label: 'Gridfinity baseplate', image: 'drawer-gridfinity', text: 'A 42 mm Gridfinity grid in the box for Gridfinity bins; with 0, 1 or 2 handles to lift it out.' },
+        dividers: { label: 'Grid dividers', image: 'drawer-dividers', text: 'Slotted strips that cross to make compartments: one along the width and one along the depth (estimate, add more by hand).' }
+      } },
+    handles: { title: 'Baseplate handles', image: 'drawer-gridfinity', manual: [MANUAL, 9],
+      text: 'Handles on the Gridfinity baseplate to lift it out of the box with the bins on it. Not every size has every variant.' },
+    low: { title: 'Low dividers', image: 'drawer-dividers', manual: [MANUAL, 9],
+      text: 'Grid dividers 20 mm tall instead of the full box height (34.5 mm for 1F boxes, 82.5 mm for 2F and 4F).' },
+    sustainerInterior: { title: 'Sustainer interior', manual: [MANUAL, 9],
+      choices: {
+        flat: { label: 'Flat', image: 'sus-flat', text: 'An open module with a flat floor.' },
+        gridfinity: { label: 'Gridfinity baseplate', image: 'sus-gridfinity', text: 'A Gridfinity baseplate on the flat floor for Gridfinity bins.' },
+        dividers: { label: 'Dividers', image: 'sus-dividers', text: 'Divider walls along and across the module (counts are estimates, change them in the list).' },
+        sealed: { label: 'Sealed compartments', image: 'sus-sealed', text: 'A module with closed compartments and seal dividers, so small parts cannot wander between them. L and XL only.' }
+      } },
+    roof: { title: 'Roof', manual: [MANUAL, 10], adds: 'One roof on every drawer module of the top floor; sustainers have their own lids.',
+      choices: {
+        none: { label: 'No roof', text: 'The top floor stays open (sustainers on top bring their own lids).' },
+        grid: { label: 'Grid', image: 'roof-grid', text: 'A Gridfinity grid on top with a carry handle (2 × M6 50 mm bolts).' },
+        table: { label: 'Table', image: 'roof-table', text: 'A flat top to put things on.' },
+        bowl: { label: 'Bowl', image: 'roof-bowl', text: 'A tray with a raised rim for loose items.' },
+        heavy: { label: 'Heavyweight', image: 'roof-heavy', text: 'Two bowls with a handle between them, to carry the tower. L and XL only.' },
+        undertable: { label: 'Under-table mount', image: 'undertable-mount', text: 'A plate screwed under a table top; the tower hangs from it, as many modules as you like.', manual: [MOUNT_PDF, 10] }
+      } },
+    key: { title: 'Drawer key', image: 'key', manual: [DRAWER_PDF, 1],
+      choices: {
+        standard: { label: 'Key with cap', image: 'key', text: 'A turn key in the facade with a cap pressed on.' },
+        hidden: { label: 'Hidden key', text: 'A key that sits flush in the facade (two parts; the cap is left out, check before printing).' }
+      } },
+    sustainerFacade: { title: 'Sustainer facades', manual: [MANUAL, 12],
+      choices: {
+        family: { label: 'Standard', image: 'type-sustainer', text: 'The facades from the size folders.' },
+        universal: { label: 'Plain (Universal folder)', text: 'A second set in the Universal folder: same size, simpler surface.' }
+      } },
+    split: { title: 'Two-part bases and lids',
+      text: 'Bases and sustainer lids of depth 6 and 7 are large: print them whole, or in two parts that a connector joins.' },
+    gearedRails: { title: 'Geared rails', image: 'geared-rails', manual: [DRAWER_PDF, 4],
+      text: 'Toothed rails on the top and bottom of a box (one print per box: the file holds the pair). Always used when a module holds several boxes; in single boxes they add locking force.' },
+    manualSupports: { title: 'Manual supports', image: 'manual-supports', manual: [DRAWER_PDF, 3],
+      text: 'Separate support strips for printing the boxes (Manual Supports folder, one per box); remove them after printing.' },
+    base: { title: 'Base', manual: [MODS_PDF, 2], adds: 'A base as wide and deep as the tower.',
+      choices: {
+        none: { label: 'None', text: 'The bottom module stands on the table or floor.' },
+        plain: { label: 'Base', text: 'A base plate under the bottom floor; add feet to raise it.' },
+        wheels: { label: 'Base with wheels', image: 'wheels', manual: [MODS_PDF, 2], text: 'Two 142 mm wheels on an M16 axle with 6205ZZ bearings and SCSAW collars; tyres printed in TPU; feet at the front. Tilt and roll like a hand truck.' },
+        casters: { label: 'Base with casters', image: 'casters', manual: [MODS_PDF, 17], text: 'Four casters with M8 threads screwed into the base.' }
+      } },
+    feet: { title: 'Feet', image: 'feet', manual: [MODS_PDF, 6], text: 'A foot block under the base (2 × M6 90 mm bolts). With wheels it holds the tower upright at the front.' },
+    backbone: { title: 'Backbone', manual: [MODS_PDF, 1], adds: 'Boards along the back, one per floor (two per 4F floor), with M4 60-100 mm bolts; the holes are drilled through.',
+      text: 'Boards on the back of the tower that tie the modules together. Handles and pegboards attach to them.',
+      choices: {
+        none: { label: 'None', text: 'Modules only lock onto each other.' },
+        wide: { label: 'Wide boards', image: 'backbone-wide', text: 'One board as wide as the tower on every floor.' },
+        universal: { label: 'Universal boards', image: 'backbone-universal', text: 'Two narrow boards on the edges of every floor; fit any width.' }
+      } },
+    pegboard: { title: 'Pegboard', image: 'pegboard', manual: [MODS_PDF, 15],
+      text: 'Pegboard panels on the backbone for hanging tools (4 × M4 40 mm bolts each).',
+      choices: {
+        none: { label: 'None', text: 'No pegboard.' },
+        ikea: { label: 'IKEA Skådis', image: 'pegboard', text: 'Panels with the IKEA Skådis hole pattern.' },
+        ussa: { label: 'USSA', image: 'pegboard', text: 'Panels for USSA pegboard accessories.' }
+      } },
+    pullHandle: { title: 'Pull-out handle', image: 'pullout-handle', manual: [MODS_PDF, 14],
+      text: 'A telescopic handle on two M16 rods along the backbone, locked by two knobs: pull it out to roll the tower on its wheels. The rods are cut to the tower height.' },
+    stationaryHandle: { title: 'Stationary handle', image: 'stationary-handle', manual: [MODS_PDF, 12],
+      text: 'A fixed handle on a backbone board (8 × M4 60 mm bolts); it goes on before the board is bolted to the module.' },
+    wallMount: { title: 'Wall mount', image: 'wallmount-hung', manual: [MOUNT_PDF, 1],
+      text: 'A plate on the back of every module and cleats ("second parts") screwed to the wall: the tower hangs on the wall. One cleat per 1F or 2F mount, two per 4F. The first mount is a template for drilling.' },
+    docs: { title: 'Instructions in the ZIP', text: 'Adds the five assembly PDFs from the archive to the download.' }
+  };
+
   // ── File names ──
   const norm = (s) => String(s || '').toLowerCase().replace(/['’]/g, '').replace(/\s+/g, ' ').trim();
   function splitPath(originalName) {
@@ -725,7 +836,7 @@ globalThis.VaultKit = (function () {
   }
 
   return {
-    WIDTHS, DEPTHS, HEIGHTS, LAYOUTS, BOX_SPLITS, ROOFS, DRAWER_INTERIORS, SUSTAINER_INTERIORS, BASES, BACKBONES, PEGBOARDS, GROUPS,
+    WIDTHS, DEPTHS, HEIGHTS, LAYOUTS, BOX_SPLITS, ROOFS, DRAWER_INTERIORS, SUSTAINER_INTERIORS, BASES, BACKBONES, PEGBOARDS, GROUPS, TIPS,
     classify, buildCatalog, detect, slotsOf, choices, defaultConfig, newFloor, defaultSlot, normalize, towerHeight,
     computeBom, describe, bomText, encodeConfig, decodeConfig
   };

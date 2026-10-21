@@ -875,9 +875,17 @@ const UI = {
       </form>`;
   },
 
-  modelDetail(model, hasPrinters = false) {
+  // opts.kit: the kit configurator of the model's files ('ussa-vault'), shown as the first view
+  // instead of the file list; opts.view 'configure' or 'files'
+  modelDetail(model, hasPrinters = false, opts = {}) {
     // A model in the Trash is shown read-only, with Restore / Delete permanently
     const inTrash = Boolean(model.deleted_at);
+    const configure = Boolean(opts.kit) && opts.view === 'configure';
+    const viewSwitch = opts.kit ? `
+      <div class="detail-views" role="tablist">
+        <a href="#/models/${model.id}" role="tab" class="detail-view-tab${configure ? ' is-active' : ''}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="6" rx="1"/><rect x="4" y="11" width="7" height="5" rx="1"/><rect x="13" y="11" width="7" height="5" rx="1"/><rect x="4" y="18" width="16" height="3" rx="1"/></svg>Configurator</a>
+        <a href="#/models/${model.id}?view=files" role="tab" class="detail-view-tab${configure ? '' : ' is-active'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>Files (${(model.files || []).length})</a>
+      </div>` : '';
     const canEdit = !inTrash && (App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id));
     // Files of a project in the library can be renamed / moved on disk ('folder' projects also
     // have folders); uploads outside the library and entries inside archives can only be deleted
@@ -1265,7 +1273,8 @@ const UI = {
           ` : ''}
         </div>
       </div>
-
+      ${viewSwitch}
+      ${configure ? this.kitView(model) : `
       <div class="detail-layout">
         <div class="detail-main">
           ${viewerHtml}
@@ -1336,8 +1345,245 @@ const UI = {
           </div>
 
         </div>
-      </div>
+      </div>`}
       </div>`;
+  },
+
+  // ─── Kit configurators (public/js/kits): USSA VAULT ────────────────────
+  // The configurator view of a model page. App.initKit fills the builder and the parts list;
+  // the preview panel is the model page's 3D Studio (App.previewFile)
+  kitView(model) {
+    return `
+      <div class="kit-layout">
+        <div class="glass-panel kit-builder-panel">
+          <div class="kit-builder" id="kit-builder"><div class="kit-empty">Loading...</div></div>
+        </div>
+        <div class="kit-result">
+          <div class="glass-panel detail-viewer-panel kit-preview-panel" style="overflow:visible">
+            <div class="panel-header">
+              <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">3D Studio</span></div>
+            </div>
+            <div class="panel-body no-pad">
+              <div class="viewer-container" id="stl-viewer-${model.id}">
+                <div class="large-preview">Click a part in the list to preview it.</div>
+              </div>
+              <div class="detail-viewer-hint" style="padding:10px 16px;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);background:rgba(0,0,0,0.1)">Drag to rotate · Scroll to zoom · Right-click to pan</div>
+            </div>
+          </div>
+          <div class="glass-panel kit-parts-panel">
+            <div class="kit-parts" id="kit-parts"></div>
+          </div>
+        </div>
+        <datalist id="kit-file-list">${(model.files || []).map(f => `<option value="${this.escapeHtml(f.original_name || '')}">`).join('')}</datalist>
+      </div>`;
+  },
+
+  // A small drawing of the tower, top floor first: drawers, sustainers, roof and base
+  kitTower(cfg) {
+    const mm = { S: 165, M: 254, L: 330, XL: 419 };
+    const F = { '1F': 1, '2F': 2, '4F': 4 };
+    const layouts = VaultKit.LAYOUTS[cfg.width] || [];
+    const floors = (cfg.floors || []).map((floor) => {
+      const layout = layouts.find(l => l.id === floor.layout) || layouts[0];
+      const slots = VaultKit.slotsOf(layout);
+      const mods = layout.modules.map((mod, mi) => {
+        const cols = slots.map((s, si) => ({ s, slot: floor.slots[si] || {} })).filter(x => x.s.mi === mi);
+        const inner = cols.map(({ s, slot }) => {
+          const boxes = slot.type === 'sustainer' ? 1 : String(slot.boxes || floor.height).split('+').length;
+          return `<div class="kit-tower-col is-${slot.type === 'sustainer' ? 'sustainer' : 'drawer'}" style="flex:${mm[s.w]}">${'<span></span>'.repeat(boxes)}</div>`;
+        }).join('');
+        return `<div class="kit-tower-mod" style="flex:${mm[mod.w]}">${inner}</div>`;
+      }).join('');
+      return `<div class="kit-tower-floor" style="height:${F[floor.height] * 13}px">${mods}</div>`;
+    }).reverse().join('');
+    const mods = cfg.mods || {};
+    return `
+      <div class="kit-tower" style="width:${Math.round(mm[cfg.width] / 419 * 132)}px" aria-hidden="true">
+        ${cfg.roof && cfg.roof !== 'none' ? `<div class="kit-tower-roof is-${cfg.roof}"></div>` : ''}
+        ${floors}
+        ${mods.base && mods.base !== 'none' ? `<div class="kit-tower-base">${mods.base === 'wheels' ? '<i></i><i></i>' : mods.base === 'casters' ? '<b></b><b></b>' : ''}</div>` : ''}
+      </div>`;
+  },
+
+  // The builder: saved configurations, footprint, floors (top floor first), roof, options and
+  // modifications. kit: the configurator state of App (cfg, choices, bom, saved, savedId) plus
+  // loggedIn and dirty
+  kitBuilder(kit) {
+    const { cfg, choices: ch } = kit;
+    const esc = (s) => this.escapeHtml(s);
+    const opt = (value, label, selected, disabled) => `<option value="${esc(value)}"${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}>${esc(label)}</option>`;
+    const seg = (field, values, current, available) => `<div class="kit-seg">${values.map(v => `<button type="button" class="kit-seg-btn${String(v) === String(current) ? ' is-active' : ''}"${available.includes(v) ? '' : ' disabled'} onclick="App.kitSet('${field}', '${v}')">${v}</button>`).join('')}</div>`;
+    const check = (label, checked, onchange, disabled, hint) => `<label class="kit-check${disabled ? ' is-disabled' : ''}"${hint ? ` title="${esc(hint)}"` : ''}><input type="checkbox"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''} onchange="${onchange}">${esc(label)}</label>`;
+    const icon = (path) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+    const boxLabels = { '1F': 'One 1F box', '2F': 'One 2F box', '4F': 'One 4F box', '1F+1F': 'Two 1F boxes', '2F+2F': 'Two 2F boxes', '2F+1F+1F': '2F + two 1F boxes', '1F+1F+1F+1F': 'Four 1F boxes' };
+    const drawerInteriors = { empty: 'Empty', gridfinity: 'Gridfinity baseplate', dividers: 'Grid dividers' };
+    const sustainerInteriors = { flat: 'Flat', gridfinity: 'Gridfinity baseplate', dividers: 'Dividers', sealed: 'Sealed compartments' };
+    const n = cfg.floors.length;
+    const hasSustainer = cfg.floors.some(f => f.slots.some(s => s.type === 'sustainer'));
+
+    const floors = cfg.floors.map((floor, fi) => {
+      const fc = ch.floors[fi];
+      const layoutSelect = fc.layouts.length > 1 ? `<select class="form-select kit-select" onchange="App.kitFloor(${fi}, 'layout', this.value)" title="Modules side by side">${fc.layouts.map(l => opt(l.id, l.label, l.id === floor.layout, !l.available)).join('')}</select>` : '';
+      const slots = floor.slots.map((slot, si) => {
+        const sc = fc.slots[si];
+        const name = sc.double ? `${sc.width} drawer ${si === 0 ? 'left' : 'right'}` : (floor.slots.length > 1 ? `${sc.width} ${si === 0 ? 'left' : 'right'}` : sc.width);
+        const type = sc.types.length > 1
+          ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'type', this.value)">${sc.types.map(t => opt(t, t === 'drawer' ? 'Drawer' : 'Sustainer', t === slot.type)).join('')}</select>`
+          : `<span class="kit-slot-type">${slot.type === 'drawer' ? 'Drawer' : 'Sustainer'}</span>`;
+        let rest;
+        if (slot.type === 'sustainer') {
+          rest = `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'interior', this.value)">${sc.interiors.map(i => opt(i, sustainerInteriors[i] || i, i === slot.interior)).join('')}</select>`;
+        } else {
+          rest = [
+            sc.boxes.length > 1 ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'boxes', this.value)">${sc.boxes.map(b => opt(b, boxLabels[b] || b, b === slot.boxes)).join('')}</select>` : '',
+            `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'interior', this.value)">${sc.interiors.map(i => opt(i, drawerInteriors[i] || i, i === slot.interior)).join('')}</select>`,
+            slot.interior === 'gridfinity' && sc.handles.length > 1 ? `<select class="form-select kit-select" onchange="App.kitSlot(${fi}, ${si}, 'handles', this.value)">${sc.handles.map(h => opt(h, h === '0' ? 'No handles' : `${h} handle${h === '1' ? '' : 's'}`, h === slot.handles)).join('')}</select>` : '',
+            slot.interior === 'dividers' ? check('Low (20 mm)', slot.low, `App.kitSlot(${fi}, ${si}, 'low', this.checked)`) : ''
+          ].join('');
+        }
+        return `<div class="kit-slot"><span class="kit-slot-name">${esc(name)}</span><div class="kit-slot-controls">${type}${rest}</div></div>`;
+      }).join('');
+      return `
+        <div class="kit-floor">
+          <div class="kit-floor-head">
+            <span class="kit-floor-title">Floor ${fi + 1}${fi === 0 ? '<small>bottom</small>' : ''}${fi === n - 1 && n > 1 ? '<small>top</small>' : ''}</span>
+            <select class="form-select kit-select kit-select-height" onchange="App.kitFloor(${fi}, 'height', this.value)" title="Height">${fc.heights.map(h => opt(h, h, h === floor.height)).join('')}</select>
+            ${layoutSelect}
+            <span class="kit-floor-tools">
+              <button type="button" class="kit-icon-btn" title="Move up" onclick="App.kitMoveFloor(${fi}, 1)"${fi === n - 1 ? ' disabled' : ''}>${icon('<polyline points="18 15 12 9 6 15"/>')}</button>
+              <button type="button" class="kit-icon-btn" title="Move down" onclick="App.kitMoveFloor(${fi}, -1)"${fi === 0 ? ' disabled' : ''}>${icon('<polyline points="6 9 12 15 18 9"/>')}</button>
+              <button type="button" class="kit-icon-btn" title="Duplicate floor" onclick="App.kitCopyFloor(${fi})">${icon('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>')}</button>
+              <button type="button" class="kit-icon-btn is-danger" title="Remove floor" onclick="App.kitRemoveFloor(${fi})"${n === 1 ? ' disabled' : ''}>${icon('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>')}</button>
+            </span>
+          </div>
+          ${slots}
+        </div>`;
+    }).reverse().join('');
+
+    const saved = kit.loggedIn ? `
+      <div class="kit-section kit-saved">
+        <select class="form-select kit-select" onchange="App.kitOpenSaved(this.value)" title="Saved configurations">
+          ${opt('', kit.saved.length ? 'Not saved' : 'No saved configurations', !kit.savedId)}
+          ${kit.saved.map(s => opt(s.id, s.name, s.id === kit.savedId)).join('')}
+        </select>
+        ${kit.savedId ? `<button type="button" class="btn btn-${kit.dirty ? 'primary' : 'secondary'} btn-xs" onclick="App.kitSave()"${kit.dirty ? '' : ' disabled'}>Save</button>` : ''}
+        <button type="button" class="btn btn-secondary btn-xs" onclick="App.kitSaveAs()">${kit.savedId ? 'Save as...' : 'Save...'}</button>
+        ${kit.savedId ? `<button type="button" class="kit-icon-btn" title="Rename" onclick="App.kitRenameSaved()">${icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>')}</button>
+        <button type="button" class="kit-icon-btn is-danger" title="Delete this saved configuration" onclick="App.kitDeleteSaved()">${icon('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>')}</button>` : ''}
+      </div>` : '';
+
+    const mods = cfg.mods;
+    const noBackbone = mods.backbone === 'none';
+    const depthMm = 146 + 42 * (cfg.depth - 3);
+    const widthMm = { S: 165, M: 254, L: 330, XL: 419 }[cfg.width];
+    return `
+      ${saved}
+      <div class="kit-section kit-footprint">
+        ${this.kitTower(cfg)}
+        <div class="kit-footprint-fields">
+          <div class="kit-field"><span class="kit-label">Width</span>${seg('width', VaultKit.WIDTHS, cfg.width, ch.widths)}</div>
+          <div class="kit-field"><span class="kit-label">Depth</span>${seg('depth', VaultKit.DEPTHS, cfg.depth, ch.depths)}</div>
+          <div class="kit-dims">About ${widthMm} × ${depthMm} mm, ${kit.bom.height} mm high${mods.base !== 'none' ? ' with the base' : ''}</div>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="App.kitReset()">Start over</button>
+        </div>
+      </div>
+      <div class="kit-section">
+        <div class="kit-section-head"><span class="kit-label">Floors, top to bottom</span><button type="button" class="btn btn-secondary btn-xs" onclick="App.kitAddFloor()">+ Floor on top</button></div>
+        ${floors || '<div class="kit-empty">No floors yet.</div>'}
+      </div>
+      <div class="kit-section">
+        <div class="kit-field"><span class="kit-label">Roof</span>${ch.roofs.length
+          ? `<select class="form-select kit-select" onchange="App.kitSet('roof', this.value)">${opt('none', 'No roof', cfg.roof === 'none')}${ch.roofs.map(r => opt(r, (VaultKit.ROOFS.find(x => x.id === r) || {}).label || r, r === cfg.roof)).join('')}</select>`
+          : '<span class="kit-muted">Sustainers on top have their own lids.</span>'}</div>
+        <div class="kit-field"><span class="kit-label">Drawer key</span><select class="form-select kit-select" onchange="App.kitSet('key', this.value)">${opt('standard', 'Key with cap', cfg.key === 'standard')}${opt('hidden', 'Hidden key', cfg.key === 'hidden')}</select></div>
+        ${hasSustainer ? `<div class="kit-field"><span class="kit-label">Sustainer facades</span><select class="form-select kit-select" onchange="App.kitSet('sustainerFacade', this.value)">${opt('family', 'Standard', cfg.sustainerFacade === 'family')}${opt('universal', 'Plain (Universal folder)', cfg.sustainerFacade === 'universal')}</select></div>` : ''}
+        <div class="kit-checks">
+          ${ch.canSplit ? check('Bases and sustainer lids in two parts', cfg.split, "App.kitSet('split', this.checked)", false, 'Depths 6 and 7 come whole or in two parts with a connector') : ''}
+          ${check('Geared rails in every box', cfg.gearedRails === 'all', "App.kitSet('gearedRails', this.checked ? 'all' : 'auto')", false, 'Always used when a module holds several boxes; optional for extra locking force')}
+          ${check('Manual supports for boxes', cfg.manualSupports, "App.kitSet('manualSupports', this.checked)")}
+        </div>
+      </div>
+      <div class="kit-section">
+        <div class="kit-section-head"><span class="kit-label">Modifications</span></div>
+        <div class="kit-field"><span class="kit-label">Base</span><select class="form-select kit-select" onchange="App.kitMod('base', this.value)">${ch.bases.map(b => opt(b, { none: 'None', plain: 'Base', wheels: 'Base with wheels', casters: 'Base with casters' }[b], b === mods.base)).join('')}</select>
+          ${mods.base !== 'none' ? check('Feet', mods.feet, "App.kitMod('feet', this.checked)") : ''}</div>
+        <div class="kit-field"><span class="kit-label">Backbone</span><select class="form-select kit-select" onchange="App.kitMod('backbone', this.value)">${ch.backbones.map(b => opt(b, { none: 'None', wide: `${cfg.width} boards`, universal: 'Universal boards' }[b], b === mods.backbone)).join('')}</select></div>
+        <div class="kit-field"><span class="kit-label">Pegboard</span><select class="form-select kit-select" onchange="App.kitMod('pegboard', this.value)"${noBackbone ? ' disabled title="Pegboards attach to the backbone"' : ''}>${VaultKit.PEGBOARDS.map(p => opt(p, { none: 'None', ikea: 'IKEA Skådis', ussa: 'USSA' }[p], p === mods.pegboard)).join('')}</select></div>
+        <div class="kit-checks">
+          ${check('Pull-out handle', mods.pullHandle, "App.kitMod('pullHandle', this.checked)", noBackbone, noBackbone ? 'Handles attach to the backbone' : '')}
+          ${check('Stationary handle', mods.stationaryHandle, "App.kitMod('stationaryHandle', this.checked)", noBackbone, noBackbone ? 'Handles attach to the backbone' : '')}
+          ${check('Wall mount', mods.wallMount, "App.kitMod('wallMount', this.checked)")}
+        </div>
+      </div>`;
+  },
+
+  // The result: files to print with print counts (editable), hardware, notes, download
+  kitParts(kit) {
+    const { bom } = kit;
+    const esc = (s) => this.escapeHtml(s);
+    const t = bom.totals;
+    const rows = [];
+    let group = null;
+    for (const p of bom.parts) {
+      if (p.group !== group) {
+        group = p.group;
+        rows.push(`<div class="kit-group-title">${esc(group)}</div>`);
+      }
+      const path = String(p.file.original_name || '');
+      const extra = p.group === 'Extra files';
+      rows.push(`
+        <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" title="${esc(path)}">
+          <input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">
+          <div class="kit-part-main">
+            <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}</div>
+            <div class="kit-part-path">${esc(path)}</div>
+          </div>
+          ${p.auto !== undefined ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
+          <span class="kit-part-size">${this.formatSize(p.file.file_size)}</span>
+          ${extra ? `<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
+        </div>`);
+    }
+    const notes = [
+      ...bom.warnings.map(w => `<li class="is-warning">${esc(w)}</li>`),
+      ...bom.notes.map(w => `<li>${esc(w)}</li>`)
+    ].join('');
+    const hardware = bom.hardware.map(h => `
+      <div class="kit-hw"><span class="kit-hw-qty">${h.qty} ×</span><span>${esc(h.name)}${h.note ? ` <span class="kit-muted">(${esc(h.note)})</span>` : ''}${h.estimate ? ' <span class="kit-est">estimate</span>' : ''}</span></div>`).join('');
+    return `
+      <div class="kit-parts-head">
+        <div>
+          <div class="kit-parts-title">Files to print</div>
+          <div class="kit-parts-sub">${t.files} files · ${t.prints} prints · ${this.formatSize(t.bytes)} to download</div>
+        </div>
+        <div class="kit-parts-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="App.kitCopyList()">Copy list</button>
+          ${kit.loggedIn ? `<button type="button" class="btn btn-primary btn-sm" onclick="App.kitDownload()"${t.files ? '' : ' disabled'}>Download ZIP</button>` : ''}
+        </div>
+      </div>
+      <div class="kit-parts-body">
+        ${notes ? `<ul class="kit-notes">${notes}</ul>` : ''}
+        ${rows.join('') || '<div class="kit-empty">Nothing to print yet.</div>'}
+        <div class="kit-add">
+          <input class="form-input" list="kit-file-list" placeholder="Add a file from the project..." aria-label="Add a file" onchange="App.kitAddExtra(this.value)">
+        </div>
+        ${hardware ? `<div class="kit-group-title">Hardware to buy</div>${hardware}` : ''}
+        ${kit.cat.docs.length ? `<div class="kit-group-title">Instructions</div>
+        <label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>` : ''}
+      </div>`;
+  },
+
+  kitNameForm({ value = '', submitLabel }) {
+    return `
+      <form onsubmit="App.kitSubmitName(event)">
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input class="form-input" name="name" id="kit-name-input" value="${this.escapeHtml(value)}" autocomplete="off" spellcheck="false" required maxlength="100">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">${this.escapeHtml(submitLabel)}</button>
+        </div>
+      </form>`;
   },
 
   // ── Print History (modal opened from the model header) ──

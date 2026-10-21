@@ -472,10 +472,11 @@ const App = {
       document.getElementById('nav-models')?.classList.add('active');
       this.renderModels(Object.fromEntries(params));
     } else if (path.startsWith('/models/')) {
-      // ?trash=1: a model in the Trash, opened from the Trash
+      // ?trash=1: a model in the Trash, opened from the Trash. ?view=files: the file list of a
+      // model that opens in its kit configurator; ?c=: a configurator configuration
       const fromTrash = params.has('trash');
       document.getElementById(fromTrash ? 'nav-trash' : 'nav-models')?.classList.add('active');
-      this.renderModelDetail(path.split('/')[2], { trash: fromTrash });
+      this.renderModelDetail(path.split('/')[2], { trash: fromTrash, view: params.get('view'), c: params.get('c') });
     } else if (path === '/trash') {
       document.getElementById('nav-trash')?.classList.add('active');
       this.renderTrash();
@@ -2207,8 +2208,13 @@ const App = {
       const hasPrinters = printers.length > 0;
 
       this.currentModel = model;
+      // A kit archive (USSA VAULT) opens in its configurator; ?view=files shows the file list
+      const kit = opts.trash ? null : this.kitFor(model);
+      const view = kit && opts.view !== 'files' ? 'configure' : 'files';
       this.el.innerHTML = `
-        ${UI.modelDetail(model, hasPrinters)}`;
+        ${UI.modelDetail(model, hasPrinters, { kit, view })}`;
+      if (view === 'configure') return this.initKit(model, opts);
+      this.kit = null;
       this.fitFileTree(document.getElementById('tab-content-files'));
       // Coming from the Trash page: open the model's Trash tab
       if (this.pendingFilesTab) {
@@ -2249,6 +2255,283 @@ const App = {
       if (e.status === 423) return this.renderAdultLock(id, (e.data && e.data.name) || '');
       this.el.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--accent-yellow)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="empty-state-text">Model not found</div></div>';
     }
+  },
+
+  // ─── Kit configurators (public/js/kits): USSA VAULT ─────────────────────
+  // this.kit: { modelId, cat (parts catalog), cfg, bom, choices, saved, savedId, previewId }.
+  // Every change recomputes the parts list, keeps the configuration in the URL (?c=, without a
+  // new history entry) and in localStorage, and redraws the builder and the list.
+  kitFor(model) {
+    return typeof VaultKit !== 'undefined' && !model.deleted_at && VaultKit.detect(model.files || []) ? 'ussa-vault' : null;
+  },
+
+  async initKit(model, opts) {
+    const stored = (key) => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { return null; } };
+    const fromUrl = opts.c ? VaultKit.decodeConfig(opts.c) : null;
+    // A re-render of the page (after Edit, an unlock) must not bring back the URL it opened with
+    if (this.currentModelOpts) this.currentModelOpts.c = null;
+    const last = stored(`gv_kit_${model.id}`) || {};
+    // A link with another configuration is not the saved one that was open (a reload is)
+    const otherLink = fromUrl && JSON.stringify(fromUrl) !== JSON.stringify(last.cfg);
+    this.kit = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], savedId: otherLink ? null : last.savedId || null, previewId: null };
+    this.kitApply(fromUrl || last.cfg || VaultKit.defaultConfig());
+    if (!this.currentUser) return;
+    try {
+      const saved = await API.getKitConfigs(model.id, 'ussa-vault');
+      if (!this.kit || this.kit.modelId !== model.id) return;
+      this.kit.saved = saved;
+      if (!saved.some(s => s.id === this.kit.savedId)) this.kit.savedId = null;
+      this.kitRenderBuilder();
+    } catch (e) {}
+  },
+
+  kitApply(input) {
+    const kit = this.kit;
+    if (!kit) return;
+    kit.bom = VaultKit.computeBom(kit.cat, input);
+    kit.cfg = kit.bom.cfg;
+    kit.choices = VaultKit.choices(kit.cat, kit.cfg);
+    try { localStorage.setItem(`gv_kit_${kit.modelId}`, JSON.stringify({ cfg: kit.cfg, savedId: kit.savedId })); } catch (e) {}
+    if (location.hash.startsWith(`#/models/${kit.modelId}`)) {
+      history.replaceState(null, '', `#/models/${kit.modelId}?c=${VaultKit.encodeConfig(kit.cfg)}`);
+    }
+    this.kitRenderBuilder();
+    this.kitRenderParts();
+  },
+
+  kitState() {
+    const kit = this.kit;
+    const saved = kit.saved.find(s => s.id === kit.savedId);
+    return { ...kit, loggedIn: Boolean(this.currentUser), dirty: Boolean(saved) && JSON.stringify(saved.config) !== JSON.stringify(kit.cfg) };
+  },
+
+  // The builder and the list scroll on their own: keep where they were when they are redrawn
+  kitRenderBuilder() {
+    const el = document.getElementById('kit-builder');
+    if (!el || !this.kit) return;
+    const top = el.scrollTop;
+    el.innerHTML = UI.kitBuilder(this.kitState());
+    el.scrollTop = top;
+  },
+
+  kitRenderParts() {
+    const el = document.getElementById('kit-parts');
+    if (!el || !this.kit) return;
+    const body = el.querySelector('.kit-parts-body');
+    const top = body ? body.scrollTop : 0;
+    el.innerHTML = UI.kitParts(this.kitState());
+    const next = el.querySelector('.kit-parts-body');
+    if (next) next.scrollTop = top;
+  },
+
+  // Changes to a copy of the configuration; the kit checks it against the archive
+  kitUpdate(change) {
+    if (!this.kit) return;
+    const cfg = JSON.parse(JSON.stringify(this.kit.cfg));
+    change(cfg);
+    this.kitApply(cfg);
+  },
+
+  kitSet(field, value) {
+    this.kitUpdate(cfg => { cfg[field] = field === 'depth' ? Number(value) : value; });
+  },
+
+  kitMod(field, value) {
+    this.kitUpdate(cfg => {
+      cfg.mods[field] = value;
+      // A wheeled base stands on its feet at the front
+      if (field === 'base' && value === 'wheels') cfg.mods.feet = true;
+    });
+  },
+
+  kitFloor(fi, field, value) {
+    this.kitUpdate(cfg => { if (cfg.floors[fi]) cfg.floors[fi][field] = value; });
+  },
+
+  kitSlot(fi, si, field, value) {
+    this.kitUpdate(cfg => {
+      const floor = cfg.floors[fi];
+      if (!floor || !floor.slots[si]) return;
+      if (field === 'type') floor.slots[si] = VaultKit.defaultSlot(value);
+      else floor.slots[si][field] = value;
+    });
+  },
+
+  kitAddFloor() {
+    this.kitUpdate(cfg => {
+      const top = cfg.floors[cfg.floors.length - 1];
+      cfg.floors.push(top ? JSON.parse(JSON.stringify(top)) : VaultKit.newFloor(cfg.width));
+    });
+  },
+
+  kitCopyFloor(fi) {
+    this.kitUpdate(cfg => { if (cfg.floors[fi]) cfg.floors.splice(fi + 1, 0, JSON.parse(JSON.stringify(cfg.floors[fi]))); });
+  },
+
+  kitRemoveFloor(fi) {
+    this.kitUpdate(cfg => { if (cfg.floors.length > 1) cfg.floors.splice(fi, 1); });
+  },
+
+  // dir: 1 moves the floor up the tower, -1 down
+  kitMoveFloor(fi, dir) {
+    this.kitUpdate(cfg => {
+      const to = fi + dir;
+      if (to < 0 || to >= cfg.floors.length) return;
+      [cfg.floors[fi], cfg.floors[to]] = [cfg.floors[to], cfg.floors[fi]];
+    });
+  },
+
+  // A print count changed by hand; '' goes back to the computed one
+  kitQty(key, value) {
+    if (!key) return;
+    this.kitUpdate(cfg => {
+      const n = Math.floor(Number(value));
+      const row = this.kit.bom.parts.find(p => p.key === key);
+      const auto = row ? (row.auto !== undefined ? row.auto : row.qty) : null;
+      if (value === '' || !Number.isFinite(n) || n < 0 || n === auto) delete cfg.qty[key];
+      else cfg.qty[key] = Math.min(n, 999);
+    });
+  },
+
+  // Any file of the project can be added to the list (an alternative part, a photo, a PDF)
+  kitAddExtra(name) {
+    const file = (this.currentModel.files || []).find(f => f.original_name === name);
+    if (!file) return;
+    const key = VaultKit.classify(file.original_name) || `path:${file.original_name}`;
+    this.kitUpdate(cfg => { cfg.extra[key] = (cfg.extra[key] || 0) + 1; });
+  },
+
+  kitRemoveExtra(key) {
+    this.kitUpdate(cfg => { delete cfg.extra[key]; delete cfg.qty[key]; });
+  },
+
+  kitReset() {
+    if (!this.kit) return;
+    this.kit.savedId = null;
+    this.kitApply(VaultKit.defaultConfig());
+  },
+
+  // A row of the list opens its file in the 3D Studio: only that file, the list is the selector.
+  // Large STLs (up to 350 MB in VAULT) wait for a click.
+  kitPreview(fileId, force = false) {
+    const model = this.currentModel;
+    const file = model && (model.files || []).find(f => f.id === Number(fileId));
+    if (!file || !this.kit) return;
+    this.kit.previewId = file.id;
+    document.querySelectorAll('.kit-part.is-active').forEach(el => el.classList.remove('is-active'));
+    document.querySelectorAll(`.kit-part[data-file-id="${file.id}"]`).forEach(el => el.classList.add('is-active'));
+    if (!force && UI.previewKind(file) === '3d' && typeof Viewer !== 'undefined' && Number(file.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES) {
+      Viewer.cleanup();
+      return this.showLargePreviewPrompt(model.id, file, `App.kitPreview(${file.id}, true)`);
+    }
+    this.previewFile(model.id, file.id, { modelFiles: [file] });
+  },
+
+  kitListText() {
+    const saved = this.kit.saved.find(s => s.id === this.kit.savedId);
+    return VaultKit.bomText(this.kit.bom, saved ? `${this.currentModel.name}: ${saved.name}` : this.currentModel.name);
+  },
+
+  kitCopyList() {
+    if (this.kit) this.copyToClipboard(this.kitListText(), 'Parts list copied');
+  },
+
+  // The chosen files (each once), the instruction PDFs and the parts list as one ZIP, streamed
+  // by the server; the POST keeps the selection under a token, the link downloads it
+  async kitDownload() {
+    const kit = this.kit;
+    const model = this.currentModel;
+    if (!kit || !model) return;
+    const ids = [...new Set([...kit.bom.parts.filter(p => p.qty > 0).map(p => p.file.id), ...kit.bom.docs.map(f => f.id)])];
+    if (!ids.length) return this.toast('Nothing to download', 'error');
+    const saved = kit.saved.find(s => s.id === kit.savedId);
+    const label = saved ? saved.name : VaultKit.describe(kit.cfg).split(' · ')[0];
+    try {
+      const res = await API.prepareSelectionDownload(model.id, {
+        file_ids: ids,
+        name: `${model.name} ${label}`,
+        text: { name: `${model.name} parts list.txt`, content: this.kitListText() }
+      });
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      this.toast(`Downloading ${ids.length} files, ${UI.formatSize(kit.bom.totals.bytes)}`, 'info');
+    } catch (e) {
+      this.toast(e.message, 'error');
+    }
+  },
+
+  // ── Saved configurations ──
+  kitOpenSaved(id) {
+    const kit = this.kit;
+    if (!kit) return;
+    const saved = kit.saved.find(s => String(s.id) === String(id));
+    kit.savedId = saved ? saved.id : null;
+    if (saved) this.kitApply(saved.config);
+    else this.kitApply(kit.cfg);
+  },
+
+  async kitSave() {
+    const kit = this.kit;
+    if (!kit || !kit.savedId) return this.kitSaveAs();
+    try {
+      const row = await API.updateKitConfig(kit.modelId, kit.savedId, { config: kit.cfg });
+      kit.saved = kit.saved.map(s => (s.id === row.id ? row : s));
+      this.kitRenderBuilder();
+      this.toast('Configuration saved');
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  kitSaveAs() {
+    if (!this.kit) return;
+    const saved = this.kit.saved.find(s => s.id === this.kit.savedId);
+    this.kitNameOp = 'create';
+    this.openModal('Save configuration', UI.kitNameForm({ value: saved ? `${saved.name} (copy)` : VaultKit.describe(this.kit.cfg), submitLabel: 'Save' }));
+    setTimeout(() => document.getElementById('kit-name-input')?.select(), 60);
+  },
+
+  kitRenameSaved() {
+    const saved = this.kit && this.kit.saved.find(s => s.id === this.kit.savedId);
+    if (!saved) return;
+    this.kitNameOp = 'rename';
+    this.openModal('Rename configuration', UI.kitNameForm({ value: saved.name, submitLabel: 'Rename' }));
+    setTimeout(() => document.getElementById('kit-name-input')?.select(), 60);
+  },
+
+  async kitSubmitName(e) {
+    e.preventDefault();
+    const kit = this.kit;
+    if (!kit) return;
+    const name = String(new FormData(e.target).get('name') || '').trim();
+    try {
+      if (this.kitNameOp === 'rename') {
+        const row = await API.updateKitConfig(kit.modelId, kit.savedId, { name });
+        kit.saved = kit.saved.map(s => (s.id === row.id ? row : s));
+      } else {
+        const row = await API.createKitConfig(kit.modelId, { kit: 'ussa-vault', name, config: kit.cfg });
+        kit.saved = [row, ...kit.saved];
+        kit.savedId = row.id;
+      }
+      this.closeModal();
+      this.kitApply(kit.cfg);
+      this.toast('Configuration saved');
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  async kitDeleteSaved() {
+    const kit = this.kit;
+    const saved = kit && kit.saved.find(s => s.id === kit.savedId);
+    if (!saved || !confirm(`Delete the saved configuration "${saved.name}"? The tower stays in the builder.`)) return;
+    try {
+      await API.deleteKitConfig(kit.modelId, saved.id);
+      kit.saved = kit.saved.filter(s => s.id !== saved.id);
+      kit.savedId = null;
+      this.kitApply(kit.cfg);
+      this.toast('Configuration deleted');
+    } catch (e) { this.toast(e.message, 'error'); }
   },
 
   // ─── Password-protected models ───────────────────────────────────────
@@ -2617,8 +2900,9 @@ const App = {
     this.setPreviewHint(container, file, kind, baseUrl);
 
     if (kind === '3d' || kind === 'gcode') {
-      // A file in the Trash is shown on its own, outside the assembly of the model's parts
-      const cadFiles = trashed ? [trashed] : (model.files || []).filter(f => UI.previewKind(f) === '3d');
+      // A file in the Trash is shown on its own, outside the assembly of the model's parts;
+      // opts.modelFiles: the parts the viewer offers (the configurator: only this file)
+      const cadFiles = opts.modelFiles || (trashed ? [trashed] : (model.files || []).filter(f => UI.previewKind(f) === '3d'));
       const url = `${baseUrl}?t=${Date.now()}`;
       container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading...</div>';
       container.dataset.stlUrl = url;
@@ -2639,7 +2923,8 @@ const App = {
   },
 
   // The preview area of a 3D file too large to load by itself: its name, size and a load button
-  showLargePreviewPrompt(modelId, file) {
+  // (load: the button's onclick, by default the model page's preview)
+  showLargePreviewPrompt(modelId, file, load) {
     const container = document.getElementById(`stl-viewer-${modelId}`);
     if (!container) return;
     const name = String(file.original_name || file.filename || '').split('/').pop();
@@ -2647,7 +2932,7 @@ const App = {
       <div class="large-preview">
         <div class="large-preview-name">${UI.escapeHtml(name)}</div>
         <div>${UI.formatSize(file.file_size)}: too large to load automatically.</div>
-        <button class="btn btn-secondary btn-sm" onclick="App.previewFile(${Number(modelId)}, ${Number(file.id)})">Load 3D preview</button>
+        <button class="btn btn-secondary btn-sm" onclick="${load || `App.previewFile(${Number(modelId)}, ${Number(file.id)})`}">Load 3D preview</button>
       </div>`;
     this.highlightPreviewFile(file.id);
   },

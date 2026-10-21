@@ -137,9 +137,10 @@ async function runStaticAndUiChecks() {
   const apiCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/api.js'), 'utf8');
   const compCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/components.js'), 'utf8');
   const appCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/app.js'), 'utf8');
+  const kitCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/ussa-vault.js'), 'utf8');
 
   vm.createContext(sandbox);
-  vm.runInContext(`${apiCode}\n${compCode}\n${appCode}\nthis.__API = API; this.__UI = UI; this.__App = App;`, sandbox);
+  vm.runInContext(`${kitCode}\n${apiCode}\n${compCode}\n${appCode}\nthis.__API = API; this.__UI = UI; this.__App = App;`, sandbox);
 
   const { __API: API, __UI: UI, __App: App } = sandbox;
   App.currentUser = { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin' };
@@ -233,6 +234,33 @@ async function runStaticAndUiChecks() {
       const html = fn();
       assert(typeof html === 'string' && html.trim().length > 10, `${label} returned empty or non-string output`);
     }
+  });
+
+  await check('VAULT configurator view renders: builder, parts list, view switch; library names are escaped', () => {
+    const K = sandbox.VaultKit;
+    const files = fs.readFileSync(path.join(__dirname, 'fixtures/ussa-vault-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean)
+      .map((line, i) => { const [size, name] = line.split('\t'); return { id: i + 1, file_size: Number(size), original_name: name, file_type: /\.stl$/i.test(name) ? 'stl' : 'other' }; });
+    files.push({ id: 999, file_size: 1, original_name: 'Extra/<img src=x onerror=alert(1)>.png', file_type: 'image' });
+    const vault = { ...mockModel, name: 'VAULT_USSA', files };
+    const cat = K.buildCatalog(files);
+    const cfg = { ...K.defaultConfig(), floors: [...K.defaultConfig().floors, { height: '2F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'drawer', boxes: '1F+1F', interior: 'gridfinity' }] }],
+      mods: { base: 'wheels', feet: true, backbone: 'wide', pullHandle: true, pegboard: 'ikea', wallMount: true }, qty: { 'd:latch': 9 }, extra: { 'path:Extra/<img src=x onerror=alert(1)>.png': 1 } };
+    const bom = K.computeBom(cat, cfg);
+    const state = { modelId: 1, cat, cfg: bom.cfg, bom, choices: K.choices(cat, bom.cfg), saved: [{ id: 7, name: '<b>Garage</b>', config: bom.cfg }], savedId: 7, previewId: null, loggedIn: true, dirty: true };
+    const builder = UI.kitBuilder(state);
+    const parts = UI.kitParts(state);
+    const page = UI.modelDetail(vault, false, { kit: 'ussa-vault', view: 'configure' });
+    const filesView = UI.modelDetail(vault, false, { kit: 'ussa-vault', view: 'files' });
+    assert(builder.includes('Floor 4') && builder.includes('App.kitSlot(3, 1') && builder.includes('kit-tower'), 'The builder must list every floor with its slots');
+    assert(!builder.includes('<b>Garage</b>') && builder.includes('&lt;b&gt;Garage&lt;/b&gt;'), 'Saved configuration names must be escaped');
+    const latch = bom.parts.find(p => p.key === 'd:latch');
+    assert(latch.qty === 9 && latch.auto === 5, `Latches: 9 by hand, 5 computed, got ${latch.qty} / ${latch.auto}`);
+    assert(parts.includes('Hardware to buy') && parts.includes('↺ 5') && parts.includes('estimate'), 'The list must show hardware, hand-changed counts and estimates');
+    assert(!parts.includes('<img src=x') && !page.includes('<img src=x'), 'File names from the library must be escaped');
+    assert(page.includes('id="kit-builder"') && page.includes('id="stl-viewer-1"') && !page.includes('tab-content-files'), 'The configurator replaces the file list');
+    assert(filesView.includes('tab-content-files') && filesView.includes('?view=files') && !filesView.includes('id="kit-builder"'), 'The Files view keeps the file list and the view switch');
+    assert(!UI.modelDetail(mockModel, false).includes('detail-views'), 'Other models have no view switch');
+    assert(App.kitFor(vault) === 'ussa-vault' && App.kitFor(mockModel) === null, 'Only the VAULT archive opens in the configurator');
   });
 
   await check('Every onclick / onchange / onsubmit App.* handler in HTML & components.js exists on App', () => {

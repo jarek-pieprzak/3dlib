@@ -1634,3 +1634,110 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 }
 
 
+/* ─── Kit configurator on the model page (USSA VAULT, UI.kitView) ─────────── */
+.detail-views{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border)}
+.detail-view-tab{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;margin-bottom:-1px;font-size:.875rem;font-weight:600;color:var(--text-muted);border-bottom:2px solid transparent;text-decoration:none}
+.detail-view-tab:hover{color:var(--text-primary)}
+.detail-view-tab.is-active{color:var(--text-primary);border-bottom-color:var(--accent-cyan)}
+.kit-layout{display:grid;grid-template-columns:minmax(360px, 460px) minmax(0, 1fr);gap:20px;align-items:start}
+.kit-builder-panel,.kit-parts-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.kit-builder{display:flex;flex-direction:column;gap:14px;padding:14px 16px}
+.kit-result{display:flex;flex-direction:column;gap:16px;min-width:0}
+.kit-preview-panel .viewer-container{height:320px}
+.kit-section{display:flex;flex-direction:column;gap:10px;padding-bottom:14px;border-bottom:1px dashed var(--border)}
+.kit-section:last-child{padding-bottom:0;border-bottom:none}
+.kit-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.kit-label{font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
+.kit-field{display:flex;align-items:center;gap:8px 10px;flex-wrap:wrap}
+.kit-field>.kit-label{flex:none;width:96px}
+.kit-select{width:auto;min-width:0;max-width:100%;padding:5px 28px 5px 9px;font-size:.8rem;background-position:right 9px center}
+.kit-muted{font-size:.8rem;color:var(--text-muted)}
+.kit-empty{padding:16px;text-align:center;font-size:.85rem;color:var(--text-muted)}
+.kit-seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.kit-seg-btn{padding:5px 11px;font-size:.8rem;font-weight:600;color:var(--text-secondary);background:var(--bg-input);border:none;border-right:1px solid var(--border);cursor:pointer}
+.kit-seg-btn:last-child{border-right:none}
+.kit-seg-btn:hover:not(:disabled){color:var(--text-primary)}
+.kit-seg-btn.is-active{color:var(--accent-cyan);background:color-mix(in srgb, var(--accent-cyan) 16%, var(--bg-input));box-shadow:inset 0 0 0 1px var(--accent-cyan)}
+.kit-seg-btn:disabled{opacity:.35;cursor:not-allowed}
+.kit-checks{display:flex;flex-wrap:wrap;gap:8px 16px}
+.kit-check{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;color:var(--text-secondary);cursor:pointer}
+.kit-check input{width:14px;height:14px;accent-color:var(--accent-cyan)}
+.kit-check.is-disabled{opacity:.45;cursor:not-allowed}
+.kit-icon-btn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--text-muted);cursor:pointer}
+.kit-icon-btn:hover:not(:disabled){background:var(--bg-tertiary);color:var(--text-primary)}
+.kit-icon-btn.is-danger:hover:not(:disabled){color:var(--error)}
+.kit-icon-btn:disabled{opacity:.3;cursor:default}
+.kit-saved{flex-direction:row;align-items:center;flex-wrap:wrap;gap:6px}
+.kit-saved .kit-select{flex:1 1 160px}
+.kit-footprint{flex-direction:row;align-items:flex-end;gap:16px}
+.kit-footprint-fields{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}
+.kit-footprint-fields .kit-field>.kit-label{width:48px}
+.kit-dims{font-size:.75rem;color:var(--text-muted)}
+.kit-floor{display:flex;flex-direction:column;gap:6px;padding:8px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px}
+.kit-floor-head{display:flex;align-items:center;gap:6px}
+.kit-floor-head>.kit-select{flex:0 1 auto;max-width:170px}
+.kit-floor-title{min-width:62px;font-size:.8rem;font-weight:700;color:var(--text-primary)}
+.kit-floor-title small{display:block;font-size:.6rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+.kit-floor-tools{display:inline-flex;gap:1px;margin-left:auto}
+.kit-slot{display:grid;grid-template-columns:62px minmax(0,1fr);align-items:center;gap:6px;padding-left:8px;border-left:2px solid var(--border)}
+.kit-slot-controls{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.kit-slot-name{font-size:.75rem;font-weight:600;color:var(--text-secondary)}
+.kit-slot-type{font-size:.8rem;color:var(--text-secondary)}
+/* The tower drawing next to the footprint: drawers blue, sustainers amber */
+.kit-tower{display:flex;flex:none;flex-direction:column;gap:2px;padding:4px 0}
+.kit-tower-floor{display:flex;gap:2px}
+.kit-tower-mod{display:flex;gap:1px;overflow:hidden;background:var(--border);border-radius:3px}
+.kit-tower-col{display:flex;flex-direction:column;gap:1px}
+.kit-tower-col span{flex:1;background:var(--bg-tertiary)}
+.kit-tower-col.is-drawer span{background:color-mix(in srgb, var(--accent-cyan) 30%, var(--bg-tertiary))}
+.kit-tower-col.is-sustainer span{background:color-mix(in srgb, var(--warning) 34%, var(--bg-tertiary))}
+.kit-tower-roof{height:5px;background:var(--text-muted);border-radius:3px 3px 1px 1px;opacity:.6}
+.kit-tower-base{position:relative;height:7px;margin-bottom:6px;background:var(--text-muted);border-radius:1px;opacity:.6}
+.kit-tower-base i{position:absolute;left:2px;bottom:-6px;width:12px;height:12px;background:var(--text-secondary);border-radius:50%}
+.kit-tower-base b{position:absolute;left:4px;bottom:-4px;width:5px;height:5px;background:var(--text-secondary);border-radius:50%}
+.kit-tower-base i+i,.kit-tower-base b+b{left:auto;right:4px}
+/* The parts list */
+.kit-parts{display:flex;flex:1 1 auto;flex-direction:column;min-height:0}
+.kit-parts-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.kit-parts-title{font-size:.95rem;font-weight:700;color:var(--text-primary)}
+.kit-parts-sub{margin-top:2px;font-size:.75rem;color:var(--text-muted)}
+.kit-parts-actions{display:flex;gap:8px}
+.kit-parts-body{padding:4px 0 14px}
+.kit-notes{display:flex;flex-direction:column;gap:3px;margin:10px 16px 2px;padding:8px 10px 8px 26px;font-size:.78rem;color:var(--text-secondary);background:var(--bg-input);border:1px solid var(--border);border-radius:6px}
+.kit-notes .is-warning{color:var(--warning)}
+.kit-group-title{padding:12px 16px 4px;font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
+.kit-part{display:flex;align-items:center;gap:10px;padding:5px 16px;cursor:pointer}
+.kit-part:hover{background:color-mix(in srgb, var(--text-primary) 5%, transparent)}
+.kit-part.is-active{background:color-mix(in srgb, var(--accent-cyan) 12%, transparent);box-shadow:inset 3px 0 0 var(--accent-cyan)}
+.kit-part.is-off{opacity:.5}
+.kit-qty{flex:none;width:56px;padding:3px 6px;font-size:.8rem;text-align:right;color:var(--text-primary);background:var(--bg-input);border:1px solid var(--border);border-radius:5px}
+.kit-part-main{flex:1 1 auto;min-width:0}
+.kit-part-label{font-size:.82rem;font-weight:500;color:var(--text-primary)}
+.kit-part-path{overflow:hidden;font-size:.7rem;color:var(--text-muted);text-overflow:ellipsis;white-space:nowrap}
+.kit-part-size{flex:none;min-width:58px;font-size:.72rem;text-align:right;color:var(--text-muted)}
+.kit-est{display:inline-block;margin-left:4px;padding:0 6px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;vertical-align:1px;color:var(--warning);border:1px solid color-mix(in srgb, var(--warning) 45%, transparent);border-radius:999px}
+.kit-reset{flex:none;padding:1px 7px;font-size:.7rem;color:var(--accent-cyan);background:transparent;border:1px solid var(--border);border-radius:999px;cursor:pointer}
+.kit-add{padding:10px 16px 0}
+.kit-add .form-input{padding:6px 10px;font-size:.8rem}
+.kit-hw{display:flex;gap:8px;padding:3px 16px;font-size:.8rem;color:var(--text-secondary)}
+.kit-hw-qty{flex:none;min-width:44px;font-weight:600;text-align:right;color:var(--text-primary)}
+.kit-parts-body>.kit-check{padding:4px 16px}
+/* Wide screens: one window tall like the file view; the builder and the list scroll */
+@media(min-width:1025px) and (min-height:600px){
+  .detail-page>.detail-views{flex:none}
+  .detail-page>.kit-layout{flex:1 1 auto;min-height:0;grid-template-rows:minmax(0,1fr);align-items:stretch}
+  .detail-page .kit-builder{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+  .detail-page .kit-result{min-height:0}
+  .detail-page .kit-preview-panel{flex:0 0 46%;min-height:260px}
+  .detail-page .kit-parts-panel{flex:1 1 auto}
+  .detail-page .kit-parts-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+}
+/* Very wide: the list and the 3D Studio side by side, both the full height */
+@media(min-width:1400px) and (min-height:600px){
+  .detail-page .kit-result{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,.85fr);grid-template-rows:minmax(0,1fr)}
+  .detail-page .kit-preview-panel{order:2;min-height:0}
+  .detail-page .kit-parts-panel{order:1;min-height:0}
+}
+@media(max-width:1024px){
+  .kit-layout{grid-template-columns:1fr}
+}

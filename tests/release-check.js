@@ -318,6 +318,89 @@ async function runStaticAndUiChecks() {
     assert(links.length && links.every(l => /^[a-z]+:\/\/open\?file=[A-Za-z0-9:/._?=-]+$/.test(l)), `Slicer links must need no %-encoding: ${links.join(' ')}`);
   });
 
+  await check('USSA VAULT kit: every STL of the archive is recognised; parts lists follow the manual', () => {
+    require(path.join(ROOT_DIR, 'public/js/kits/ussa-vault.js'));
+    const K = globalThis.VaultKit;
+    // The real archive: "<size>\t<path in the project folder>" for its 737 files
+    const files = fs.readFileSync(path.join(__dirname, 'fixtures/ussa-vault-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean)
+      .map((line, i) => { const [size, name] = line.split('\t'); return { id: i + 1, file_size: Number(size), original_name: name }; });
+    const unknownStl = files.filter(f => /\.stl$/i.test(f.original_name) && !K.classify(f.original_name)).map(f => f.original_name);
+    assert(!unknownStl.length, `Every STL of the archive must be a known part, not: ${unknownStl.slice(0, 5).join(', ')}`);
+    const byKey = {};
+    files.forEach(f => { const k = K.classify(f.original_name); if (k) (byKey[k] = byKey[k] || []).push(f.original_name); });
+    const shared = Object.keys(byKey).filter(k => byKey[k].length > 1).sort();
+    assert(shared.join() === 'd:baseplate:M4:0,d:baseplate:M4:2', `Only the alternative M4 baseplates may share a part, got: ${shared.join(', ')}`);
+    const cat = K.buildCatalog(files);
+    assert(cat.byKey['d:baseplate:M4:0'].original_name.endsWith('M4 Baseplate.stl'), 'The baseplate name every family uses must win');
+    assert(cat.docs.length === 5, `The five instruction PDFs go with the download, got ${cat.docs.length}`);
+    assert(K.detect(files), 'The archive must be detected');
+    assert(!K.detect(files.slice(0, 30)) && !K.detect([{ original_name: 'Benchy.stl' }]), 'Other projects must not be detected');
+
+    const bom = (cfg) => K.computeBom(cat, cfg);
+    const qty = (b, end) => b.parts.filter(p => p.file.original_name.endsWith(end)).reduce((n, p) => n + p.qty, 0);
+    const hw = (b, start) => b.hardware.filter(h => h.name.startsWith(start)).reduce((n, h) => n + h.qty, 0);
+    const expect = (b, label, pairs) => {
+      for (const [end, n] of pairs) assert(qty(b, end) === n, `${label}: expected ${n} x ${end}, got ${qty(b, end)}`);
+    };
+    const drawer = (extra = {}) => ({ type: 'drawer', interior: 'empty', ...extra });
+
+    // Default: L4 with 2F L, 1F S+S, 2F L drawers and a grid roof. Runner guides and slides are
+    // pairs in one file: one print per box
+    const def = bom(K.defaultConfig());
+    expect(def, 'Default tower', [['L4 Module 2F.stl', 2], ['S4 Module 1f.stl', 2], ['L4 Box 2F.stl', 2], ['S4 Box 1F.stl', 2],
+      ['x4 Runner Guides.stl', 4], ['x4 Runner Slides.stl', 4], ['Runner Stopper.stl', 8], ['Springs.stl', 4], ['Latch.stl', 4],
+      ['L4 Grid Roof.stl', 1], ['Top Handle (Turn On Supports).stl', 1], ['Rails.stl', 0]]);
+    assert(hw(def, 'M4 × 14') === 20 && hw(def, 'M6 × 50') === 2, 'Default tower: 4 + 6 M4x14 per 1F / 2F box, 2 M6x50 for the handle');
+    assert(def.warnings.length === 0, `Default tower: no warnings expected, got ${def.warnings.join(' | ')}`);
+
+    // L² holds two S drawer columns; several boxes in one module need geared rails (a pair per box)
+    const l2 = bom({ width: 'L', depth: 4, roof: 'table', floors: [{ height: '4F', layout: 'L2', slots: [drawer({ boxes: '2F+2F', interior: 'gridfinity', handles: '2' }), drawer({ boxes: '1F+1F+1F+1F', interior: 'dividers' })] }] });
+    expect(l2, 'L² floor', [['L4² Module 4F.stl', 1], ['Latch.stl', 1], ['S Rails.stl', 6], ['S4 Box 2F.stl', 2], ['S4 Box 1F.stl', 4],
+      ['x4 Accessory 1st.stl', 1], ['x4 Accessory 2nd.stl', 1], ['S4 Baseplate_With 2 Handles.stl', 2], ['L4 Table Roof.stl', 1],
+      ['34.5MM TALL (full height of 1F drawers)/10-S, x3.stl', 4], ['34.5MM TALL (full height of 1F drawers)/14, x4.stl', 4]]);
+
+    // Sustainers: S-M hinge tops are single parts, the L-XL top and every bottom hinge file a pair
+    const sus = bom({ width: 'L', depth: 4, floors: [{ height: '2F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'sustainer', interior: 'gridfinity' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'sealed' }] }] });
+    expect(sus, 'Sustainers', [['S4 2F Module.stl', 2], ['L4 2F Sealed Module.stl', 1], ['S4 Roof.stl', 2], ['L4 Roof.stl', 1],
+      ['S-M 2-4F Hinge.stl', 2], ['L 2-4F Hinge.stl', 1], ['S Hinge Top.stl', 4], ['L-XL Hinge Top.stl', 1], ['S-M Rods.stl', 2], ['L-XL Rods.stl', 1],
+      ['LOCK HOLDER.stl', 6], ['LOCK OUTER PART 2-4F.stl', 6], ['S4 Baseplate.stl', 1], ['Grid Roof.stl', 0]]);
+    assert(hw(sus, 'M4 × 10') === 24 && hw(sus, 'M4 × 14') === 48 && hw(sus, 'M4 × 20') === 21, 'Sustainers: 8 / 16 / 7 bolts each');
+
+    // XL: 3-5 deep boxes have a back panel, 6-7 deep boxes and baseplates come in two parts
+    expect(bom({ width: 'XL', depth: 3, floors: [{ height: '1F', layout: 'XL', slots: [drawer()] }] }), 'XL3 drawer', [['XL3 Box 1F.stl', 1], ['XL3 Back Panel.stl', 1], ['XL Facade 1F.stl', 1], ['XL3 Runner Guides.stl', 1]]);
+    expect(bom({ width: 'XL', depth: 6, floors: [{ height: '1F', layout: 'XL', slots: [drawer({ interior: 'gridfinity' })] }] }), 'XL6 drawer',
+      [['XL6 Box 1F Part 1.stl', 1], ['XL6 Box 1F Part 2.stl', 1], ['XL6 Baseplate Part 1.stl', 1], ['XL6 Baseplate Part 2.stl', 1], ['Back Panel.stl', 0]]);
+
+    // Modifications: wheels, a universal backbone (two boards per level, a 4F floor is two 2F
+    // levels), wall mounts (one cleat per 1F / 2F mount, two per 4F)
+    const mods = bom({ width: 'S', depth: 5, floors: ['2F', '1F', '4F'].map(height => ({ height, layout: 'S', slots: [drawer()] })),
+      mods: { base: 'wheels', feet: true, backbone: 'universal', pullHandle: true, wallMount: true } });
+    expect(mods, 'Modifications', [['S5 Base.stl', 1], ['Disk.stl', 2], ['Tyre (TPU).stl', 2], ['Jig.stl', 1], ['S Feet.stl', 1],
+      ['Universal 2F Backbone.stl', 6], ['Universal 1F Backbone.stl', 2], ['Universal Pull-out Handle Lock.stl', 2], ['Handle Lock Knob Part 1.stl', 2],
+      ['S2F Wall Mount.stl', 1], ['S1F Wall Mount.stl', 1], ['S4F Wall Mount.stl', 1], ['Wall Mount Second Part.stl', 4]]);
+    assert(hw(mods, 'M16 threaded rod, 248') === 1 && hw(mods, '6205ZZ') === 2 && hw(mods, 'M4 × 25') === 12, 'Wheels: S rod 248 mm, 2 bearings, 12 M4x25');
+    assert(hw(mods, 'M4 bolt, 60-100') === 32, `Backbone: 4 bolts per board (8 boards), got ${hw(mods, 'M4 bolt, 60-100')}`);
+    assert(!mods.notes.some(n => /above the base/.test(n)) && mods.notes.some(n => /below the roof/.test(n)), `The manual's 2F advice: ${mods.notes.join(' | ')}`);
+    assert(mods.height === 400, `Tower height: base 52 mm + 7 F x 48 mm + 9 mm, about 400 mm, got ${mods.height}`);
+    const noBackbone = bom({ width: 'S', depth: 5, floors: [{ height: '1F', layout: 'S', slots: [drawer()] }], mods: { pullHandle: true } });
+    assert(noBackbone.warnings.some(w => /choose a backbone/.test(w)) && qty(noBackbone, 'Pull-out Handle.stl') === 0, 'A pull-out handle needs a backbone');
+
+    // Saved and linked configurations are checked against the archive
+    const fixed = K.normalize(cat, { width: 'XL', depth: 9, roof: 'nope', floors: [{ height: '2F', layout: 'XL', slots: [{ type: 'sustainer', interior: 'sealed' }] }], qty: { 'd:latch': '3', bad: -1 } });
+    assert(fixed.cfg.depth === 4 && fixed.cfg.roof === 'grid' && fixed.cfg.floors[0].layout === 'S+M', `Unavailable choices must fall back: ${JSON.stringify(fixed.cfg.floors[0])}`);
+    assert(fixed.changes.some(c => /XL is not available in 2F/.test(c)), `The change must be reported: ${fixed.changes.join(' | ')}`);
+    assert(fixed.cfg.qty['d:latch'] === 3 && !('bad' in fixed.cfg.qty), 'Quantities by hand are kept when valid');
+    const edited = bom({ ...K.defaultConfig(), qty: { 'd:latch': 6 }, extra: { 'm:moduleconnector:1F': 2, 'path:01. DRAWERS/Drawers Naming.png': 1 } });
+    const latch = edited.parts.find(p => p.key === 'd:latch');
+    assert(latch.qty === 6 && latch.auto === 4, 'A quantity changed by hand keeps the computed one');
+    assert(qty(edited, 'Connector for Modules 1F.stl') === 2 && qty(edited, 'Drawers Naming.png') === 1, 'Files added by hand are in the list');
+    const text = K.bomText(edited, 'VAULT');
+    assert(text.includes('## Hardware to buy') && text.includes('  6 x  01. DRAWERS/07. Universal/Latch.stl'), 'The parts list text names every file with its quantity');
+    const code = K.encodeConfig(edited.cfg);
+    assert(/^[A-Za-z0-9_-]+$/.test(code) && JSON.stringify(K.decodeConfig(code)) === JSON.stringify(edited.cfg), 'Configurations survive the URL');
+    assert(K.decodeConfig('%%%') === null, 'A broken ?c= is ignored');
+  });
+
     await check('Every API.* method called in app.js & components.js exists on API in api.js', () => {
     const frontendSources = `${compCode}\n${appCode}`;
     const apiCallRegex = /\bAPI\.([a-zA-Z0-9_]+)\s*\(/g;

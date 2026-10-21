@@ -34,7 +34,7 @@ const BROWSER_GLOBALS = new Set([
   'undefined', 'NaN', 'Infinity', 'globalThis',
   'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array',
   'Float32Array', 'Float64Array', 'ArrayBuffer', 'DataView', 'TextEncoder', 'TextDecoder',
-  'XMLHttpRequest', 'WebSocket', 'Worker',
+  'XMLHttpRequest', 'WebSocket', 'Worker', 'atob', 'btoa',
   // GyroidVault frontend globals
   'API', 'UI', 'App', 'Viewer', 'lucide', 'THREE', 'OcctImportJs', 'bootstrap', 'GCodePreview', 'fflate'
 ]);

@@ -1363,6 +1363,7 @@ const UI = {
             <div class="panel-header">
               <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">Tower</span></div>
               <div class="kit-seg kit-tower-modes" hidden><button type="button" class="kit-seg-btn" data-mode="3d" onclick="App.kitTowerMode('3d')">3D</button><button type="button" class="kit-seg-btn" data-mode="2d" onclick="App.kitTowerMode('2d')">Drawing</button></div>
+              <button type="button" class="btn btn-secondary btn-xs kit-open-btn" onclick="App.kitToggleOpen()" title="Open or close every drawer and sustainer" hidden>Open all</button>
               <button type="button" class="btn btn-secondary btn-xs kit-tower-btn" onclick="App.kitShowTower()" hidden>Show the tower</button>
             </div>
             <div class="panel-body no-pad">
@@ -1482,7 +1483,9 @@ const UI = {
       let by = y;
       for (const bh of String(slot.boxes || floorHeight).split('+')) {
         const bH = (F[bh] || 1) * P;
-        out += r('kd-drawer', x + 5, by + 4, w - 10, bH - 8, 3) + `<circle class="kd-dark" cx="${x + w - 24}" cy="${by + bH / 2}" r="7"/>` + r('kd-label', x + 16, by + bH / 2 - 5, 28, 10, 2);
+        // As on the facade STLs: key in the middle of the top band, label slot at the right edge
+        const ky = by + P / 2;
+        out += r('kd-drawer', x + 5, by + 4, w - 10, bH - 8, 3) + `<circle class="kd-dark" cx="${x + w / 2}" cy="${ky}" r="8"/>` + r('kd-label', x + w - 8 - Math.min(40, w * 0.22), ky - 5, Math.min(40, w * 0.22), 10, 2) + `<circle class="kd-label" cx="${x + Math.min(26, w * 0.15)}" cy="${ky}" r="3.5"/>`;
         by += bH;
       }
       return out;

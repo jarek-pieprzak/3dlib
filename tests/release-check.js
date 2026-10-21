@@ -300,8 +300,25 @@ async function runStaticAndUiChecks() {
       assert(model.size.height >= 40 + 34 + floorsH && model.size.height <= 40 + 34 + floorsH + 70, `3D: tower height ${model.size.height} (roof ${roof})`);
       let bad = 0;
       model.group.traverse(o => { if (o.isMesh && ![o.position.x, o.position.y, o.position.z].every(Number.isFinite)) bad++; });
-      assert(!bad && model.group.children.length > 40, `3D: ${model.group.children.length} meshes, ${bad} with broken positions (roof ${roof})`);
+      let meshes = 0;
+      model.group.traverse(o => { if (o.isMesh) meshes++; });
+      assert(!bad && meshes > 60, `3D: ${meshes} meshes, ${bad} with broken positions (roof ${roof})`);
     }
+
+    // Every box and every sustainer opens; floors above an open sustainer rise
+    const openCfg = { ...bom.cfg, floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'sealed' }, { type: 'drawer', boxes: '1F', interior: 'gridfinity' }] },
+      { height: '2F', layout: 'L', slots: [{ type: 'drawer', boxes: '1F+1F', interior: 'dividers' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'gridfinity' }] }] };
+    const om = three.VaultKit3D.build(openCfg);
+    const ids = om.openables.map(o => o.id);
+    assert(ids.length === 5 && new Set(ids).size === 5, `3D: 2 sustainers and 3 boxes open, got ${ids.join(', ')}`);
+    const closed = three.VaultKit3D.targets(om, new Set());
+    assert(closed.floors.every(v => v === 0) && closed.top === 0 && closed.parts.every(p => p.value === 0), 'Closed: nothing moves');
+    const opened = three.VaultKit3D.targets(om, new Set(['0:0', '1:0:1']));
+    assert(opened.floors[0] === 0 && opened.floors[1] > om.size.depth && opened.floors[2] === opened.floors[1] && opened.top === opened.floors[1], `An open sustainer lifts what is above it: ${JSON.stringify(opened.floors)} / ${opened.top}`);
+    const drawerPart = opened.parts.find(p => p.o.id === '1:0:1');
+    assert(drawerPart.value > om.size.depth * 0.5 && opened.parts.find(p => p.o.id === '0:0').value < -1.5, 'A drawer slides out, a sustainer lid turns up');
+    const topOpen = three.VaultKit3D.targets(om, new Set(['2:0']));
+    assert(topOpen.floors.every(v => v === 0) && topOpen.top > 0, 'A sustainer on top lifts only the roof and handles');
   });
 
   await check('Every onclick / onchange / onsubmit App.* handler in HTML & components.js exists on App', () => {

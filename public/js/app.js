@@ -2570,7 +2570,8 @@ const App = {
         kit.scene3d = VaultKit3D.mount(container, kit.cfg, {
           background: typeof Viewer !== 'undefined' ? Viewer.sceneColors().background : undefined,
           onHover: (fi) => this.kitHoverFloor(fi),
-          onClick: (fi) => this.kitFocusFloor(fi)
+          onClick: (fi) => this.kitFocusFloor(fi),
+          onOpen: (count, total) => this.kitOpenButton(count, total)
         });
         shown3d = Boolean(kit.scene3d);
       }
@@ -2584,6 +2585,8 @@ const App = {
     const hint = panel && panel.querySelector('.detail-viewer-hint');
     const button = panel && panel.querySelector('.kit-tower-btn');
     const modes = panel && panel.querySelector('.kit-tower-modes');
+    const openAll = panel && panel.querySelector('.kit-open-btn');
+    if (openAll) openAll.hidden = !shown3d;
     if (title) title.textContent = 'Tower';
     if (button) button.hidden = true;
     if (modes) {
@@ -2594,7 +2597,7 @@ const App = {
       if (hint.dataset.defaultHtml === undefined) hint.dataset.defaultHtml = hint.innerHTML;
       hint.classList.remove('is-media');
       hint.textContent = shown3d
-        ? 'Drag to turn · scroll to zoom · right-drag to move · click a floor to edit it'
+        ? 'Click a drawer or a sustainer to open it · drag to turn · scroll to zoom · right-drag to move'
         : 'Front and side, to scale · click a floor to edit it · click a part in the list to see it in 3D';
     }
   },
@@ -2624,8 +2627,20 @@ const App = {
     this.kit.view = view;
     const button = document.querySelector('.kit-preview-panel .kit-tower-btn');
     const modes = document.querySelector('.kit-preview-panel .kit-tower-modes');
+    const openAll = document.querySelector('.kit-preview-panel .kit-open-btn');
     if (button) button.hidden = false;
     if (modes) modes.hidden = true;
+    if (openAll) openAll.hidden = true;
+  },
+
+  // Open every drawer and sustainer of the 3D tower, or close them all
+  kitToggleOpen() {
+    if (this.kit && this.kit.scene3d) this.kit.scene3d.toggleAll();
+  },
+
+  kitOpenButton(count, total) {
+    const button = document.querySelector('.kit-preview-panel .kit-open-btn');
+    if (button) button.textContent = total && count === total ? 'Close all' : 'Open all';
   },
 
   // A page of an instruction PDF from the archive in the preview panel (the browser's viewer)

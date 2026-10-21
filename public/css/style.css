@@ -1803,3 +1803,5 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 /* The tower in 3D (VaultKit3D) or as the drawing, switched in the panel header */
 .kit-tower-modes[hidden]{display:none}
 .kit-tower-modes .kit-seg-btn{padding:3px 10px;font-size:.75rem}
+.kit-open-btn[hidden]{display:none}
+.kit-preview-panel>.panel-header>.panel-title{margin-right:auto}

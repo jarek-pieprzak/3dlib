@@ -1573,6 +1573,53 @@ async function runE2ETests() {
       await apiReq(`/api/projects/${coll.data.id}`, { method: 'DELETE', session: adminSession });
     });
 
+    await check('Kit configurators: a selection of files downloads as a streamed ZIP with its parts list; saved configurations belong to their user', async () => {
+      const AdmZip = require('adm-zip');
+      const model = ((await apiReq('/api/models?search=Zip%20Project', { session: adminSession })).data.models || []).find(m => m.name === 'Zip Project');
+      const detail = (await apiReq(`/api/models/${model.id}`, { session: adminSession })).data;
+      const fileId = (name) => detail.files.find(f => f.original_name === name).id;
+      const other = (await apiReq(`/api/models/${createdModelId}`, { session: adminSession })).data.files[0];
+      const body = { file_ids: [fileId('part.stl'), fileId('Sub Folder/inner.stl')], name: 'VAULT L4', text: { name: 'VAULT parts list.txt', content: 'parts: 2\n' } };
+
+      const noCsrf = await apiReq(`/api/models/${model.id}/download-selection`, { method: 'POST', session: adminSession, includeCsrf: false, body });
+      assert(noCsrf.status === 403, `A selection needs the CSRF token, got ${noCsrf.status}`);
+      const foreign = await apiReq(`/api/models/${model.id}/download-selection`, { method: 'POST', session: adminSession, body: { file_ids: [other.id] } });
+      assert(foreign.status === 400, `Files of another model must be refused, got ${foreign.status}`);
+      const prepared = await apiReq(`/api/models/${model.id}/download-selection`, { method: 'POST', session: adminSession, body });
+      assert(prepared.status === 200 && /^\/api\/models\/\d+\/download-selection\/[0-9a-f]{32}$/.test(prepared.data.url), `Unexpected answer: ${JSON.stringify(prepared.data)}`);
+
+      const res = await fetch(`${baseUrl}${prepared.data.url}`, { headers: { Cookie: adminSession.cookie } });
+      assert(res.status === 200, `The selection must download, got ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      assert(Number(res.headers.get('content-length')) === buf.length, 'The selection ZIP must have an exact Content-Length');
+      assert((res.headers.get('content-disposition') || '').includes('filename="VAULT L4.zip"'), `Unexpected name: ${res.headers.get('content-disposition')}`);
+      const zip = new AdmZip(buf);
+      const names = zip.getEntries().map(e => e.entryName).sort().join(', ');
+      assert(names === 'Sub Folder/inner.stl, VAULT parts list.txt, part.stl', `Only the chosen files and the parts list: ${names}`);
+      assert(zip.getEntry('VAULT parts list.txt').getData().toString() === 'parts: 2\n', 'The parts list must be in the ZIP');
+      assert((await fetch(`${baseUrl}${prepared.data.url}`)).status === 404, 'The link only works for the user who asked for it');
+      assert((await fetch(`${baseUrl}/api/models/${model.id}/download-selection/${'0'.repeat(32)}`, { headers: { Cookie: adminSession.cookie } })).status === 404, 'Unknown tokens are 404');
+
+      // Saved configurations: per user and model
+      const url = `/api/models/${model.id}/kit-configs`;
+      assert((await apiReq(url, { method: 'POST', session: adminSession, body: { kit: 'ussa-vault', name: ' ', config: {} } })).status === 400, 'A configuration needs a name');
+      assert((await apiReq(url, { method: 'POST', session: adminSession, body: { kit: 'No Kit', name: 'x', config: {} } })).status === 400, 'Kit names are checked');
+      const saved = await apiReq(url, { method: 'POST', session: adminSession, body: { kit: 'ussa-vault', name: 'Garage  tower', config: { v: 1, width: 'L', depth: 4 } } });
+      assert(saved.status === 201 && saved.data.name === 'Garage tower' && saved.data.config.width === 'L', `Save failed: ${JSON.stringify(saved.data)}`);
+      const renamed = await apiReq(`${url}/${saved.data.id}`, { method: 'PUT', session: adminSession, body: { name: 'Desk tower' } });
+      assert(renamed.status === 200 && renamed.data.name === 'Desk tower' && renamed.data.config.depth === 4, 'Renaming keeps the configuration');
+      const list = await apiReq(`${url}?kit=ussa-vault`, { session: adminSession });
+      assert(list.data.length === 1 && list.data[0].id === saved.data.id, `Expected one saved configuration, got ${JSON.stringify(list.data)}`);
+
+      const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
+      const maker = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
+      assert((await apiReq(`${url}?kit=ussa-vault`, { session: maker })).data.length === 0, "Another user must not see someone's configurations");
+      assert((await apiReq(`${url}/${saved.data.id}`, { method: 'PUT', session: maker, body: { name: 'Mine' } })).status === 404, "Another user must not change someone's configuration");
+      assert((await apiReq(`${url}/${saved.data.id}`, { method: 'DELETE', session: maker })).status === 404, "Another user must not delete someone's configuration");
+      assert((await apiReq(`${url}/${saved.data.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'The owner deletes a configuration');
+      assert((await apiReq(url, { session: adminSession })).data.length === 0, 'A deleted configuration is gone');
+    });
+
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {
       const delRes = await apiReq(`/api/models/${createdModelId}?deleteDisk=true`, {
         method: 'DELETE',

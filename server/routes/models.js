@@ -9,7 +9,8 @@ const { authenticate, requireUploader } = require('../middleware/auth');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement, safeUrl } = require('../middleware/security');
 const { getFileUrl, getThumbUrl, getZipEntryBuffer, zipEntriesForFiles, getSettingBool, canEditModel } = require('../utils/modelHelpers');
-const { sendZip } = require('../utils/zipStream');
+const { sendZip, entryName } = require('../utils/zipStream');
+const downloadSelections = require('../utils/downloadSelections');
 const adultLock = require('../utils/adult');
 const trashUtil = require('../utils/trash');
 const projectFiles = require('../utils/projectFiles');
@@ -260,31 +261,32 @@ router.get('/:id', (req, res) => {
 
 // ─── PUT /api/models/:id/preview-file ─────────────────────────────────────────
 // ??? GET /api/models/:id/download (Issue #75) ?????????????????????????????????
+// Who may download a model's files as a ZIP (the whole model or a selection): null when allowed,
+// else { status, error }. A share link opens its own model to anyone.
+function zipAccessError(req, model, shareSlug) {
+  if (!model) return { status: 404, error: 'Model not found' };
+  if (!shareSlug && !adultLock.canOpenModel(req, model)) return { status: 404, error: 'Model not found' };
+  if (shareSlug) {
+    const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
+    return !share || share.model_id !== model.id ? { status: 403, error: 'Invalid or expired share link' } : null;
+  }
+  if (!req.user) return { status: 401, error: 'Authentication required to download model archives' };
+  const privateProjects = all('SELECT p.id, p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [model.id]);
+  const publicProjects = all('SELECT p.id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="public"', [model.id]);
+  if (privateProjects.length > 0 && publicProjects.length === 0) {
+    if (req.user.role !== 'admin' && !privateProjects.some(p => p.user_id === req.user.id) && model.user_id !== req.user.id) {
+      return { status: 403, error: 'Access denied to private model' };
+    }
+  }
+  return null;
+}
+
 router.get('/:id/download', (req, res) => {
   try {
     const id = Number(req.params.id);
     const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [id]);
-    if (!model) return res.status(404).json({ error: 'Model not found' });
-
-    const shareSlug = req.query.share;
-    if (!shareSlug && !adultLock.canOpenModel(req, model)) return res.status(404).json({ error: 'Model not found' });
-    if (shareSlug) {
-      const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
-      if (!share || share.model_id !== id) {
-        return res.status(403).json({ error: 'Invalid or expired share link' });
-      }
-    } else {
-      if (!req.user) {
-        return res.status(401).json({ error: 'Authentication required to download model archives' });
-      }
-      const privateProjects = all('SELECT p.id, p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [id]);
-      const publicProjects = all('SELECT p.id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="public"', [id]);
-      if (privateProjects.length > 0 && publicProjects.length === 0) {
-        if (!req.user || (req.user.role !== 'admin' && !privateProjects.some(p => p.user_id === req.user.id) && model.user_id !== req.user.id)) {
-          return res.status(403).json({ error: 'Access denied to private model' });
-        }
-      }
-    }
+    const denied = zipAccessError(req, model, req.query.share);
+    if (denied) return res.status(denied.status).json({ error: denied.error });
 
     const files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at ASC', [id]);
     if (!files.length) return res.status(400).json({ error: 'No files in this model to download' });
@@ -296,6 +298,66 @@ router.get('/:id/download', (req, res) => {
   } catch (e) {
     console.error('Error creating model zip:', e);
     res.status(500).json({ error: 'Failed to create model zip' });
+  }
+});
+
+// ─── POST /api/models/:id/download-selection ──────────────────────────────────
+// A ZIP of some files of a model (the parts a kit configurator picked), with an optional text
+// file (the parts list). The POST checks access and keeps the selection under a short-lived
+// token; the browser then downloads GET .../download-selection/:token as a normal link.
+router.post('/:id/download-selection', authenticate, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [id]);
+    const denied = zipAccessError(req, model);
+    if (denied) return res.status(denied.status).json({ error: denied.error });
+
+    const ids = [...new Set((Array.isArray(req.body.file_ids) ? req.body.file_ids : []).map(Number).filter(Number.isInteger))];
+    if (!ids.length || ids.length > 5000) return res.status(400).json({ error: 'Choose between 1 and 5000 files' });
+    const found = all(`SELECT id FROM files WHERE model_id=? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})`, [id, ...ids]);
+    if (found.length !== ids.length) return res.status(400).json({ error: 'Some files are not part of this model' });
+
+    let text = null;
+    const t = req.body.text;
+    if (t && typeof t === 'object' && typeof t.content === 'string') {
+      if (Buffer.byteLength(t.content, 'utf8') > 64 * 1024) return res.status(400).json({ error: 'The text file is too large' });
+      text = { name: entryName(String(t.name || '')) || 'parts list.txt', content: t.content };
+    }
+    const name = String(req.body.name || model.name || 'selection').slice(0, 120);
+    const token = downloadSelections.create({ modelId: id, userId: req.user.id, fileIds: ids, text, name });
+    res.json({ token, url: `/api/models/${id}/download-selection/${token}`, expires_in: Math.round(downloadSelections.TTL_MS / 1000) });
+  } catch (e) {
+    console.error('Error preparing selection download:', e);
+    res.status(500).json({ error: 'Failed to prepare the download' });
+  }
+});
+
+// ─── GET /api/models/:id/download-selection/:token ────────────────────────────
+router.get('/:id/download-selection/:token', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const selection = downloadSelections.get(req.params.token);
+    if (!selection || selection.modelId !== id || !req.user || selection.userId !== req.user.id) {
+      return res.status(404).json({ error: 'This download link has expired: download again from the model page' });
+    }
+    // Access is checked again: the model may have been locked or trashed since
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [id]);
+    const denied = zipAccessError(req, model);
+    if (denied) return res.status(denied.status).json({ error: denied.error });
+
+    const ids = selection.fileIds;
+    const files = all(`SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')}) ORDER BY original_name COLLATE NOCASE`, [id, ...ids]);
+    const entries = zipEntriesForFiles(files);
+    if (selection.text) {
+      const buf = Buffer.from(selection.text.content, 'utf8');
+      entries.unshift({ name: selection.text.name, size: buf.length, read: () => buf });
+    }
+    if (!sendZip(res, selection.name, entries)) {
+      return res.status(404).json({ error: 'No physical files found on disk for this selection' });
+    }
+  } catch (e) {
+    console.error('Error creating selection zip:', e);
+    res.status(500).json({ error: 'Failed to create the zip' });
   }
 });
 

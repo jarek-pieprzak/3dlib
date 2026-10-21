@@ -149,6 +149,13 @@ const API = {
   restoreFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' }); },
   deleteFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}`, { method: 'DELETE' }); },
 
+  // Kit configurators (public/js/kits): a ZIP of the chosen files, saved configurations
+  prepareSelectionDownload(modelId, data) { return this.request(`/api/models/${modelId}/download-selection`, { method: 'POST', body: JSON.stringify(data) }); },
+  getKitConfigs(modelId, kit) { return this.request(`/api/models/${modelId}/kit-configs?kit=${encodeURIComponent(kit)}`); },
+  createKitConfig(modelId, data) { return this.request(`/api/models/${modelId}/kit-configs`, { method: 'POST', body: JSON.stringify(data) }); },
+  updateKitConfig(modelId, configId, data) { return this.request(`/api/models/${modelId}/kit-configs/${configId}`, { method: 'PUT', body: JSON.stringify(data) }); },
+  deleteKitConfig(modelId, configId) { return this.request(`/api/models/${modelId}/kit-configs/${configId}`, { method: 'DELETE' }); },
+
   // Projects saved by the slicer into .slicer-saves
   getSlicerSaves() { return this.request('/api/slicer-saves'); },
   checkSlicerSaves() { return this.request('/api/slicer-saves/scan', { method: 'POST' }); },

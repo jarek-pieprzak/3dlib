@@ -85,6 +85,7 @@ function deleteModelInternal(id, deleteDisk = false) {
   run('DELETE FROM project_models WHERE model_id=?', [id], true);
   run('DELETE FROM print_history WHERE model_id=?', [id], true);
   run('DELETE FROM shares WHERE model_id=?', [id], true);
+  run('DELETE FROM kit_configs WHERE model_id=?', [id], true);
   run('DELETE FROM models WHERE id=?', [id]);
   return true;
 }

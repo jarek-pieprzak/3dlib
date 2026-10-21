@@ -276,6 +276,23 @@ async function initDatabase() {
     )
   `);
 
+  // Saved configurations of a kit configurator (routes/kitConfigs.js): per user and model, the
+  // choices as JSON
+  db.run(`
+    CREATE TABLE IF NOT EXISTS kit_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      model_id INTEGER NOT NULL,
+      user_id INTEGER,
+      kit TEXT NOT NULL,
+      name TEXT NOT NULL,
+      config TEXT NOT NULL,
+      created_at DATETIME DEFAULT (datetime('now')),
+      updated_at DATETIME DEFAULT (datetime('now')),
+      FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_kit_configs_model ON kit_configs(model_id, user_id)');
+
   // Migration: Ensure user_id columns exist
   try {
     const mCols = all("PRAGMA table_info(models)");
@@ -377,6 +394,7 @@ async function initDatabase() {
     db.run('DELETE FROM project_models WHERE model_id NOT IN (SELECT id FROM models) OR project_id NOT IN (SELECT id FROM projects)');
     db.run('DELETE FROM print_history WHERE model_id NOT IN (SELECT id FROM models)');
     db.run('DELETE FROM shares WHERE model_id NOT IN (SELECT id FROM models)');
+    db.run('DELETE FROM kit_configs WHERE model_id NOT IN (SELECT id FROM models)');
   } catch (e) { console.error('Migration failed:', e); }
 
   // ─── Seed Data (One-time only on initial setup) ───────────────────────

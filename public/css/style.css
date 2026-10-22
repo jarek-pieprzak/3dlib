@@ -1832,3 +1832,10 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .badge-fit.is-ok{color:var(--success);border-color:color-mix(in srgb, var(--success) 40%, transparent);background:color-mix(in srgb, var(--success) 10%, transparent)}
 .badge-fit.is-bad{color:var(--error);border-color:color-mix(in srgb, var(--error) 40%, transparent);background:color-mix(in srgb, var(--error) 10%, transparent)}
 @media(max-width:768px){.topbar-fit svg{display:none}.topbar-fit .fit-select{max-width:130px}.fit-hint{display:none}}
+/* Files to print: every file downloads on its own; the instruction PDFs open in the preview */
+.kit-download{color:var(--text-muted)}
+.kit-download:hover{color:var(--accent-cyan)}
+.kit-doc{display:flex;align-items:center;gap:10px;padding:3px 16px}
+.kit-doc-name{flex:1 1 auto;min-width:0;padding:0;overflow:hidden;font-size:.8rem;text-align:left;text-overflow:ellipsis;white-space:nowrap;color:var(--accent-cyan);background:none;border:none;cursor:pointer}
+.kit-doc-name:hover{text-decoration:underline}
+.kit-parts-body>.kit-check-wrap{padding:6px 16px 0}

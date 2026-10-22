@@ -257,6 +257,9 @@ async function runStaticAndUiChecks() {
     assert(latch.qty === 9 && latch.auto === 5, `Latches: 9 by hand, 5 computed, got ${latch.qty} / ${latch.auto}`);
     assert(parts.includes('Hardware to buy') && parts.includes('↺ 5') && parts.includes('estimate'), 'The list must show hardware, hand-changed counts and estimates');
     assert(!parts.includes('<img src=x') && !page.includes('<img src=x'), 'File names from the library must be escaped');
+    const downloads = parts.match(/href="\/api\/files\/\d+\/download"/g) || [];
+    assert(downloads.length === bom.parts.length + cat.docs.length && parts.includes('href="/api/files/999/download"'), `Every listed file and instruction PDF downloads on its own, got ${downloads.length} links for ${bom.parts.length} files and ${cat.docs.length} PDFs`);
+    assert(parts.includes('App.kitShowManual(\'01_Instructions Manual.pdf\', 1)'), 'Instruction PDFs open in the preview');
     assert(page.includes('id="kit-builder"') && page.includes('id="stl-viewer-1"') && !page.includes('tab-content-files'), 'The configurator replaces the file list');
     assert(filesView.includes('tab-content-files') && filesView.includes('?view=files') && !filesView.includes('id="kit-builder"'), 'The Files view keeps the file list and the view switch');
     assert(!UI.modelDetail(mockModel, false).includes('detail-views'), 'Other models have no view switch');

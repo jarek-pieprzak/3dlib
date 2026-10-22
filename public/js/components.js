@@ -1734,6 +1734,8 @@ const UI = {
     const { bom } = kit;
     const esc = (s) => this.escapeHtml(s);
     const t = bom.totals;
+    // One file on its own, like the download button of the model's file list
+    const download = (f) => `<a href="/api/files/${Number(f.id)}/download" class="kit-icon-btn kit-download" title="Download ${esc(String(f.original_name || '').split('/').pop())}" aria-label="Download" download onclick="event.stopPropagation()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>`;
     const rows = [];
     let group = null;
     for (const p of bom.parts) {
@@ -1753,7 +1755,8 @@ const UI = {
           ${p.auto !== undefined ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
           ${this.MEASURABLE.includes(p.file.file_type) ? `<span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}
           <span class="kit-part-size">${this.formatSize(p.file.file_size)}</span>
-          ${extra ? `<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
+          ${download(p.file)}
+          ${extra ?`<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
         </div>`);
     }
     const notes = [
@@ -1782,6 +1785,12 @@ const UI = {
         </div>
         ${hardware ? `<div class="kit-group-title">Hardware to buy</div>${hardware}` : ''}
         ${kit.cat.docs.length ? `<div class="kit-group-title">Instructions</div>
+        ${kit.cat.docs.map(f => `
+        <div class="kit-doc">
+          <button type="button" class="kit-doc-name" onclick="App.kitShowManual('${esc(f.original_name)}', 1)" title="Open in the preview">${esc(f.original_name)}</button>
+          <span class="kit-part-size">${this.formatSize(f.file_size)}</span>
+          ${download(f)}
+        </div>`).join('')}
         <span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>${this.kitTip('docs')}</span>` : ''}
       </div>`;
   },

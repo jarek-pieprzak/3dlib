@@ -9,10 +9,9 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
-const { DB_FILE, resolveDbPath } = require('../server/utils/dbFile');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = resolveDbPath(DATA_DIR);
+const DB_PATH = path.join(DATA_DIR, '3dlib.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const WEBSITE_MODELS_DIR = path.join(__dirname, '..', '..', 'GyroidVault-Website', 'models');
 
@@ -26,7 +25,7 @@ async function main() {
   // ── Restore Mode ──
   if (args.includes('--restore')) {
     const backups = fs.readdirSync(DATA_DIR)
-      .filter(f => f.startsWith(`${DB_FILE}.bak_`))
+      .filter(f => f.startsWith('3dlib.db.bak_'))
       .sort()
       .reverse();
 
@@ -45,7 +44,7 @@ async function main() {
   // ── Safety Backup ──
   if (fs.existsSync(DB_PATH)) {
     const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-    const backupName = `${DB_FILE}.bak_${timestamp}`;
+    const backupName = `3dlib.db.bak_${timestamp}`;
     const backupPath = path.join(DATA_DIR, backupName);
     fs.copyFileSync(DB_PATH, backupPath);
     console.log(`✓ Safety backup created: data/${backupName}`);

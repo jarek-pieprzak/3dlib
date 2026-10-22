@@ -9,9 +9,8 @@ import uuid
 # Configuration
 # Replace these with your actual server URL and API Key
 # Alternatively, set them in your environment variables: LIB3D_API_URL and LIB3D_API_KEY
-# (PV_API_URL and PV_API_KEY, their names before the rename to 3DLib, still work)
-API_URL = os.environ.get('LIB3D_API_URL') or os.environ.get('PV_API_URL', 'http://127.0.0.1:3000/api/upload-slicer')
-API_KEY = os.environ.get('LIB3D_API_KEY') or os.environ.get('PV_API_KEY', 'YOUR_API_KEY_HERE')
+API_URL = os.environ.get('LIB3D_API_URL', 'http://127.0.0.1:3000/api/upload-slicer')
+API_KEY = os.environ.get('LIB3D_API_KEY', 'YOUR_API_KEY_HERE')
 
 def upload_file(file_path):
     if not os.path.exists(file_path):

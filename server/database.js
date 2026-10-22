@@ -343,6 +343,12 @@ async function initDatabase() {
     for (const col of ['dim_x REAL', 'dim_y REAL', 'dim_z REAL', 'dim_bytes INTEGER', 'dim_error TEXT']) {
       if (!all("PRAGMA table_info(files)").some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE files ADD COLUMN ${col}`);
     }
+    // 3MF sizes measured from the corners of each object's box were too big for parts turned on
+    // the plate: measure every 3MF again once
+    if (!get("SELECT value FROM system_settings WHERE key = 'dim_3mf_vertices'")) {
+      db.run("UPDATE files SET dim_bytes = NULL WHERE file_type = '3mf'");
+      db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('dim_3mf_vertices', 'true')");
+    }
   } catch (e) { console.error('User migration failed:', e); }
 
   // Ensure metadata and library_path columns exist for existing databases

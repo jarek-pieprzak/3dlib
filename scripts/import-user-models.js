@@ -13,11 +13,10 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
-const { DB_FILE, resolveDbPath } = require('../server/utils/dbFile');
 
 const IMPORT_DIR = path.join(__dirname, '..', '..', 'import_models');
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = resolveDbPath(DATA_DIR);
+const DB_PATH = path.join(DATA_DIR, '3dlib.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 if (!fs.existsSync(IMPORT_DIR)) fs.mkdirSync(IMPORT_DIR, { recursive: true });
@@ -179,7 +178,7 @@ async function main() {
   db.run('PRAGMA foreign_keys = ON');
 
   // Backup existing DB before modifying
-  const backupPath = path.join(DATA_DIR, `${DB_FILE}.bak_userimport_${Date.now()}`);
+  const backupPath = path.join(DATA_DIR, `3dlib.db.bak_userimport_${Date.now()}`);
   fs.copyFileSync(DB_PATH, backupPath);
   console.log(`🛡️  Database safety backup saved: ${path.basename(backupPath)}`);
 

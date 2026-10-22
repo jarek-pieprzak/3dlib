@@ -34,10 +34,8 @@ function getJwtSecret() {
   }
 }
 
-// The login cookie. Before the rename to 3DLib it was called pv_token; a browser that still
-// sends only that one gets the same token under the new name, so nobody is logged out.
+// The login cookie
 const TOKEN_COOKIE = '3dl_token';
-const LEGACY_TOKEN_COOKIE = 'pv_token';
 
 function tokenCookieOptions(req) {
   return {
@@ -48,19 +46,8 @@ function tokenCookieOptions(req) {
   };
 }
 
-function readTokenCookie(req, res) {
-  const cookies = req.cookies || {};
-  if (cookies[TOKEN_COOKIE]) return cookies[TOKEN_COOKIE];
-  const legacy = cookies[LEGACY_TOKEN_COOKIE];
-  if (legacy && res && !res.headersSent) {
-    res.cookie(TOKEN_COOKIE, legacy, tokenCookieOptions(req));
-    res.clearCookie(LEGACY_TOKEN_COOKIE);
-  }
-  return legacy;
-}
-
 function authenticate(req, res, next) {
-  let token = readTokenCookie(req, res);
+  let token = req.cookies[TOKEN_COOKIE];
   let isApiToken = false;
   
   if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -113,7 +100,5 @@ module.exports = {
   requireUploader,
   getJwtSecret,
   TOKEN_COOKIE,
-  LEGACY_TOKEN_COOKIE,
-  tokenCookieOptions,
-  readTokenCookie
+  tokenCookieOptions
 };

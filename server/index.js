@@ -22,7 +22,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Database & Middleware
 const { initDatabase, get, saveDb } = require('./database');
 const { setUploadsDir } = require('./middleware/upload');
-const { getJwtSecret, readTokenCookie } = require('./middleware/auth');
+const { getJwtSecret, TOKEN_COOKIE } = require('./middleware/auth');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { getSettingBool } = require('./utils/modelHelpers');
 
@@ -100,7 +100,7 @@ app.use((req, res, next) => {
   }
 
   // Populate req.user whenever a valid token is present; enforce if private instance is enabled
-  let token = readTokenCookie(req, res);
+  let token = req.cookies[TOKEN_COOKIE];
   if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     token = req.headers.authorization.split(' ')[1];
   }

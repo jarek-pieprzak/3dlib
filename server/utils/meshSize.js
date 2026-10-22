@@ -1,8 +1,9 @@
 // The size of a 3D file: the bounding box of its geometry in millimetres, as placed in the file
 // (the orientation it is printed in). Files are streamed, so a 350 MB STL needs little memory.
 //   STL (binary and text), OBJ: every vertex.
-//   3MF: every build item with its transform and components (Bambu / Orca projects keep objects
-//        in 3D/Objects/*.model); the largest size per axis over the items.
+//   3MF: every vertex of each build item under its transform and components (Bambu / Orca
+//        projects keep objects in 3D/Objects/*.model). With several items (plates): the largest
+//        size per axis over the items, each one's footprint long side first.
 //   STEP / STP: tessellated by OpenCascade (occt-import-js), in memory: STEP files are small.
 // measure(path, type) resolves to [x, y, z] or throws.
 const fs = require('fs');
@@ -92,11 +93,13 @@ const attr = (attrs, name) => {
 };
 const normPath = (p) => '/' + String(p || '').replace(/^\/+/, '');
 
-// Reads one .model part: the box of every mesh object, components, build items
-function readModel(stream, part, objects, items) {
+// Reads one .model part. First pass (no `uses`): the objects with their components, and the
+// build items. Second pass: every vertex of an object goes, under each transform that places it,
+// into the box of its item (`uses`: object key -> [{ box, matrix }]).
+function readModel(stream, part, objects, items, uses) {
   return new Promise((resolve, reject) => {
     let buf = '';
-    let current = null;
+    let current = null; // the object being read; in the second pass, its uses
     const tag = /<(\/?)(?:\w+:)?(object|vertex|component|item)\b([^>]*)>/g;
     const take = (text) => {
       tag.lastIndex = 0;
@@ -107,11 +110,16 @@ function readModel(stream, part, objects, items) {
         const [, close, name, attrs] = m;
         if (name === 'object') {
           if (close) { current = null; continue; }
-          current = { key: `${part}#${attr(attrs, 'id')}`, box: new Box(), components: [] };
-          objects.set(current.key, current);
+          const key = `${part}#${attr(attrs, 'id')}`;
+          if (uses) current = uses.get(key) || null;
+          else objects.set(key, current = { components: [] });
           if (/\/\s*$/.test(attrs)) current = null;
-        } else if (name === 'vertex' && current) {
-          current.box.add(Number(attr(attrs, 'x')), Number(attr(attrs, 'y')), Number(attr(attrs, 'z')));
+        } else if (uses) {
+          if (name !== 'vertex' || !current) continue;
+          const x = Number(attr(attrs, 'x'));
+          const y = Number(attr(attrs, 'y'));
+          const z = Number(attr(attrs, 'z'));
+          for (const u of current) u.box.add(...apply(u.matrix, x, y, z));
         } else if (name === 'component' && current) {
           const path = attr(attrs, 'path');
           current.components.push({ key: `${path ? normPath(path) : part}#${attr(attrs, 'objectid')}`, matrix: parseMatrix(attr(attrs, 'transform')) });
@@ -136,13 +144,12 @@ function readModel(stream, part, objects, items) {
   });
 }
 
-function measure3mf(path) {
+// Reads the .model parts of a 3MF one after the other: onPart(stream, part) resolves when done
+function eachModelPart(path, onPart) {
   const yauzl = require('yauzl');
   return new Promise((resolve, reject) => {
     yauzl.open(path, { lazyEntries: true, autoClose: true }, (err, zip) => {
       if (err) return reject(err);
-      const objects = new Map();
-      const items = [];
       let failed = false;
       const fail = (e) => { if (!failed) { failed = true; zip.close(); reject(e); } };
       zip.on('error', fail);
@@ -150,38 +157,41 @@ function measure3mf(path) {
         if (!/\.model$/i.test(entry.fileName)) return zip.readEntry();
         zip.openReadStream(entry, (e, stream) => {
           if (e) return fail(e);
-          readModel(stream, normPath(entry.fileName), objects, items).then(() => zip.readEntry(), fail);
+          onPart(stream, normPath(entry.fileName)).then(() => zip.readEntry(), fail);
         });
       });
-      zip.on('end', () => {
-        if (failed) return;
-        try {
-          // The box of an object under a transform: its own mesh and its components
-          const boxOf = (key, matrix, out, depth = 0) => {
-            const o = objects.get(key);
-            if (!o || depth > 20) return;
-            if (!o.box.empty) {
-              for (const x of [o.box.min[0], o.box.max[0]]) for (const y of [o.box.min[1], o.box.max[1]]) for (const z of [o.box.min[2], o.box.max[2]]) out.add(...apply(matrix, x, y, z));
-            }
-            for (const c of o.components) boxOf(c.key, multiply(c.matrix, matrix), out, depth + 1);
-          };
-          const list = items.length ? items : [...objects.keys()].map(key => ({ key, matrix: IDENTITY }));
-          const size = [0, 0, 0];
-          let any = false;
-          for (const item of list) {
-            const b = new Box();
-            boxOf(item.key, item.matrix, b);
-            if (b.empty) continue;
-            any = true;
-            b.size().forEach((v, i) => { if (v > size[i]) size[i] = v; });
-          }
-          if (!any) throw new Error('No geometry in the file');
-          resolve(size);
-        } catch (e) { reject(e); }
-      });
+      zip.on('end', () => { if (!failed) resolve(); });
       zip.readEntry();
     });
   });
+}
+
+// Two passes: first how the items are put together, then their vertices under the transforms.
+// Turning only the corners of an object's box would make a part turned on the plate too big
+// (a 252 × 172 mm part turned 45° measured 300 × 300 mm).
+async function measure3mf(path) {
+  const objects = new Map();
+  const items = [];
+  await eachModelPart(path, (stream, part) => readModel(stream, part, objects, items));
+  const list = items.length ? items : [...objects.keys()].map(key => ({ key, matrix: IDENTITY }));
+  const uses = new Map();
+  // An object and its components under a transform, all into the box of one item
+  const place = (key, matrix, box, depth = 0) => {
+    const o = objects.get(key);
+    if (!o || depth > 20) return;
+    if (!uses.has(key)) uses.set(key, []);
+    uses.get(key).push({ box, matrix });
+    for (const c of o.components) place(c.key, multiply(c.matrix, matrix), box, depth + 1);
+  };
+  const boxes = list.map((item) => { const box = new Box(); place(item.key, item.matrix, box); return box; });
+  await eachModelPart(path, (stream, part) => readModel(stream, part, null, null, uses));
+  const sizes = boxes.filter(b => !b.empty).map(b => b.size());
+  if (!sizes.length) throw new Error('No geometry in the file');
+  if (sizes.length === 1) return sizes[0];
+  // The fit check turns parts on the bed anyway, so a part placed along Y counts as one along X
+  const size = [0, 0, 0];
+  for (const [x, y, z] of sizes) [Math.max(x, y), Math.min(x, y), z].forEach((v, i) => { if (v > size[i]) size[i] = v; });
+  return size;
 }
 
 let occt = null;

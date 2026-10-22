@@ -69,8 +69,7 @@ Environment variables: `PORT` (default 3000), `DATA_DIR` (database, uploads and 
 `./data`), `LIBRARY_PATH` (default `<DATA_DIR>/library`), `NODE_ENV`, `JWT_SECRET` (optional; a
 secret is generated and stored in the database otherwise).
 
-The database is `<DATA_DIR>/3dlib.db`. A database from GyroidVault (`gyroidvault.db`) is copied to
-it on the first start; the old file is left unchanged.
+The database is `<DATA_DIR>/3dlib.db`.
 
 ## Development
 

@@ -527,11 +527,20 @@ async function runStaticAndUiChecks() {
       const chunks = [];
       for await (const c of zip.outputStream) chunks.push(c);
       fs.writeFileSync(path.join(dir, 'd.3mf'), Buffer.concat(chunks));
+      // Two plates: the same part turned 90° and a 20 × 20 mm diamond turned 45° on the plate (a
+      // 14.14 mm square; turning the corners of its box would give 28.28 mm)
+      const zip2 = new yazl.ZipFile();
+      zip2.addBuffer(Buffer.from('<?xml version="1.0"?><model><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="40" y="10" z="0"/><vertex x="0" y="10" z="5"/></vertices></mesh></object><object id="2" type="model"><mesh><vertices><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="-10" y="0" z="2"/><vertex x="0" y="-10" z="2"/></vertices></mesh></object></resources><build><item objectid="1" transform="0 1 0 -1 0 0 0 0 1 100 100 0"/><item objectid="2" transform="0.707106781 -0.707106781 0 0.707106781 0.707106781 0 0 0 1 300 100 0"/></build></model>'), '3D/3dmodel.model');
+      zip2.end();
+      const chunks2 = [];
+      for await (const c of zip2.outputStream) chunks2.push(c);
+      fs.writeFileSync(path.join(dir, 'e.3mf'), Buffer.concat(chunks2));
       const sizes = {
         stl: await measure(path.join(dir, 'a.stl'), 'stl'), ascii: await measure(path.join(dir, 'b.stl'), 'stl'),
-        obj: await measure(path.join(dir, 'c.obj'), 'obj'), threemf: await measure(path.join(dir, 'd.3mf'), '3mf')
+        obj: await measure(path.join(dir, 'c.obj'), 'obj'), threemf: await measure(path.join(dir, 'd.3mf'), '3mf'),
+        plates: await measure(path.join(dir, 'e.3mf'), '3mf')
       };
-      assert(JSON.stringify(sizes) === JSON.stringify({ stl: [30, 20, 10], ascii: [10, 2, 7.5], obj: [12, 4, 3], threemf: [10, 40, 5] }), `Unexpected sizes: ${JSON.stringify(sizes)}`);
+      assert(JSON.stringify(sizes) === JSON.stringify({ stl: [30, 20, 10], ascii: [10, 2, 7.5], obj: [12, 4, 3], threemf: [10, 40, 5], plates: [40, 14.14, 5] }), `Unexpected sizes: ${JSON.stringify(sizes)}`);
       let failed = false;
       try { await measure(path.join(dir, 'c.obj'), 'gcode'); } catch (e) { failed = true; }
       assert(failed, 'Other file types are not measured');
@@ -569,58 +578,6 @@ async function runStaticAndUiChecks() {
       }
     }
     assert(missingApi.size === 0, `Missing API methods: ${[...missingApi].join(', ')}`);
-  });
-
-  await check('Browser settings saved under gv_ / pv_ keys move to 3dl_ once (index.html)', () => {
-    const html = fs.readFileSync(path.join(ROOT_DIR, 'public/index.html'), 'utf8');
-    const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
-    // Stored keys are own enumerable properties, as Object.keys(localStorage) lists them in a browser
-    class FakeStorage {
-      getItem(k) { return Object.prototype.hasOwnProperty.call(this, k) ? this[k] : null; }
-      setItem(k, v) { this[k] = String(v); }
-      removeItem(k) { delete this[k]; }
-    }
-    const ls = Object.assign(new FakeStorage(), {
-      gv_theme: 'light', gv_accent: 'green', '3dl_accent': 'rose', gv_kit_7: '{"a":1}',
-      pv_user: '{"id":1}', pv_csrf_token: 'abc', gv_last_seen_version: '2.0.2', other: 'x'
-    });
-    const attrs = {};
-    vm.runInNewContext(script, { localStorage: ls, document: { documentElement: { setAttribute(n, v) { attrs[n] = v; } } } });
-    assert(ls['3dl_theme'] === 'light' && ls['3dl_kit_7'] === '{"a":1}' && ls['3dl_user'] === '{"id":1}' && ls['3dl_csrf_token'] === 'abc', `Keys must move: ${JSON.stringify(ls)}`);
-    assert(ls['3dl_accent'] === 'rose', 'A 3dl_ key that already exists must win');
-    assert(!Object.keys(ls).some(k => /^(gv|pv)_/.test(k)) && !('3dl_last_seen_version' in ls), `Old keys must go: ${Object.keys(ls)}`);
-    assert(ls.other === 'x', 'Other keys stay');
-    assert(attrs['data-theme'] === 'light' && attrs['data-accent'] === 'rose', `The moved theme must apply at once: ${JSON.stringify(attrs)}`);
-  });
-
-  await check('Database file: gyroidvault.db is copied to 3dlib.db once, the old file stays unchanged', () => {
-    const { resolveDbPath } = require(path.join(ROOT_DIR, 'server/utils/dbFile.js'));
-    const quiet = { log() {}, error() {} };
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-dbfile-'));
-    try {
-      const legacy = path.join(dir, 'gyroidvault.db');
-      const current = path.join(dir, '3dlib.db');
-      assert(resolveDbPath(dir, quiet) === current && !fs.existsSync(current), 'A fresh data dir uses 3dlib.db and creates nothing');
-
-      const content = Buffer.from(Array.from({ length: 70000 }, (_, i) => i % 251));
-      fs.writeFileSync(legacy, content);
-      const legacyMtime = fs.statSync(legacy).mtimeMs;
-      assert(resolveDbPath(dir, quiet) === current, 'An old database is opened under the new name');
-      assert(fs.readFileSync(current).equals(content), 'The copy is byte for byte the old database');
-      assert(fs.readFileSync(legacy).equals(content) && fs.statSync(legacy).mtimeMs === legacyMtime, 'The old file is not changed');
-      assert(!fs.readdirSync(dir).some(n => n.endsWith('.migrating')), 'No temporary file is left behind');
-
-      fs.writeFileSync(current, 'newer');
-      assert(resolveDbPath(dir, quiet) === current && fs.readFileSync(current, 'utf8') === 'newer', 'An existing 3dlib.db is never overwritten');
-
-      // A copy that fails keeps the server on the old file instead of an empty database
-      fs.unlinkSync(current);
-      fs.mkdirSync(current + '.migrating');
-      assert(resolveDbPath(dir, quiet) === legacy, 'A failed copy falls back to gyroidvault.db');
-      assert(!fs.existsSync(current) && fs.readFileSync(legacy).equals(content), 'A failed copy changes nothing');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
   });
 }
 
@@ -747,21 +704,6 @@ async function runE2ETests() {
       assert(login2.data.user?.role === 'viewer', `Expected role="viewer", got "${login2.data.user?.role}"`);
       viewerSession.cookie = (login2.setCookie || '').split(';')[0];
       viewerSession.csrfToken = login2.data.csrfToken;
-    });
-
-    await check('A login cookie from before the rename (pv_token) still works and moves to 3dl_token', async () => {
-      const legacy = { cookie: adminSession.cookie.replace(/^3dl_token=/, 'pv_token='), csrfToken: adminSession.csrfToken };
-      // /api/auth/* is checked by authenticate(), everything else by the gatekeeper in index.js
-      for (const endpoint of ['/api/auth/me', '/api/categories']) {
-        const r = await apiReq(endpoint, { session: legacy });
-        assert(r.status === 200, `${endpoint} with pv_token: ${r.status}`);
-        assert(/(^|,\s*)3dl_token=[^;]/.test(r.setCookie || ''), `${endpoint} must set 3dl_token: ${r.setCookie}`);
-        assert(/(^|,\s*)pv_token=;/.test(r.setCookie || ''), `${endpoint} must clear pv_token: ${r.setCookie}`);
-      }
-      const me = await apiReq('/api/auth/me', { session: legacy });
-      assert(me.data.username === 'admin_test', `pv_token must log in as its user: ${JSON.stringify(me.data)}`);
-      const current = await apiReq('/api/auth/me', { session: adminSession });
-      assert(current.status === 200 && !current.setCookie, `3dl_token alone needs no new cookie: ${current.setCookie}`);
     });
 
     await check('Security: /uploads and /library-files never serve files outside their folder (database, other files)', async () => {
@@ -1578,7 +1520,6 @@ async function runE2ETests() {
       assert(tokenFromName(`Xmas_tree_210_3dl-${t}(2).3mf`) === t, 'A "(2)" suffix added by the slicer must not hide the token');
       assert(tokenFromName(`Xmas tree 210 3dl-${t.toUpperCase()}.3mf`) === t, 'Spaces and letter case must not hide the token');
       assert(tokenFromName('model(2).3mf') === null && tokenFromName(`x3dl-${t}.3mf`) === null, 'A name without a token has none');
-      assert(tokenFromName(`Xmas_tree_210_gv-${t}.3mf`) === null, 'Links from before the rename to 3DLib (_gv-) are not read');
       const dl = await fetch(`${baseUrl}/api/files/${sample.id}/3mf/Xmas_tree_210_3dl-${t}.3mf`, { headers: { Cookie: adminSession.cookie } });
       assert(dl.status === 200, `A slicer link with the file name and token must download, got ${dl.status}`);
     });

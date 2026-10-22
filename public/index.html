@@ -3,18 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <script>
-    // Settings saved before the rename to 3DLib (gv_* and pv_* keys) move to 3dl_* once
-    try {
-      for (const key of Object.keys(localStorage)) {
-        const m = /^(?:gv|pv)_(.+)$/.exec(key);
-        if (!m) continue;
-        if (m[1] !== 'last_seen_version' && localStorage.getItem('3dl_' + m[1]) === null) {
-          localStorage.setItem('3dl_' + m[1], localStorage.getItem(key));
-        }
-        localStorage.removeItem(key);
-      }
-    } catch (e) {}
-
     // Load theme immediately to prevent flash
     const t = localStorage.getItem('3dl_theme') || 'glass';
     const a = localStorage.getItem('3dl_accent') || 'blue';

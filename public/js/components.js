@@ -2321,10 +2321,11 @@ const UI = {
     const list = chosen && chosen !== 'any' ? (beds || []).filter(b => b.id === chosen) : (beds || []);
     const ok = PrintFit.fitting(size, list);
     const all = PrintFit.fitting(size, beds || []);
-    const turn = (f) => (f.fit.angle ? ` turned ${f.fit.angle}°` : '');
-    const title = all.length ? `Fits: ${all.map(f => `${f.bed.name}${turn(f)}`).join(', ')}` : 'Too big for all of your printers';
-    const flag = !(beds || []).length ? '' : ok.length
-      ? `<span class="fit-flag is-ok" title="${this.escapeHtml(title)}">✓${ok[0].fit.angle ? ` ${ok[0].fit.angle}°` : ''}</span>`
+    const how = (f) => (PrintFit.howText(f.fit) ? ` ${PrintFit.howText(f.fit)}` : '');
+    const title = all.length ? `Fits: ${all.map(f => `${f.bed.name}${how(f)}`).join('; ')}` : 'Too big for all of your printers';
+    const first = ok.length ? ok[0].fit : null;
+    const flag = !(beds || []).length ? '' : first
+      ? `<span class="fit-flag is-ok" title="${this.escapeHtml(title)}">✓${first.up !== 'z' ? ' on side' : ''}${first.angle ? ` ${first.angle}°` : ''}</span>`
       : `<span class="fit-flag is-bad" title="${this.escapeHtml(title)}">✗ too big</span>`;
     return `<span class="fit-dim-text">${PrintFit.sizeText(size)}</span>${flag}`;
   },
@@ -2341,7 +2342,7 @@ const UI = {
         <button type="button" class="btn btn-ghost btn-xs" onclick="this.closest('.bed-row').remove()" title="Remove">Remove</button>
       </div>`;
     return `
-      <p class="form-hint" style="margin:0 0 12px;font-size:.8rem;color:var(--text-muted)">The model page and the configurator check every 3D file against these build volumes: the height must fit, the footprint straight, turned 90° or on the diagonal. Margin: space kept free at the edges of the bed.</p>
+      <p class="form-hint" style="margin:0 0 12px;font-size:.8rem;color:var(--text-muted)">The model page and the configurator check every 3D file against these build volumes: the height must fit, the footprint straight, turned 90° or on the diagonal; a part too big as placed is also tried laid on its side. Margin: space kept free at the edges of the bed.</p>
       <div class="bed-head"><span>Printer</span><span>X mm</span><span>Y mm</span><span>Z mm</span><span>Margin</span><span></span></div>
       <div id="bed-rows">${beds.map(row).join('')}</div>
       <template id="bed-row-template">${row({ margin: 0 })}</template>

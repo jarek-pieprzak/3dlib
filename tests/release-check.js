@@ -560,7 +560,12 @@ async function runStaticAndUiChecks() {
     const diag = PF.fits([300, 30, 20], p1s);
     assert(diag.ok && diag.angle > 30 && diag.angle < 60, `A long thin part fits the diagonal: ${JSON.stringify(diag)}`);
     assert(PF.fits([100, 100, 300], u1).reason === 'height', 'Too tall is too tall');
-    assert(PF.fits([250, 250, 10], p1s).ok && !PF.fits([250, 250, 10], { ...p1s, margin: 5 }).ok, 'The margin keeps the edges free');
+    assert(PF.fits([250, 250, 250], p1s).ok && !PF.fits([250, 250, 250], { ...p1s, margin: 5 }).ok, 'The margin keeps the edges free');
+    // The L2F drawer facade lies flat in its file: too big that way, it fits stood on its edge
+    // across the diagonal
+    const facade = PF.fits([329.6, 95, 10.26], p1s);
+    assert(facade.ok && facade.up === 'y' && facade.angle >= 40 && facade.angle <= 50, `The L2F facade fits on its side: ${JSON.stringify(facade)}`);
+    assert(PF.howText(facade) === `on its side (Y up), turned ${facade.angle}°` && PF.fits([200, 100, 50], p1s).up === 'z' && PF.howText(PF.fits([200, 100, 50], p1s)) === '', 'A part that fits as placed stays as placed');
     const s = PF.summarize([{ id: 1, size: l3 }, { id: 2, size: [50, 50, 50] }, { id: 3 }, { id: 4, error: 'x' }], [p1s, u1], 'p1s');
     assert(s.total === 4 && s.fit === 1 && s.misfit.join() === '1' && s.pending === 1 && s.failed === 1, `Summary for one printer: ${JSON.stringify(s)}`);
     assert(PF.summarize([{ id: 1, size: l3 }], [p1s, u1], 'any').misfit.length === 0, 'Any printer: the U1 takes it');

@@ -475,11 +475,12 @@ router.post('/', authenticate, requireUploader, (req, res) => {
       const suggestions = [];
       const currentYear = new Date().getFullYear();
 
-      // 1. Versioning: detect if name ends with v1, v2, etc.
-      const versionMatch = trimmedName.match(/^(.*?)\s*\(?v(\d+)\)?$/i);
+      // 1. Versioning: detect if name ends with v1, v2, etc. Only the end is matched: a lazy
+      // "^(.*?)\s*" in front took seconds on a long name full of spaces.
+      const versionMatch = /\(?v(\d+)\)?$/i.exec(trimmedName);
       if (versionMatch) {
-        const base = versionMatch[1].trim();
-        const nextVer = parseInt(versionMatch[2], 10) + 1;
+        const base = trimmedName.slice(0, versionMatch.index).trim();
+        const nextVer = parseInt(versionMatch[1], 10) + 1;
         const vCandidate = `${base} v${nextVer}`;
         if (isAvailable(vCandidate)) suggestions.push(vCandidate);
       } else {

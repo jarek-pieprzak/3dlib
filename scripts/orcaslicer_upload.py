@@ -8,16 +8,17 @@ import uuid
 
 # Configuration
 # Replace these with your actual server URL and API Key
-# Alternatively, set them in your environment variables: PV_API_URL and PV_API_KEY
-API_URL = os.environ.get('PV_API_URL', 'http://127.0.0.1:3000/api/upload-slicer')
-API_KEY = os.environ.get('PV_API_KEY', 'YOUR_API_KEY_HERE')
+# Alternatively, set them in your environment variables: LIB3D_API_URL and LIB3D_API_KEY
+# (PV_API_URL and PV_API_KEY, their names before the rename to 3DLib, still work)
+API_URL = os.environ.get('LIB3D_API_URL') or os.environ.get('PV_API_URL', 'http://127.0.0.1:3000/api/upload-slicer')
+API_KEY = os.environ.get('LIB3D_API_KEY') or os.environ.get('PV_API_KEY', 'YOUR_API_KEY_HERE')
 
 def upload_file(file_path):
     if not os.path.exists(file_path):
         print(f"Error: File not found - {file_path}")
         sys.exit(1)
 
-    print(f"Uploading {file_path} to PrintVault...")
+    print(f"Uploading {file_path} to 3DLib...")
 
     # Build multipart/form-data payload
     boundary = uuid.uuid4().hex
@@ -46,7 +47,7 @@ def upload_file(file_path):
         response = urllib.request.urlopen(req)
         response_body = response.read().decode('utf-8')
         if response.status == 201 or response.status == 200:
-            print("Successfully uploaded to PrintVault!")
+            print("Successfully uploaded to 3DLib!")
             try:
                 res_json = json.loads(response_body)
                 print(f"Model ID: {res_json.get('model_id')}")
@@ -70,8 +71,8 @@ if __name__ == "__main__":
     gcode_path = sys.argv[1]
     
     if API_KEY == 'YOUR_API_KEY_HERE':
-        print("WARNING: API Key not set. Please set the PV_API_KEY environment variable or edit this script.")
+        print("WARNING: API Key not set. Please set the LIB3D_API_KEY environment variable or edit this script.")
         # We don't exit immediately, let it try if the server has auth disabled for local network, 
-        # but PrintVault requires auth.
+        # but 3DLib requires auth.
 
     upload_file(gcode_path)

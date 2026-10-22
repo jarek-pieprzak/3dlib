@@ -35,7 +35,7 @@ const BROWSER_GLOBALS = new Set([
   'Uint8Array', 'Uint16Array', 'Uint32Array', 'Int8Array', 'Int16Array', 'Int32Array',
   'Float32Array', 'Float64Array', 'ArrayBuffer', 'DataView', 'TextEncoder', 'TextDecoder',
   'XMLHttpRequest', 'WebSocket', 'Worker', 'atob', 'btoa',
-  // GyroidVault frontend globals
+  // 3DLib frontend globals
   'API', 'UI', 'App', 'Viewer', 'VaultKit', 'VaultKit3D', 'PrintFit', 'lucide', 'THREE', 'OcctImportJs', 'bootstrap', 'GCodePreview', 'fflate'
 ]);
 

@@ -1,7 +1,7 @@
 /* ─── API Client ──────────────────────────────────────────────────────── */
 const API = {
   async request(url, options = {}) {
-    const csrfToken = localStorage.getItem('pv_csrf_token');
+    const csrfToken = localStorage.getItem('3dl_csrf_token');
     // Don't even try profile calls if no token is present
     if (url.startsWith('/api/auth/') && !['login', 'register', 'forgot-password', 'reset-password', 'logout'].some(p => url.includes(p)) && !csrfToken) {
       return null;
@@ -184,7 +184,7 @@ const API = {
       xhr.open('POST', `/api/models/${modelId}/files`);
       xhr.withCredentials = true;
 
-      const csrfToken = localStorage.getItem('pv_csrf_token');
+      const csrfToken = localStorage.getItem('3dl_csrf_token');
       if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
 
       const startTime = Date.now();
@@ -232,7 +232,7 @@ const API = {
   async uploadThumbnail(modelId, file) {
     const form = new FormData();
     form.append('thumbnail', file);
-    const csrfToken = localStorage.getItem('pv_csrf_token');
+    const csrfToken = localStorage.getItem('3dl_csrf_token');
     const headers = {};
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
     const res = await fetch(`/api/models/${modelId}/thumbnail`, { method: 'POST', body: form, headers, credentials: 'same-origin' });
@@ -243,7 +243,7 @@ const API = {
   async uploadFileThumbnail(fileId, file) {
     const form = new FormData();
     form.append('thumbnail', file);
-    const csrfToken = localStorage.getItem('pv_csrf_token');
+    const csrfToken = localStorage.getItem('3dl_csrf_token');
     const headers = {};
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
     const res = await fetch(`/api/files/${fileId}/thumbnail`, { method: 'POST', body: form, headers, credentials: 'same-origin' });
@@ -304,7 +304,7 @@ const API = {
 
   // Stats & System
   getStats() { return this.request('/api/stats'); },
-  getUpdateStatus() { return this.request('/api/system/updates'); },
+  getVersion() { return this.request('/api/system/version'); },
   getSystemLogs() { return this.request('/api/system/logs'); },
   clearSystemLogs() { return this.request('/api/system/logs', { method: 'DELETE' }); },
   getPublicConfig() { return this.request('/api/system/public-config'); },
@@ -313,6 +313,5 @@ const API = {
   setAdultPassword(password) { return this.request('/api/settings/adult-password', { method: 'PUT', body: JSON.stringify({ password }) }); },
   getBlockedIps() { return this.request('/api/system/blocked-ips'); },
   unblockIp(ip) { return this.request('/api/system/unblock-ip', { method: 'POST', body: JSON.stringify({ ip }) }); },
-  scanDuplicates() { return this.request('/api/system/duplicates'); },
-  getReleaseNotes() { return this.request('/api/system/release-notes'); }
+  scanDuplicates() { return this.request('/api/system/duplicates'); }
 };

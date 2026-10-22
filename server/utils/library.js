@@ -273,7 +273,7 @@ async function scanLibrary(libraryPath) {
           }
         }
       } catch (zipErr) {
-        console.warn(`[Scanner] Could not inspect ZIP archive ${filename}:`, zipErr.message);
+        console.warn('[Scanner] Could not inspect ZIP archive %s: %s', filename, zipErr.message);
       }
     } else if (!isIgnoredFile(filename)) {
       // Every file of a project is listed; ones the app cannot preview show up as "other"

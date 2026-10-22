@@ -65,7 +65,7 @@
 
 			const scope = this;
 			const textureLoader = new THREE.TextureLoader( this.manager );
-			const objectsByPart = {}; // GyroidVault: model part name -> { objectId: Object3D }
+			const objectsByPart = {}; // 3DLib: model part name -> { objectId: Object3D }
 
 			function loadDocument( data ) {
 
@@ -192,7 +192,7 @@
 
 			}
 
-			// GyroidVault: BambuStudio / OrcaSlicer projects record which object instances sit on
+			// 3DLib: BambuStudio / OrcaSlicer projects record which object instances sit on
 			// which build plate in Metadata/model_settings.config. Other producers don't write it,
 			// in which case there are no plates and the file renders as before.
 			function parsePlateConfig( zip ) {
@@ -258,7 +258,7 @@
 
 			}
 
-			// GyroidVault: the filament a painted triangle is printed with (1-based), 0 = not painted
+			// 3DLib: the filament a painted triangle is printed with (1-based), 0 = not painted
 			// (the object's own filament). The attribute is a hex string read from its end, each
 			// digit low bit first: 2 bits = number of split sides; a leaf then has 2 bits of state
 			// (3 = 4 more bits + 3), a split triangle 2 bits for its special side and then its
@@ -322,7 +322,7 @@
 
 			}
 
-			// GyroidVault: filament colours (Metadata/project_settings.config) and the filament of
+			// 3DLib: filament colours (Metadata/project_settings.config) and the filament of
 			// each object and part (Metadata/model_settings.config) of a BambuStudio / OrcaSlicer
 			// project. null when the file has none.
 			function parseColorConfig( zip ) {
@@ -601,7 +601,7 @@
 					const p3 = triangleNode.getAttribute( 'p3' );
 					const pid = triangleNode.getAttribute( 'pid' );
 
-					// GyroidVault: colours painted in BambuStudio / OrcaSlicer (PrusaSlicer: mmu_segmentation)
+					// 3DLib: colours painted in BambuStudio / OrcaSlicer (PrusaSlicer: mmu_segmentation)
 					const paint = triangleNode.getAttribute( 'paint_color' ) || triangleNode.getAttribute( 'slic3rpe:mmu_segmentation' );
 
 					if ( paint ) {
@@ -677,7 +677,7 @@
 				const componentData = {};
 				componentData[ 'objectId' ] = componentNode.getAttribute( 'objectid' ); // required
 
-				// GyroidVault: 3MF Production extension. A component may reference an object that
+				// 3DLib: 3MF Production extension. A component may reference an object that
 				// lives in another model part (p:path), which is how BambuStudio / OrcaSlicer store
 				// every mesh in its own 3D/Objects/*.model file.
 				const partPath = componentNode.getAttribute( 'p:path' ) ||
@@ -1178,7 +1178,7 @@
 				const geometry = new THREE.BufferGeometry();
 				geometry.setIndex( new THREE.BufferAttribute( meshData[ 'triangles' ], 1 ) );
 				geometry.setAttribute( 'position', new THREE.BufferAttribute( meshData[ 'vertices' ], 3 ) );
-				// GyroidVault: painted filaments per triangle, coloured in applyFileColors()
+				// 3DLib: painted filaments per triangle, coloured in applyFileColors()
 				if ( meshData.paintStates ) geometry.userData.paintStates = meshData.paintStates;
 				const material = new THREE.MeshPhongMaterial( {
 					color: 0xffffff,
@@ -1462,7 +1462,7 @@
 					const modelXml = modelData[ 'xml' ];
 					applyExtensions( extensions, meshData, modelXml );
 					objects[ objectData.id ] = getBuild( meshData, objects, modelData, textureData, objectData, buildGroup );
-					// GyroidVault: the part id model_settings.config gives a filament to
+					// 3DLib: the part id model_settings.config gives a filament to
 					objects[ objectData.id ].userData.partId = String( objectData.id );
 
 				} else {
@@ -1510,7 +1510,7 @@
 				} // start build
 
 
-				// GyroidVault: build the referenced model parts before the root model part, so
+				// 3DLib: build the referenced model parts before the root model part, so
 				// components that point into another part (p:path) find real meshes instead of
 				// empty placeholders. BambuStudio writes 3D/3dmodel.model first in the archive.
 				const rootRel = fetch3DModelPart( data3mf[ 'rels' ] );
@@ -1597,7 +1597,7 @@
 
 					}
 
-					// GyroidVault: remember which object / instance this build item is, so it can be
+					// 3DLib: remember which object / instance this build item is, so it can be
 					// matched against the plate assignments in model_settings.config. BambuStudio
 					// writes one build item per instance, in instance order.
 					const objectId = String( buildItem[ 'objectId' ] );
@@ -1634,7 +1634,7 @@
 
 			}
 
-			// GyroidVault: colour every part with its filament (part, else object, else filament 1)
+			// 3DLib: colour every part with its filament (part, else object, else filament 1)
 			// and painted triangles with theirs. Meshes get userData.fileColor / fileVertexColors so
 			// the viewer can switch between the file's colours and one colour of its own.
 			function applyFileColors( group, colors ) {
@@ -1721,7 +1721,7 @@
 
 			}
 
-			// GyroidVault: tag every build item with the index of the plate it belongs to and expose
+			// 3DLib: tag every build item with the index of the plate it belongs to and expose
 			// the plate list as group.userData.plates = [{ id, name, items: [childIndex, ...] }].
 			// Items that are on no plate get plateIndex -1. BambuStudio stores plate N's objects at
 			// world positions offset from plate 1, so each plate has to be framed on its own.

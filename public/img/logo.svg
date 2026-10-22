@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>3DLib</title>
+  <!-- An isometric cube printed in layers: a 3D model, and a stack of books on a shelf -->
+  <defs>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#93c5fd"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+  </defs>
+  <g stroke-linejoin="round" stroke-width="16">
+    <path d="M256 48 436 152 256 256 76 152Z" fill="url(#top)" stroke="url(#top)"/>
+    <path d="M76 152 256 256V464L76 360Z" fill="url(#left)" stroke="url(#left)"/>
+    <path d="M436 152 256 256V464L436 360Z" fill="url(#right)" stroke="url(#right)"/>
+  </g>
+  <!-- Layer lines -->
+  <g fill="none" stroke-width="10" stroke-linecap="round">
+    <path d="M90 212 242 300M90 264 242 352M90 316 242 404" stroke="#1e40af" stroke-opacity=".55"/>
+    <path d="M422 212 270 300M422 264 270 352M422 316 270 404" stroke="#0f1f5c" stroke-opacity=".6"/>
+  </g>
+</svg>

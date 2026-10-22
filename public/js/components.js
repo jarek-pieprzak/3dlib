@@ -14,6 +14,13 @@ const UI = {
       .replace(/'/g, '&#39;');
   },
 
+  // A string argument for an inline handler, quotes included: onclick="App.browseTo(${UI.jsArg(path)})".
+  // escapeHtml alone is not enough there: the browser decodes &#39; back to ' before it runs
+  // the code, so a name with a quote would end the string.
+  jsArg(value) {
+    return this.escapeHtml(JSON.stringify(value === null || value === undefined ? '' : String(value)));
+  },
+
   // How a file can be shown in the model page's preview area (null = info only)
   previewKind(f) {
     const t = f && f.file_type;
@@ -112,14 +119,14 @@ const UI = {
     return render(root);
   },
 
-  // "Xmas_tree_210_gv-7k3m9q2x.3mf": the file name an "Open in slicer" link ends with.
+  // "Xmas_tree_210_3dl-7k3m9q2x.3mf": the file name an "Open in slicer" link ends with.
   // Bambu Studio decodes the link before it downloads, so a space or any other %-encoded sign
   // would reach the server raw and fail (400): ASCII letters, digits, "_", "-" and "." only.
   slicerFileName(f, ext) {
     const base = String(f.original_name || f.filename || '').split('/').pop().replace(/\.[^.]+$/, '');
     const stem = base.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[łŁ]/g, m => (m === 'ł' ? 'l' : 'L'))
       .replace(/[^A-Za-z0-9.-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 100) || 'model';
-    return `${stem}${f.slicer_token ? `_gv-${f.slicer_token}` : ''}.${ext}`;
+    return `${stem}${f.slicer_token ? `_3dl-${f.slicer_token}` : ''}.${ext}`;
   },
 
   // A small version of a library image for cards and tiles (server/routes/images.js): a cover
@@ -465,10 +472,10 @@ const UI = {
       accumulated += (accumulated ? '/' : '') + parts[i];
       const isLast = i === parts.length - 1;
       if (isLast) {
-        crumbs += ` <span style="color:var(--text-muted);margin:0 6px">›</span> <span style="color:var(--text-primary);font-weight:600">${parts[i]}</span>`;
+        crumbs += ` <span style="color:var(--text-muted);margin:0 6px">›</span> <span style="color:var(--text-primary);font-weight:600">${this.escapeHtml(parts[i])}</span>`;
       } else {
         const pathCopy = accumulated;
-        crumbs += ` <span style="color:var(--text-muted);margin:0 6px">›</span> <a href="#" onclick="event.preventDefault();App.browseTo('${pathCopy}')" style="color:var(--accent-cyan);text-decoration:none">${parts[i]}</a>`;
+        crumbs += ` <span style="color:var(--text-muted);margin:0 6px">›</span> <a href="#" onclick="event.preventDefault();App.browseTo(${this.jsArg(pathCopy)})" style="color:var(--accent-cyan);text-decoration:none">${this.escapeHtml(parts[i])}</a>`;
       }
     }
     
@@ -477,6 +484,8 @@ const UI = {
 
   // sidebar tree for folder browser
   folderTree(nodes, activePath = '') {
+    const js = (s) => this.jsArg(s);
+    const esc = (s) => this.escapeHtml(s);
     function renderNode(node, depth = 0) {
       const isActive = activePath === node.path;
       const isParent = activePath.startsWith(node.path + '/');
@@ -488,8 +497,8 @@ const UI = {
         ? `<span style="display:inline-block;width:14px;font-size:10px;transition:transform .2s;transform:rotate(${isOpen ? '90' : '0'}deg);cursor:pointer" onclick="event.stopPropagation();const childDiv = this.parentElement.nextElementSibling; if(childDiv && childDiv.classList.contains('tree-children')) { childDiv.classList.toggle('collapsed'); childDiv.style.display = childDiv.style.display === 'none' ? 'block' : 'none'; } this.style.transform=this.style.transform.includes('90')?'rotate(0deg)':'rotate(90deg)'">▶</span>`
         : `<span style="display:inline-block;width:14px"></span>`;
       
-      let html = `<div class="tree-node" style="padding:4px 8px 4px ${8 + indent}px;cursor:pointer;border-radius:4px;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${isActive ? 'background:var(--accent-cyan);background:rgba(0,212,255,0.15);color:var(--accent-cyan);font-weight:600' : 'color:var(--text-secondary)'}" onclick="App.browseTo('${node.path}')" title="${node.name}" ondragover="event.preventDefault(); this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="App.handleDrop(event, '${node.path}')">
-        ${arrow} <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;color:#f59e0b"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${node.name}
+      let html = `<div class="tree-node" style="padding:4px 8px 4px ${8 + indent}px;cursor:pointer;border-radius:4px;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${isActive ? 'background:var(--accent-cyan);background:rgba(0,212,255,0.15);color:var(--accent-cyan);font-weight:600' : 'color:var(--text-secondary)'}" onclick="App.browseTo(${js(node.path)})" title="${esc(node.name)}" ondragover="event.preventDefault(); this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="App.handleDrop(event, ${js(node.path)})">
+        ${arrow} <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;color:#f59e0b"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${esc(node.name)}
       </div>`;
       
       if (hasChildren) {
@@ -514,8 +523,8 @@ const UI = {
 
   folderCard(folder) {
     const isSelected = App.selectedBrowsePaths?.includes(folder.path);
-    return `<div class="model-card ${isSelected ? 'selected' : ''}" data-path="${folder.path}" onclick="App.browseTo('${folder.path}')" style="cursor:pointer" draggable="true" ondragstart="App.handleDragStart(event, '${folder.path}')" ondragover="event.preventDefault(); this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="App.handleDrop(event, '${folder.path}')">
-      <div class="model-card-checkbox" onclick="event.stopPropagation(); App.toggleBrowseSelection('${folder.path}')"></div>
+    return `<div class="model-card ${isSelected ? 'selected' : ''}" data-path="${this.escapeHtml(folder.path)}" onclick="App.browseTo(${this.jsArg(folder.path)})" style="cursor:pointer" draggable="true" ondragstart="App.handleDragStart(event, ${this.jsArg(folder.path)})" ondragover="event.preventDefault(); this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="App.handleDrop(event, ${this.jsArg(folder.path)})">
+      <div class="model-card-checkbox" onclick="event.stopPropagation(); App.toggleBrowseSelection(${this.jsArg(folder.path)})"></div>
       <div class="model-card-thumb">
         ${folder.thumbnails && folder.thumbnails.length > 0 
           ? (folder.thumbnails.length === 1
@@ -527,7 +536,7 @@ const UI = {
         }
       </div>
       <div class="model-card-body">
-        <div class="model-card-name">${folder.name}</div>
+        <div class="model-card-name">${this.escapeHtml(folder.name)}</div>
         <div class="model-card-meta"><span class="badge badge-stl">${folder.itemCount} items</span></div>
       </div>
     </div>`;
@@ -538,19 +547,19 @@ const UI = {
     const isGcode = file.type === 'gcode';
     let thumb;
     if (file.thumbnailUrl) {
-      thumb = `<img src="${this.imgSrc(file.thumbnailUrl, 480)}" alt="${file.name}" loading="lazy" decoding="async">`;
+      thumb = `<img src="${this.imgSrc(file.thumbnailUrl, 480)}" alt="${this.escapeHtml(file.name)}" loading="lazy" decoding="async">`;
     } else if (is3D) {
       // Rendered when the card comes into view and stored as the file's preview (viewer.js)
-      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${file.url}"${file.id ? ` data-file-id="${file.id}"` : ''} data-size="${Number(file.size) || 0}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
+      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${this.escapeHtml(file.url)}"${file.id ? ` data-file-id="${file.id}"` : ''} data-size="${Number(file.size) || 0}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else if (file.type === 'image') {
-      thumb = `<img src="${this.imgSrc(file.url, 480)}" alt="${file.name}" loading="lazy" decoding="async">`;
+      thumb = `<img src="${this.imgSrc(file.url, 480)}" alt="${this.escapeHtml(file.name)}" loading="lazy" decoding="async">`;
     } else if (isGcode) {
       thumb = `<div class="model-card-placeholder" style="background:linear-gradient(135deg, #78350f, #b45309);color:#fbbf24;display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.6"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></div>`;
     } else {
       thumb = `<div class="model-card-placeholder" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     }
     
-    const folderLabel = file.folderPath ? `<div style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;display:flex;align-items:center;gap:3px" title="${file.folderPath}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#f59e0b"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${file.folderPath}</div>` : '';
+    const folderLabel = file.folderPath ? `<div style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;display:flex;align-items:center;gap:3px" title="${this.escapeHtml(file.folderPath)}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#f59e0b"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${this.escapeHtml(file.folderPath)}</div>` : '';
     const itemPath = `${file.folderPath ? file.folderPath+'/' : ''}${file.name}`;
     const isSelected = App.selectedBrowsePaths?.includes(itemPath);
     
@@ -567,16 +576,16 @@ const UI = {
     }
 
     const clickData = encodeURIComponent(JSON.stringify(file));
-    const clickHandler = `onclick="App.openBrowseFileModal('${clickData}')" style="cursor:pointer"`;
+    const clickHandler = `onclick="App.openBrowseFileModal(${this.jsArg(clickData)})" style="cursor:pointer"`;
 
     const canBrowseManage = App.currentUser?.role === 'admin';
-    const browseCheckboxHtml = canBrowseManage ? `<div class="model-card-checkbox" onclick="event.stopPropagation(); App.toggleBrowseSelection('${itemPath}')"></div>` : '';
+    const browseCheckboxHtml = canBrowseManage ? `<div class="model-card-checkbox" onclick="event.stopPropagation(); App.toggleBrowseSelection(${this.jsArg(itemPath)})"></div>` : '';
 
-    return `<div class="model-card ${isSelected ? 'selected' : ''}" data-path="${itemPath}" draggable="true" ondragstart="App.handleDragStart(event, '${itemPath}')" ${clickHandler}>
+    return `<div class="model-card ${isSelected ? 'selected' : ''}" data-path="${this.escapeHtml(itemPath)}" draggable="true" ondragstart="App.handleDragStart(event, ${this.jsArg(itemPath)})" ${clickHandler}>
       ${browseCheckboxHtml}
       <div class="model-card-thumb">${thumb}<div class="model-card-badges"><span class="badge badge-${file.ext || file.type}">${file.ext || file.type}</span></div></div>
       <div class="model-card-body">
-        <div class="model-card-name" title="${file.name}">${file.name}</div>
+        <div class="model-card-name" title="${this.escapeHtml(file.name)}">${this.escapeHtml(file.name)}</div>
         <div class="model-card-body-badges"><span class="badge badge-${file.ext || file.type}">${file.ext || file.type}</span></div>
         ${folderLabel}
         <div class="model-card-meta" style="font-size:.75rem;color:var(--text-muted)">${this.formatSize(file.size)}</div>
@@ -1442,14 +1451,14 @@ const UI = {
   kitTipContent(tip, ctx = {}) {
     const esc = (s) => this.escapeHtml(s);
     const img = (name, alt) => (name ? `<img class="kit-tip-img" src="/img/kits/ussa-vault/${esc(name)}.webp" alt="${esc(alt || '')}" loading="lazy">` : '');
-    const manual = (m) => (m ? `<button type="button" class="kit-tip-manual" onclick="App.kitShowManual('${esc(m[0])}', ${Number(m[1])})">Manual: ${esc(m[0].replace(/^\d+_/, '').replace(/\.pdf$/i, ''))}, page ${Number(m[1])}</button>` : '');
+    const manual = (m) => (m ? `<button type="button" class="kit-tip-manual" onclick="App.kitShowManual(${this.jsArg(m[0])}, ${Number(m[1])})">Manual: ${esc(m[0].replace(/^\d+_/, '').replace(/\.pdf$/i, ''))}, page ${Number(m[1])}</button>` : '');
     const choices = tip.choices || null;
     const keys = choices ? (ctx.relevant || Object.keys(choices)).filter(k => choices[k]) : [];
     const current = choices && choices[ctx.value];
     const cards = keys.map(k => {
       const c = choices[k];
       const off = ctx.available && !ctx.available.includes(k);
-      return `<button type="button" class="kit-tip-choice${k === ctx.value ? ' is-current' : ''}"${off || !ctx.set ? ' disabled' : ''}${off ? ' title="Not available for this size"' : ''} onclick="App.kitTipPick('${esc(ctx.set || '')}', '${esc(k)}')">
+      return `<button type="button" class="kit-tip-choice${k === ctx.value ? ' is-current' : ''}"${off || !ctx.set ? ' disabled' : ''}${off ? ' title="Not available for this size"' : ''} onclick="App.kitTipPick(${this.jsArg(ctx.set || '')}, ${this.jsArg(k)})">
           ${img(c.image, c.label)}
           <span class="kit-tip-choice-label">${esc(c.label)}${k === ctx.value ? ' <small>current</small>' : ''}</span>
           <span class="kit-tip-choice-text">${esc(c.text)}</span>
@@ -1787,7 +1796,7 @@ const UI = {
         ${kit.cat.docs.length ? `<div class="kit-group-title">Instructions</div>
         ${kit.cat.docs.map(f => `
         <div class="kit-doc">
-          <button type="button" class="kit-doc-name" onclick="App.kitShowManual('${esc(f.original_name)}', 1)" title="Open in the preview">${esc(f.original_name)}</button>
+          <button type="button" class="kit-doc-name" onclick="App.kitShowManual(${this.jsArg(f.original_name)}, 1)" title="Open in the preview">${esc(f.original_name)}</button>
           <span class="kit-part-size">${this.formatSize(f.file_size)}</span>
           ${download(f)}
         </div>`).join('')}
@@ -2127,10 +2136,10 @@ const UI = {
       const canDelete = type === 'materials' ? !item.is_preset : true;
       const isAdmin = App.currentUser?.role === 'admin';
       return `<div class="settings-item">
-        <span class="settings-item-name">${color} ${item.name}${preset}</span>
+        <span class="settings-item-name">${color} ${this.escapeHtml(item.name)}${preset}</span>
         <div class="settings-item-actions">
           ${count}
-          ${canDelete && isAdmin ? `<button class="btn btn-ghost btn-xs" style="color:var(--error);padding:4px" onclick="App.deleteSettingsItem('${type}',${item.id},'${item.name.replace(/'/g, "\\'")}')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>` : ''}
+          ${canDelete && isAdmin ? `<button class="btn btn-ghost btn-xs" style="color:var(--error);padding:4px" onclick="App.deleteSettingsItem('${type}',${item.id},${this.jsArg(item.name)})"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -2152,7 +2161,7 @@ const UI = {
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <select class="form-select" id="default-material-select" onchange="App.setDefaultMaterial(this.value)" style="max-width:220px">
             ${items.map(m => {
-              const def = localStorage.getItem('gv_default_material') || 'PLA';
+              const def = localStorage.getItem('3dl_default_material') || 'PLA';
               const isSel = (String(m.id) === String(def) || m.name.toLowerCase() === def.toLowerCase());
               return `<option value="${m.id}" ${isSel ? 'selected' : ''}>${m.name}</option>`;
             }).join('')}
@@ -2561,7 +2570,7 @@ const UI = {
         </div>
         <div class="form-group">
           <label>From Email</label>
-          <input type="text" name="smtp_from" value="${config.smtp_from || ''}" placeholder="GyroidVault <noreply@example.com>" class="form-input">
+          <input type="text" name="smtp_from" value="${config.smtp_from || ''}" placeholder="3DLib <noreply@example.com>" class="form-input">
         </div>
         <div class="form-group">
           <label>Secure (SSL/TLS)</label>
@@ -2769,52 +2778,27 @@ const UI = {
       </div>`;
   },
 
-  aboutSection(versionInfo = {}) {
-    const renderedChangelog = this.renderMarkdown(versionInfo.changelog || 'No release notes available.');
+  aboutSection(version) {
     return `
       <div class="glass-panel">
-        <div class="panel-header"><div class="panel-title">About GyroidVault</div></div>
+        <div class="panel-header"><div class="panel-title">About 3DLib</div></div>
         <div class="panel-body">
-          <div style="display:flex;gap:24px;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap">
+          <div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap">
             <div style="display:flex;align-items:center;justify-content:center">
-              <img src="/img/logo-icon.png?v=35" alt="GyroidVault" style="width:84px;height:84px;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(37,99,235,0.4)) drop-shadow(0 2px 6px rgba(56,189,248,0.25))">
+              <img src="/img/logo.svg?v=1" alt="3DLib" style="width:84px;height:84px;object-fit:contain">
             </div>
-            <div style="flex:1">
-              <h3 style="margin:0 0 4px 0;font-size:1.4rem;background:var(--accent-gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent">GyroidVault</h3>
-              <p style="margin:0;font-size:.9rem;color:var(--text-secondary)">Self-hosted 3D model management for enthusiasts and professionals.</p>
-              <div style="margin-top:12px;display:flex;gap:12px">
-                <a href="https://gyroidvault.com" target="_blank" class="btn btn-secondary btn-xs" style="color:var(--accent-cyan);border-color:rgba(0,212,255,0.3)">
-                  <svg height="14" viewBox="0 0 24 24" width="14" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                  Official Website
-                </a>
-                <a href="https://github.com/TeeCodeDev/GyroidVault" target="_blank" class="btn btn-secondary btn-xs">
-                  <svg height="14" viewBox="0 0 16 16" width="14" style="vertical-align:middle;margin-right:6px"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-                  GitHub Repository
-                </a>
-                <a href="https://ko-fi.com/D1D51ZGUNL" target="_blank" class="btn btn-secondary btn-xs" style="color:#f59e0b;border-color:rgba(245,158,11,0.3)">
-                  <svg height="14" viewBox="0 0 24 24" width="14" style="vertical-align:middle;margin-right:6px"><path fill="currentColor" d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.724c-.304 0-.55.245-.55.55v14.23c0 .305.246.55.55.55h16.471c.305 0 .55-.245.55-.55 0-2.81 2.503-2.658 2.503-6.19 0-1.63-.231-3.081-.231-3.081s4.536.852 3.864-1.416zm-7.653 4.295c-.328.328-.775.464-1.121.353-.346-.111-.57-.424-.57-.751 0-.327.224-.64.57-.751.346-.111.793.025 1.121.353.328.328.328.86 0 1.188z"></path></svg>
-                  Buy me a Coffee
-                </a>
+            <div style="flex:1;min-width:220px">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+                <h3 style="margin:0;font-size:1.4rem;background:var(--accent-gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent">3DLib</h3>
+                ${version ? `<span class="badge badge-tag" style="background:var(--bg-input)">v${this.escapeHtml(version)}</span>` : ''}
+              </div>
+              <p style="margin:0;font-size:.9rem;color:var(--text-secondary)">Self-hosted library of 3D printing models.</p>
             </div>
           </div>
-          
-          <div style="border-top:1px solid var(--border);padding-top:20px;margin-top:20px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-              <div style="font-weight:600;font-size:.95rem">Version Information</div>
-              <span class="badge badge-tag" style="background:var(--bg-input)">v${versionInfo.currentVersion || '1.0.0'}</span>
-            </div>
-            
-            ${versionInfo.hasUpdate ? `
-              <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);padding:16px;border-radius:8px;margin-bottom:20px">
-                <div style="display:flex;justify-content:space-between;align-items:center">
-                  <div style="color:#f59e0b;font-weight:600;display:flex;align-items:center;gap:6px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>Update available: v${versionInfo.latestVersion}</div>
-                  <a href="${versionInfo.url}" target="_blank" class="btn btn-primary btn-xs">View on GitHub</a>
-                </div>
-              </div>
-            ` : '<div style="color:var(--success);font-size:.85rem;margin-bottom:20px">✓ You are running the latest version</div>'}
 
-            <div style="font-weight:600;font-size:.95rem;margin-bottom:12px">What\'s New</div>
-            <div class="changelog-body" style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:12px;padding:20px;max-height:600px;overflow-y:auto;font-size:.9rem;line-height:1.6;color:var(--text-secondary)">${renderedChangelog}</div>
+          <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:20px;font-size:.85rem;line-height:1.6;color:var(--text-secondary)">
+            3DLib is based on <a href="https://github.com/TeeCodeDev/GyroidVault" target="_blank" rel="noopener noreferrer" style="color:var(--accent-cyan);font-weight:600">GyroidVault</a> by TeeCodeDev and, like it, is licensed under the
+            <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer" style="color:var(--accent-cyan);font-weight:600">GNU Affero General Public License v3.0</a>.
           </div>
         </div>
       </div>`;
@@ -2907,154 +2891,6 @@ const UI = {
         <div class="upload-progress-footer">
           <span>${this.formatSize(loaded)} / ${this.formatSize(total)} (${speedStr})</span>
           <span>${etaStr}</span>
-        </div>
-      </div>
-    `;
-  },
-
-  whatsNewModal(version = '2.0.0', releaseNotes = []) {
-    const latestNote = releaseNotes && releaseNotes.length ? releaseNotes[0] : null;
-    const changelogHtml = latestNote ? `
-      <div class="markdown-body" style="font-size: 0.875rem; line-height: 1.6; max-height: 380px; overflow-y: auto; padding: 16px; background: var(--bg-primary); border-radius: 10px; border: 1px solid var(--border);">
-        <h3 style="margin-top:0;margin-bottom:12px;color:var(--accent-cyan)">${this.escapeHtml(latestNote.title || 'GyroidVault ' + version)}</h3>
-        <div style="white-space: pre-wrap; font-family: var(--font); color: var(--text-secondary); font-size: 0.82rem;">${this.escapeHtml(latestNote.content || latestNote.rawMarkdown || '')}</div>
-      </div>
-    ` : `
-      <div style="text-align:center;padding:28px 20px;color:var(--text-muted);font-size:0.875rem;background:var(--bg-primary);border-radius:10px;border:1px solid var(--border)">
-        Changelog details are available on <a href="https://github.com/TeeCodeDev/GyroidVault/releases" target="_blank" rel="noopener noreferrer" style="color:var(--accent-cyan);font-weight:600">GitHub Releases</a>.
-      </div>
-    `;
-
-    return `
-      <div class="whats-new-container" style="max-width: 720px; margin: 0 auto">
-        <!-- Hero Header with Official Logo -->
-        <div style="text-align:center;padding:10px 10px 18px;position:relative">
-          <div style="position:relative;margin-bottom:16px;display:inline-block">
-            <img src="/img/logo-icon.png?v=35" alt="GyroidVault" width="94" height="94" style="display:block;margin:0 auto;filter:drop-shadow(0 8px 24px rgba(37,99,235,0.4)) drop-shadow(0 2px 8px rgba(56,189,248,0.3));object-fit:contain">
-          </div>
-
-          <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px">
-            <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(37,99,235,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);padding:3px 12px;border-radius:20px;font-size:0.75rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase">
-              <span style="width:6px;height:6px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8"></span>
-              Major Release v${version}
-            </div>
-          </div>
-
-          <h2 style="font-size:1.55rem;font-weight:800;letter-spacing:-0.02em;margin:0 0 8px;color:var(--text-primary)">
-            Welcome to GyroidVault 2.0
-          </h2>
-          <p style="color:var(--text-secondary);font-size:0.88rem;line-height:1.55;max-width:540px;margin:0 auto">
-            Your self-hosted 3D vault and slicing workspace — equipped with Studio 2.0 multi-part assembly, real-time mm dimensions, background scanner, and hardened security.
-          </p>
-        </div>
-
-        <!-- Official Website Showcase Banner -->
-        <div style="background:linear-gradient(135deg, rgba(37,99,235,0.15) 0%, rgba(124,58,237,0.12) 100%);border:1px solid rgba(96,165,250,0.35);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;box-shadow:0 4px 16px rgba(0,0,0,0.2)">
-          <div style="display:flex;align-items:center;gap:12px;min-width:0">
-            <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg, #2563eb, #7c3aed);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 6px 16px rgba(37,99,235,0.4)">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            </div>
-            <div style="min-width:0">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <span style="font-weight:700;font-size:0.92rem;color:#ffffff">Official Website is Live!</span>
-                <span style="background:rgba(16,185,129,0.2);color:#34d399;border:1px solid rgba(16,185,129,0.35);padding:1px 7px;border-radius:8px;font-size:0.62rem;font-weight:700;text-transform:uppercase">Official</span>
-              </div>
-              <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:2px">
-                Explore the interactive 3D Studio demo, feature overview & Docker setup at <strong style="color:var(--accent-cyan)">gyroidvault.com</strong>
-              </div>
-            </div>
-          </div>
-          <a href="https://gyroidvault.com" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" style="font-weight:600;white-space:nowrap;padding:7px 14px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;flex-shrink:0">
-            <span>Visit Website</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          </a>
-        </div>
-
-        <!-- Tabs Navigation -->
-        <div style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:10px">
-          <button id="whatsnew-tab-btn-highlights" class="btn btn-secondary btn-sm active" onclick="App.switchWhatsNewTab('highlights')" style="font-weight:600;display:inline-flex;align-items:center;gap:6px">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            <span>Highlights & Features</span>
-          </button>
-          <button id="whatsnew-tab-btn-changelog" class="btn btn-secondary btn-sm" onclick="App.switchWhatsNewTab('changelog')" style="font-weight:600;display:inline-flex;align-items:center;gap:6px">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            <span>Full Changelog</span>
-          </button>
-        </div>
-
-        <!-- Highlights Content -->
-        <div id="whatsnew-content-highlights" style="display:block">
-          <!-- 4-Card Bento Grid -->
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:12px;margin-bottom:18px">
-            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:15px;display:flex;gap:12px;align-items:flex-start;box-shadow:0 2px 8px rgba(0,0,0,0.15)">
-              <div style="width:38px;height:38px;border-radius:10px;background:rgba(37,99,235,0.15);color:var(--accent-cyan);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-              </div>
-              <div>
-                <div style="font-weight:700;font-size:0.9rem;color:var(--text-primary);margin-bottom:3px">Studio 2.0 & Multi-Assembly</div>
-                <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45">Inspect individual parts or arrange all project STL/3MF files on the virtual build plate with real-time physical mm dimension badges.</div>
-              </div>
-            </div>
-
-            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:15px;display:flex;gap:12px;align-items:flex-start;box-shadow:0 2px 8px rgba(0,0,0,0.15)">
-              <div style="width:38px;height:38px;border-radius:10px;background:rgba(16,185,129,0.15);color:#10b981;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              </div>
-              <div>
-                <div style="font-weight:700;font-size:0.9rem;color:var(--text-primary);margin-bottom:3px">Massive Libraries (2TB+) & Scanner</div>
-                <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45">Engineered for massive libraries of 2TB+ and 10,000+ models. Indexes directories and identifies duplicates in the background with zero UI freezes.</div>
-              </div>
-            </div>
-
-            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:15px;display:flex;gap:12px;align-items:flex-start;box-shadow:0 2px 8px rgba(0,0,0,0.15)">
-              <div style="width:38px;height:38px;border-radius:10px;background:rgba(139,92,246,0.15);color:#8b5cf6;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-              </div>
-              <div>
-                <div style="font-weight:700;font-size:0.9rem;color:var(--text-primary);margin-bottom:3px">Power Batch Editing</div>
-                <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45">Multi-select dozens of models across library views to bulk-assign tags, categories, or collections in a single instant action.</div>
-              </div>
-            </div>
-
-            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:15px;display:flex;gap:12px;align-items:flex-start;box-shadow:0 2px 8px rgba(0,0,0,0.15)">
-              <div style="width:38px;height:38px;border-radius:10px;background:rgba(245,158,11,0.15);color:#f59e0b;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              </div>
-              <div>
-                <div style="font-weight:700;font-size:0.9rem;color:var(--text-primary);margin-bottom:3px">Local Privacy & Access Control</div>
-                <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45">Your models stay 100% private and self-hosted with zero cloud telemetry. Strictly confined to your storage folder with safe, token-protected share links.</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Open Source & Support Section -->
-          <div style="background:linear-gradient(135deg, rgba(245,158,11,0.08), rgba(37,99,235,0.06));border:1px solid rgba(245,158,11,0.25);border-radius:12px;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px">
-            <div>
-              <div style="font-weight:700;font-size:0.88rem;color:var(--text-primary);display:flex;align-items:center;gap:6px;margin-bottom:3px">
-                <span>Support GyroidVault Development</span>
-              </div>
-              <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.4">
-                GyroidVault is 100% free and open source. Consider supporting maintenance via Ko-fi!
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <a href="https://gyroidvault.com" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="font-weight:600">gyroidvault.com</a>
-              <a href="https://github.com/TeeCodeDev/GyroidVault" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="font-weight:600">GitHub</a>
-              <a href="https://ko-fi.com/D1D51ZGUNL" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-sm" style="background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:700">Ko-fi</a>
-            </div>
-          </div>
-        </div>
-
-        <!-- Changelog Content -->
-        <div id="whatsnew-content-changelog" style="display:none;margin-bottom:20px">
-          ${changelogHtml}
-        </div>
-
-        <!-- Dismiss / CTA -->
-        <div>
-          <button class="btn btn-primary btn-md" onclick="App.dismissWhatsNew()" style="width:100%;font-weight:700;padding:11px 20px;font-size:0.92rem;border-radius:8px">
-            Get Started with v${version}
-          </button>
         </div>
       </div>
     `;

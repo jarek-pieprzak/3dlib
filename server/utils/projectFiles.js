@@ -95,7 +95,7 @@ function renameOnDisk(src, dest) {
   try {
     fs.renameSync(src, dest);
   } catch (e) {
-    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for GyroidVault');
+    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for 3DLib');
     throw e;
   }
 }
@@ -188,7 +188,7 @@ function makeFolder(model, parentRel, name) {
   try {
     fs.mkdirSync(dest, { recursive: true });
   } catch (e) {
-    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for GyroidVault');
+    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for 3DLib');
     throw e;
   }
 }
@@ -278,7 +278,7 @@ function ensureProjectFolder(model) {
   try {
     fs.mkdirSync(folder);
   } catch (e) {
-    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for GyroidVault');
+    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new FsError(503, 'The library is read-only or not writable for 3DLib');
     throw e;
   }
   for (const src of rows) {

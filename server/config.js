@@ -1,8 +1,9 @@
 const path = require('path');
 const fs = require('fs');
+const { resolveDbPath } = require('./utils/dbFile');
 
 /**
- * GyroidVault Centralized Configuration & Environment Validation
+ * 3DLib Centralized Configuration & Environment Validation
  */
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -18,7 +19,6 @@ const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR) 
   : path.resolve(__dirname, '..', 'data');
 
-const DB_PATH = path.join(DATA_DIR, 'gyroidvault.db');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 const LIBRARY_PATH = process.env.LIBRARY_PATH 
@@ -32,9 +32,12 @@ const LIBRARY_PATH = process.env.LIBRARY_PATH
       fs.mkdirSync(dir, { recursive: true });
     }
   } catch (err) {
-    console.error(`[Config] CRITICAL: Failed to create required directory "${dir}":`, err.message);
+    console.error('[Config] CRITICAL: Failed to create required directory "%s": %s', dir, err.message);
   }
 });
+
+// 3dlib.db; a database still named gyroidvault.db is copied over on the first start
+const DB_PATH = resolveDbPath(DATA_DIR);
 
 // Periodic Sync Configuration
 const SYNC_BATCH_SIZE = 200;

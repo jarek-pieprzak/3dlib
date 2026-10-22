@@ -1,8 +1,8 @@
 /**
- * GyroidVault User Models Importer
+ * 3DLib User Models Importer
  * 
  * Scans 'c:\Coding Projects\import_models' (including subfolders) and imports all STLs,
- * 3MFs, STEPs, G-Codes, and companion images into GyroidVault with clean titles,
+ * 3MFs, STEPs, G-Codes, and companion images into 3DLib with clean titles,
  * dynamic categories, tags, thumbnails, print tips, and database records.
  * 
  * Usage:
@@ -13,10 +13,11 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
+const { DB_FILE, resolveDbPath } = require('../server/utils/dbFile');
 
 const IMPORT_DIR = path.join(__dirname, '..', '..', 'import_models');
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DATA_DIR, 'gyroidvault.db');
+const DB_PATH = resolveDbPath(DATA_DIR);
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 if (!fs.existsSync(IMPORT_DIR)) fs.mkdirSync(IMPORT_DIR, { recursive: true });
@@ -178,7 +179,7 @@ async function main() {
   db.run('PRAGMA foreign_keys = ON');
 
   // Backup existing DB before modifying
-  const backupPath = path.join(DATA_DIR, `gyroidvault.db.bak_userimport_${Date.now()}`);
+  const backupPath = path.join(DATA_DIR, `${DB_FILE}.bak_userimport_${Date.now()}`);
   fs.copyFileSync(DB_PATH, backupPath);
   console.log(`🛡️  Database safety backup saved: ${path.basename(backupPath)}`);
 
@@ -329,7 +330,7 @@ async function main() {
   // Save changes to disk
   const exported = db.export();
   fs.writeFileSync(DB_PATH, Buffer.from(exported));
-  console.log(`\n🎉 Successfully imported ${importedCount} model(s) into GyroidVault!`);
+  console.log(`\n🎉 Successfully imported ${importedCount} model(s) into 3DLib!`);
   console.log('Open your browser at http://localhost:3000/#/models to view your library!');
 }
 

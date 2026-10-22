@@ -1,7 +1,7 @@
 services:
-  gyroidvault:
-    image: ghcr.io/teecodedev/gyroidvault:latest
-    container_name: gyroidvault
+  3dlib:
+    image: ghcr.io/jarek-pieprzak/3dlib:latest
+    container_name: 3dlib
     ports:
       - "${PORT:-3457}:3000"
     volumes:

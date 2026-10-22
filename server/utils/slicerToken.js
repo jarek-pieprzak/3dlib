@@ -1,5 +1,5 @@
 // Every file gets a random token that travels in the file name of "Open in slicer" links:
-// "Xmas_tree_210_gv-7k3m9q2x.3mf". When the slicer saves the project under that name, the
+// "Xmas_tree_210_3dl-7k3m9q2x.3mf". When the slicer saves the project under that name, the
 // token tells which library file it came from. Random rather than the row id, so a token never
 // points at another file after the database was rebuilt.
 const crypto = require('crypto');
@@ -7,8 +7,8 @@ const crypto = require('crypto');
 const db = () => require('../database');
 
 const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // no look-alikes (i/l/1, o/0)
-// "..._gv-7k3m9q2x.3mf", also with a suffix the slicer adds ("..._gv-7k3m9q2x(2).3mf")
-const TOKEN_RE = /(?:^|[^a-z0-9])gv-([a-z2-9]{8})(?![a-z0-9])/i;
+// "..._3dl-7k3m9q2x.3mf", also with a suffix the slicer adds ("..._3dl-7k3m9q2x(2).3mf")
+const TOKEN_RE = /(?:^|[^a-z0-9])3dl-([a-z2-9]{8})(?![a-z0-9])/i;
 
 function newToken() {
   for (;;) {

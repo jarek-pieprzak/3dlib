@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 const { get } = require('../database');
 const { getJwtSecret } = require('../middleware/auth');
 
-const COOKIE = 'gv_adult';
+const COOKIE = '3dl_adult';
 const TOKEN_TTL = '6h';
 
 function passwordHash() {

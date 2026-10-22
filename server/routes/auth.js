@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { get, run } = require('../database');
-const { authenticate, getJwtSecret } = require('../middleware/auth');
+const { authenticate, getJwtSecret, TOKEN_COOKIE, LEGACY_TOKEN_COOKIE, tokenCookieOptions } = require('../middleware/auth');
 const { authLimiter, loginLimiter } = require('../middleware/rateLimit');
 const { getSettingBool } = require('../utils/modelHelpers');
 
@@ -84,19 +84,16 @@ router.post('/login', loginLimiter, async (req, res) => {
     const csrfToken = crypto.randomBytes(32).toString('hex');
     const token = jwt.sign({ id: user.id, role: user.role, csrfToken }, getJwtSecret(), { expiresIn: '30d' });
     
-    res.cookie('pv_token', token, { 
-      httpOnly: true, 
-      secure: req.secure || req.headers['x-forwarded-proto'] === 'https', 
-      sameSite: 'strict', 
-      maxAge: 30 * 24 * 60 * 60 * 1000 
-    });
+    res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
+    res.clearCookie(LEGACY_TOKEN_COOKIE);
     
     res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Login failed' }); }
 });
 
 router.post('/logout', (req, res) => {
-  res.clearCookie('pv_token');
+  res.clearCookie(TOKEN_COOKIE);
+  res.clearCookie(LEGACY_TOKEN_COOKIE);
   res.json({ message: 'Logged out' });
 });
 

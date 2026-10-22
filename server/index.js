@@ -22,7 +22,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Database & Middleware
 const { initDatabase, get, saveDb } = require('./database');
 const { setUploadsDir } = require('./middleware/upload');
-const { getJwtSecret } = require('./middleware/auth');
+const { getJwtSecret, readTokenCookie } = require('./middleware/auth');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { getSettingBool } = require('./utils/modelHelpers');
 
@@ -80,15 +80,14 @@ app.use(logger.requestLogger);
 // ─── Private Instance Gatekeeper ───────────────────────────────────────────
 
 app.use((req, res, next) => {
-  // Always permit public auth, health check, public config, release notes, static assets, and public shares
+  // Always permit public auth, health check, public config, version, static assets, and public shares
   if (
     req.path === '/healthz' ||
     req.path.startsWith('/api/auth/') ||
     req.path === '/api/system/public-config' ||
     req.path.startsWith('/api/shares/') ||
     (req.query && req.query.share && (req.path.startsWith('/api/files/') || /^\/api\/models\/\d+\/download$/.test(req.path))) ||
-    req.path === '/api/system/updates' ||
-    req.path === '/api/system/release-notes' ||
+    req.path === '/api/system/version' ||
     req.path.startsWith('/js/') ||
     req.path.startsWith('/css/') ||
     req.path.startsWith('/img/') ||
@@ -101,7 +100,7 @@ app.use((req, res, next) => {
   }
 
   // Populate req.user whenever a valid token is present; enforce if private instance is enabled
-  let token = req.cookies.pv_token;
+  let token = readTokenCookie(req, res);
   if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     token = req.headers.authorization.split(' ')[1];
   }
@@ -166,20 +165,14 @@ if (fs.existsSync(LIBRARY_PATH)) {
 // A library file that is no longer on disk must be a real 404, not the SPA page below:
 // the 3D viewer would otherwise try to parse index.html as an STL ("Invalid typed array length")
 app.use('/library-files', (req, res) => res.status(404).type('text/plain').send('File not found in library'));
+// express.static above serves every upload and refuses paths that leave the folder. Anything
+// else is a 404: a fallback route here once joined the decoded name to UPLOADS_DIR, so
+// "/uploads/..%2F3dlib.db" sent the whole database.
+app.use('/uploads', (req, res) => res.status(404).type('text/plain').send('File not found'));
 
 // Small versions of cover images (sharp, cached); outside /api so card grids do not count
 // against its rate limit
 app.use('/thumbs', require('./routes/images').router);
-
-// Direct file access fallback for uploads
-app.get('/uploads/:filename', (req, res) => {
-  const filePath = path.join(UPLOADS_DIR, req.params.filename);
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).json({ error: 'File not found' });
-  }
-});
 
 // ─── Route Mounting ────────────────────────────────────────────────────────
 
@@ -228,7 +221,7 @@ app.use((err, req, res, next) => {
   process.on('SIGUSR2', shutdown); // Nodemon restart signal
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    logger.info('System', `GyroidVault running on http://0.0.0.0:${PORT}`);
+    logger.info('System', `3DLib running on http://0.0.0.0:${PORT}`);
     logger.info('System', `Active library storage path: ${LIBRARY_PATH}`);
     startBackgroundServices();
   });
@@ -237,7 +230,7 @@ app.use((err, req, res, next) => {
     if (err.code === 'EADDRINUSE') {
       logger.warn('System', `0.0.0.0:${PORT} in use, binding to 127.0.0.1:${PORT}...`);
       app.listen(PORT, '127.0.0.1', () => {
-        logger.info('System', `GyroidVault running on http://localhost:${PORT}`);
+        logger.info('System', `3DLib running on http://localhost:${PORT}`);
         startBackgroundServices();
       });
     } else {

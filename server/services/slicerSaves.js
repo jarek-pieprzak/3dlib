@@ -1,4 +1,4 @@
-// Slicer round trips. "Open in slicer" links end with "<name>_gv-<token>.<ext>"; the slicer
+// Slicer round trips. "Open in slicer" links end with "<name>_3dl-<token>.<ext>"; the slicer
 // downloads the file into its save folder, the library's hidden ".slicer-saves", and saves the
 // project there under the same name. Every 30 s this folder is checked:
 //  * a file identical to what a link sent is only the download: ignored;
@@ -48,11 +48,11 @@ function activeFile(id) {
     WHERE f.id = ? AND f.deleted_at IS NULL AND m.deleted_at IS NULL AND f.library_path IS NOT NULL AND f.library_path NOT LIKE '%::%'`, [id]) : null;
 }
 
-// "Xmas_tree_150_gv-udh2zend(2).3mf" -> "Xmas tree 150.3mf"
+// "Xmas_tree_150_3dl-udh2zend(2).3mf" -> "Xmas tree 150.3mf"
 function cleanName(name) {
   const ext = path.extname(name);
   const stem = name.slice(0, name.length - ext.length)
-    .replace(/[_ ]?gv-[a-z2-9]{8}/i, '').replace(/\s*\(\d+\)$/, '').replace(/_+/g, ' ').trim();
+    .replace(/[_ ]?3dl-[a-z2-9]{8}/i, '').replace(/\s*\(\d+\)$/, '').replace(/_+/g, ' ').trim();
   return (stem || 'Slicer save') + ext.toLowerCase();
 }
 
@@ -149,7 +149,7 @@ async function processOnce({ importNow = [] } = {}) {
     if (!e.isFile() || e.name.startsWith('.') || !SAVE_EXTS.includes(path.extname(e.name).toLowerCase())) continue;
     try { files.push({ name: e.name, p: path.join(SAVES_DIR, e.name), st: await fsp.stat(path.join(SAVES_DIR, e.name)) }); } catch (err) { /* gone */ }
   }
-  // Oldest first: when the slicer saved one file twice ("Lamp_gv-x.3mf", "Lamp_gv-x(2).3mf"),
+  // Oldest first: when the slicer saved one file twice ("Lamp_3dl-x.3mf", "Lamp_3dl-x(2).3mf"),
   // the newest save is imported last and stays the library file
   files.sort((a, b) => a.st.mtimeMs - b.st.mtimeMs);
 

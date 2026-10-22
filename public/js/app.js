@@ -7,14 +7,14 @@ const App = {
   selectedModelIds: [],
   lastSelectedModelId: null,
   selectedBrowsePaths: [],
-  versionInfo: null,
+  appVersion: null,
   libraryViewMode: 'grid',
 
   // ── Init ──
   async init() {
     this.el = document.getElementById('app');
     // The 3D Studio part selector switched files: follow it in the file list
-    document.addEventListener('gv:preview-file', (e) => this.highlightPreviewFile(e.detail && e.detail.fileId));
+    document.addEventListener('3dl:preview-file', (e) => this.highlightPreviewFile(e.detail && e.detail.fileId));
     // Slicer menus inside the scrolling file list open upwards when there is no room below
     document.addEventListener('mouseover', (e) => {
       const dd = e.target.closest && e.target.closest('.detail-files-body .dropdown');
@@ -22,26 +22,26 @@ const App = {
       const list = dd.closest('.detail-files-body');
       dd.classList.toggle('drop-up', list.getBoundingClientRect().bottom - dd.getBoundingClientRect().bottom < 200);
     });
-    const savedUser = localStorage.getItem('pv_user');
+    const savedUser = localStorage.getItem('3dl_user');
     if (savedUser) {
-      try { this.currentUser = JSON.parse(savedUser); } catch(e) { localStorage.removeItem('pv_user'); }
+      try { this.currentUser = JSON.parse(savedUser); } catch(e) { localStorage.removeItem('3dl_user'); }
     }
     
     if (this.currentUser) {
       try {
         const user = await API.getMe();
         if (user && user.csrfToken) {
-          localStorage.setItem('pv_csrf_token', user.csrfToken);
+          localStorage.setItem('3dl_csrf_token', user.csrfToken);
           this.currentUser = user;
-          localStorage.setItem('pv_user', JSON.stringify(user));
+          localStorage.setItem('3dl_user', JSON.stringify(user));
         } else {
-          localStorage.removeItem('pv_user');
-          localStorage.removeItem('pv_csrf_token');
+          localStorage.removeItem('3dl_user');
+          localStorage.removeItem('3dl_csrf_token');
           this.currentUser = null;
         }
       } catch (e) {
-        localStorage.removeItem('pv_user');
-        localStorage.removeItem('pv_csrf_token');
+        localStorage.removeItem('3dl_user');
+        localStorage.removeItem('3dl_csrf_token');
         this.currentUser = null;
       }
     }
@@ -63,7 +63,7 @@ const App = {
     }
     
     if (this.publicConfig.require_login_to_view && !this.currentUser) {
-      document.getElementById('app').innerHTML = '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg-color)"><h1 style="margin-bottom:20px">GyroidVault</h1><button class="btn btn-primary btn-lg" onclick="App.showLogin()">Login to Access GyroidVault</button></div>';
+      document.getElementById('app').innerHTML = '<div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg-color)"><h1 style="margin-bottom:20px">3DLib</h1><button class="btn btn-primary btn-lg" onclick="App.showLogin()">Login to Access 3DLib</button></div>';
       this.showLogin();
       return;
     }
@@ -87,7 +87,7 @@ const App = {
     });
 
     // Restore sidebar collapse state
-    const savedCollapsed = localStorage.getItem('gv_sidebar_collapsed') === 'true';
+    const savedCollapsed = localStorage.getItem('3dl_sidebar_collapsed') === 'true';
     if (savedCollapsed) {
       document.getElementById('app-sidebar')?.classList.add('collapsed');
       document.body.classList.add('sidebar-collapsed');
@@ -97,81 +97,13 @@ const App = {
     await this.loadViewMode();
     this.renderSidebarCategories();
     this.renderSidebarCollections();
-    this.checkUpdates();
+    this.loadVersion();
     this.updateUserNav();
     this.updateThemeIcon();
     this.initPrinters();
     // My printers for the fit check (the picker in the top bar)
     this.loadPrinterBeds().then(() => this.renderFitPicker());
     this.route();
-    this.checkWhatsNew();
-  },
-
-  WHATS_NEW_VERSION: '2.0.2',
-
-  checkWhatsNew() {
-    const seenVersion = localStorage.getItem('gv_last_seen_version');
-    // Recognize both '2.0.0' (saved by previous versions) and current WHATS_NEW_VERSION so it never repeats on refresh (#79)
-    if (seenVersion === '2.0.0' || seenVersion === this.WHATS_NEW_VERSION) {
-      if (seenVersion !== this.WHATS_NEW_VERSION) {
-        localStorage.setItem('gv_last_seen_version', this.WHATS_NEW_VERSION);
-      }
-      return;
-    }
-    localStorage.setItem('gv_last_seen_version', this.WHATS_NEW_VERSION);
-    setTimeout(() => {
-      this.openWhatsNew();
-    }, 500);
-  },
-
-  async openWhatsNew() {
-    localStorage.setItem('gv_last_seen_version', this.WHATS_NEW_VERSION || '2.0.2');
-    try {
-      const res = await API.getReleaseNotes().catch(() => ({ notes: [] }));
-      this.cachedReleaseNotes = res.notes || [];
-      this.openModal('Welcome to GyroidVault 2.0', UI.whatsNewModal('2.2.1', this.cachedReleaseNotes), 'modal-lg');
-    } catch (e) {
-      this.openModal('Welcome to GyroidVault 2.0', UI.whatsNewModal('2.2.1', []), 'modal-lg');
-    }
-  },
-
-  switchWhatsNewTab(tab) {
-    const highlightsContent = document.getElementById('whatsnew-content-highlights');
-    const changelogContent = document.getElementById('whatsnew-content-changelog');
-    const highlightsBtn = document.getElementById('whatsnew-tab-btn-highlights');
-    const changelogBtn = document.getElementById('whatsnew-tab-btn-changelog');
-
-    if (tab === 'highlights') {
-      if (highlightsContent) highlightsContent.style.display = 'block';
-      if (changelogContent) changelogContent.style.display = 'none';
-      if (highlightsBtn) highlightsBtn.classList.add('active');
-      if (changelogBtn) changelogBtn.classList.remove('active');
-    } else {
-      if (highlightsContent) highlightsContent.style.display = 'none';
-      if (changelogContent) changelogContent.style.display = 'block';
-      if (highlightsBtn) highlightsBtn.classList.remove('active');
-      if (changelogBtn) changelogBtn.classList.add('active');
-    }
-  },
-
-  selectWhatsNewVersion(ver) {
-    const note = (this.cachedReleaseNotes || []).find(n => n.version === ver);
-    const body = document.getElementById('whatsnew-changelog-body');
-    if (note && body) {
-      body.innerHTML = UI.renderMarkdown(note.content);
-    }
-    document.querySelectorAll('.changelog-version-pill').forEach(btn => {
-      btn.classList.remove('active');
-    });
-    const activeBtn = document.getElementById(`whatsnew-ver-${ver.replace(/\./g, '-')}`);
-    if (activeBtn) {
-      activeBtn.classList.add('active');
-    }
-  },
-
-  dismissWhatsNew() {
-    localStorage.setItem('gv_last_seen_version', this.WHATS_NEW_VERSION || '2.0.2');
-    this.closeModal();
   },
 
   toggleSidebarCollapse() {
@@ -179,7 +111,7 @@ const App = {
     if (!sidebar) return;
     const isCollapsed = sidebar.classList.toggle('collapsed');
     document.body.classList.toggle('sidebar-collapsed', isCollapsed);
-    localStorage.setItem('gv_sidebar_collapsed', isCollapsed);
+    localStorage.setItem('3dl_sidebar_collapsed', isCollapsed);
   },
 
   toggleMobileSidebar(force = null) {
@@ -372,35 +304,22 @@ const App = {
     } catch(err) { console.error('Failed to init printers', err); }
   },
 
-  async checkUpdates() {
+  async loadVersion() {
     try {
-      const info = await API.getUpdateStatus();
-      if (info) {
-        this.versionInfo = info;
-        const verEl = document.getElementById('app-version');
-        if (verEl) verEl.textContent = `v${info.currentVersion}`;
-        
-        if (info.hasUpdate) {
-          const badge = document.getElementById('update-badge');
-          if (badge) badge.style.display = 'inline-flex';
-        }
-      }
-    } catch(e) { console.warn('Update check failed', e); }
-  },
-
-  showUpdateInfo() {
-    if (this.versionInfo) {
-      this.openModal('Update Available', UI.aboutSection(this.versionInfo));
-    }
+      const { version } = await API.getVersion();
+      this.appVersion = version;
+      const verEl = document.getElementById('app-version');
+      if (verEl) verEl.textContent = `v${version}`;
+    } catch(e) { console.warn('Version check failed', e); }
   },
 
   toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme') || localStorage.getItem('gv_theme') || 'glass';
+    const current = document.documentElement.getAttribute('data-theme') || localStorage.getItem('3dl_theme') || 'glass';
     const nextTheme = current === 'light' ? 'glass' : 'light';
     document.documentElement.setAttribute('data-theme', nextTheme);
-    localStorage.setItem('gv_theme', nextTheme);
+    localStorage.setItem('3dl_theme', nextTheme);
     this.updateThemeIcon();
-    document.dispatchEvent(new CustomEvent('gv:theme')); // 3D scenes follow (viewer.js)
+    document.dispatchEvent(new CustomEvent('3dl:theme')); // 3D scenes follow (viewer.js)
   },
 
   updateThemeIcon() {
@@ -521,14 +440,14 @@ const App = {
   previewTheme() {
     const t = document.getElementById('theme-selector').value;
     document.documentElement.setAttribute('data-theme', t);
-    localStorage.setItem('gv_theme', t);
+    localStorage.setItem('3dl_theme', t);
     this.updateThemeIcon();
-    document.dispatchEvent(new CustomEvent('gv:theme')); // 3D scenes follow (viewer.js)
+    document.dispatchEvent(new CustomEvent('3dl:theme')); // 3D scenes follow (viewer.js)
   },
 
   setAccent(a) {
     document.documentElement.setAttribute('data-accent', a);
-    localStorage.setItem('gv_accent', a);
+    localStorage.setItem('3dl_accent', a);
   },
 
   // ── Toast ──
@@ -583,11 +502,6 @@ const App = {
   },
 
   closeModal() {
-    const title = document.getElementById('modal-title')?.textContent || '';
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isLocalhost && (title.includes('GyroidVault 2.0') || title.includes('GyroidVault v2'))) {
-      localStorage.setItem('gv_last_seen_version', '2.0.0');
-    }
     document.getElementById('modal-overlay').classList.remove('active');
     const modal = document.getElementById('modal');
     if (modal) {
@@ -694,7 +608,7 @@ const App = {
         headerEl.innerHTML = `
           <div style="flex:1;display:flex;align-items:center;gap:12px">
             ${UI.breadcrumbs(data.currentPath)}
-            ${this.currentUser ? `<button class="btn btn-secondary btn-sm" onclick="App.handleCreateFolder('${data.currentPath}')">+ New Folder</button>` : ''}
+            ${this.currentUser ? `<button class="btn btn-secondary btn-sm" onclick="App.handleCreateFolder(${UI.jsArg(data.currentPath)})">+ New Folder</button>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:12px">
             <span style="font-size:0.85rem;color:var(--text-muted);white-space:nowrap" id="browse-counter">Showing ${data.folders.length} Folders / ${fileCount} Files</span>
@@ -881,7 +795,7 @@ const App = {
         return;
       }
       
-      const viewMode = localStorage.getItem('gv_view_mode') || 'grid';
+      const viewMode = localStorage.getItem('3dl_view_mode') || 'grid';
       grid.innerHTML = `
         <div class="model-grid ${viewMode === 'list' ? 'models-list-view' : ''}">${models.map(m => UI.modelCard(m)).join('')}</div>
         ${UI.pagination(totalPages, currentPage)}
@@ -898,7 +812,7 @@ const App = {
   },
 
   setViewMode(mode) {
-    localStorage.setItem('gv_view_mode', mode);
+    localStorage.setItem('3dl_view_mode', mode);
     const viewGridBtn = document.getElementById('view-mode-grid');
     const viewListBtn = document.getElementById('view-mode-list');
     if (viewGridBtn) viewGridBtn.style.color = mode === 'grid' ? 'var(--accent-cyan)' : 'inherit';
@@ -1322,8 +1236,8 @@ const App = {
         return;
       }
       if (res.error) throw new Error(res.error);
-      localStorage.setItem('pv_csrf_token', res.csrfToken);
-      localStorage.setItem('pv_user', JSON.stringify(res.user));
+      localStorage.setItem('3dl_csrf_token', res.csrfToken);
+      localStorage.setItem('3dl_user', JSON.stringify(res.user));
       this.currentUser = res.user;
       this.toast('Welcome back, ' + res.user.username);
       this.closeModal();
@@ -1424,7 +1338,7 @@ const App = {
       // Refresh user info
       const user = await API.getMe();
       this.currentUser = user;
-      localStorage.setItem('pv_user', JSON.stringify(user));
+      localStorage.setItem('3dl_user', JSON.stringify(user));
       this.updateUserNav();
     } catch(e) { this.toast(e.message, 'error'); }
   },
@@ -1554,8 +1468,8 @@ const App = {
   
   async handleLogout() {
     try { await API.logout(); } catch(e) {}
-    localStorage.removeItem('pv_csrf_token');
-    localStorage.removeItem('pv_user');
+    localStorage.removeItem('3dl_csrf_token');
+    localStorage.removeItem('3dl_user');
     this.currentUser = null;
     this.toast('Logged out');
     this.updateUserNav();
@@ -1679,20 +1593,20 @@ const App = {
                 <div class="form-group">
                   <label class="form-label">App Theme</label>
                   <select id="theme-selector" class="form-select" onchange="App.previewTheme()">
-                    <option value="glass" ${localStorage.getItem('gv_theme') === 'glass' || !localStorage.getItem('gv_theme') ? 'selected' : ''}>Glass (Default)</option>
-                    <option value="industrial" ${localStorage.getItem('gv_theme') === 'industrial' ? 'selected' : ''}>Industrial</option>
+                    <option value="glass" ${localStorage.getItem('3dl_theme') === 'glass' || !localStorage.getItem('3dl_theme') ? 'selected' : ''}>Glass (Default)</option>
+                    <option value="industrial" ${localStorage.getItem('3dl_theme') === 'industrial' ? 'selected' : ''}>Industrial</option>
                   </select>
                 </div>
                 <div class="form-group" style="margin-bottom:0">
                   <label class="form-label">Accent Color</label>
                   <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px">Choose your preferred studio accent color</p>
                   <div style="display:flex; gap:12px; margin-top:6px; flex-wrap:wrap;">
-                    <button type="button" class="accent-color-btn" style="background:#3b82f6; outline: ${(localStorage.getItem('gv_accent') === 'blue' || localStorage.getItem('gv_accent') === 'cyan' || !localStorage.getItem('gv_accent')) ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('blue'); App.renderProfile();" title="Studio Blue (Default)"></button>
-                    <button type="button" class="accent-color-btn" style="background:#10b981; outline: ${localStorage.getItem('gv_accent') === 'emerald' || localStorage.getItem('gv_accent') === 'green' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('emerald'); App.renderProfile();" title="Emerald Green"></button>
-                    <button type="button" class="accent-color-btn" style="background:#f59e0b; outline: ${localStorage.getItem('gv_accent') === 'amber' || localStorage.getItem('gv_accent') === 'orange' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('amber'); App.renderProfile();" title="Amber Gold"></button>
-                    <button type="button" class="accent-color-btn" style="background:#f43f5e; outline: ${localStorage.getItem('gv_accent') === 'rose' || localStorage.getItem('gv_accent') === 'red' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('rose'); App.renderProfile();" title="Coral Rose"></button>
-                    <button type="button" class="accent-color-btn" style="background:#8b5cf6; outline: ${localStorage.getItem('gv_accent') === 'violet' || localStorage.getItem('gv_accent') === 'purple' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('violet'); App.renderProfile();" title="Studio Violet"></button>
-                    <button type="button" class="accent-color-btn" style="background:#14b8a6; outline: ${localStorage.getItem('gv_accent') === 'teal' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('teal'); App.renderProfile();" title="Teal Sage"></button>
+                    <button type="button" class="accent-color-btn" style="background:#3b82f6; outline: ${(localStorage.getItem('3dl_accent') === 'blue' || localStorage.getItem('3dl_accent') === 'cyan' || !localStorage.getItem('3dl_accent')) ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('blue'); App.renderProfile();" title="Studio Blue (Default)"></button>
+                    <button type="button" class="accent-color-btn" style="background:#10b981; outline: ${localStorage.getItem('3dl_accent') === 'emerald' || localStorage.getItem('3dl_accent') === 'green' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('emerald'); App.renderProfile();" title="Emerald Green"></button>
+                    <button type="button" class="accent-color-btn" style="background:#f59e0b; outline: ${localStorage.getItem('3dl_accent') === 'amber' || localStorage.getItem('3dl_accent') === 'orange' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('amber'); App.renderProfile();" title="Amber Gold"></button>
+                    <button type="button" class="accent-color-btn" style="background:#f43f5e; outline: ${localStorage.getItem('3dl_accent') === 'rose' || localStorage.getItem('3dl_accent') === 'red' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('rose'); App.renderProfile();" title="Coral Rose"></button>
+                    <button type="button" class="accent-color-btn" style="background:#8b5cf6; outline: ${localStorage.getItem('3dl_accent') === 'violet' || localStorage.getItem('3dl_accent') === 'purple' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('violet'); App.renderProfile();" title="Studio Violet"></button>
+                    <button type="button" class="accent-color-btn" style="background:#14b8a6; outline: ${localStorage.getItem('3dl_accent') === 'teal' ? '2px solid #ffffff' : 'none'}" onclick="App.setAccent('teal'); App.renderProfile();" title="Teal Sage"></button>
                   </div>
                 </div>
               </div>
@@ -1705,7 +1619,7 @@ const App = {
             <div class="panel-header"><div class="panel-title">API & Integrations</div></div>
             <div class="panel-body">
               <div class="form-group" style="margin-bottom:0">
-                <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;">Generate an API key to allow external tools (like OrcaSlicer post-processing scripts) to securely interact with your GyroidVault account. Keep this key secret.</p>
+                <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;">Generate an API key to allow external tools (like OrcaSlicer post-processing scripts) to securely interact with your 3DLib account. Keep this key secret.</p>
                 <div id="api-key-result" style="display:none; margin-bottom:15px; background:rgba(16,185,129,0.1); padding:12px; border-radius:var(--radius-sm); border:1px solid var(--success); color:var(--success); word-break:break-all; font-family:monospace; font-size:0.85rem"></div>
                 <button type="button" class="btn btn-secondary" onclick="App.generateApiKey()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
@@ -1719,11 +1633,11 @@ const App = {
     };
 
     tabs.forEach(t => t.addEventListener('click', () => {
-      localStorage.setItem('gv_profile_tab', t.dataset.tab);
+      localStorage.setItem('3dl_profile_tab', t.dataset.tab);
       switchTab(t.dataset.tab);
     }));
     
-    const defaultTab = localStorage.getItem('gv_profile_tab') || 'account';
+    const defaultTab = localStorage.getItem('3dl_profile_tab') || 'account';
     switchTab(defaultTab);
   },
 
@@ -2288,7 +2202,7 @@ const App = {
     const fromUrl = opts.c ? VaultKit.decodeConfig(opts.c) : null;
     // A re-render of the page (after Edit, an unlock) must not bring back the URL it opened with
     if (this.currentModelOpts) this.currentModelOpts.c = null;
-    const last = stored(`gv_kit_${model.id}`) || {};
+    const last = stored(`3dl_kit_${model.id}`) || {};
     // A link with another configuration is not the saved one that was open (a reload is)
     const otherLink = fromUrl && JSON.stringify(fromUrl) !== JSON.stringify(last.cfg);
     this.kit = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], savedId: otherLink ? null : last.savedId || null, previewId: null, view: 'tower' };
@@ -2310,7 +2224,7 @@ const App = {
     kit.bom = VaultKit.computeBom(kit.cat, input);
     kit.cfg = kit.bom.cfg;
     kit.choices = VaultKit.choices(kit.cat, kit.cfg);
-    try { localStorage.setItem(`gv_kit_${kit.modelId}`, JSON.stringify({ cfg: kit.cfg, savedId: kit.savedId })); } catch (e) {}
+    try { localStorage.setItem(`3dl_kit_${kit.modelId}`, JSON.stringify({ cfg: kit.cfg, savedId: kit.savedId })); } catch (e) {}
     if (location.hash.startsWith(`#/models/${kit.modelId}`)) {
       history.replaceState(null, '', `#/models/${kit.modelId}?c=${VaultKit.encodeConfig(kit.cfg)}`);
     }
@@ -2620,11 +2534,11 @@ const App = {
 
   // The tower in 3D (a model of simple shapes) or as the drawing with dimensions; remembered
   kitTowerModeNow() {
-    try { return localStorage.getItem('gv_kit_tower') === '2d' ? '2d' : '3d'; } catch (e) { return '3d'; }
+    try { return localStorage.getItem('3dl_kit_tower') === '2d' ? '2d' : '3d'; } catch (e) { return '3d'; }
   },
 
   kitTowerMode(mode) {
-    try { localStorage.setItem('gv_kit_tower', mode === '2d' ? '2d' : '3d'); } catch (e) {}
+    try { localStorage.setItem('3dl_kit_tower', mode === '2d' ? '2d' : '3d'); } catch (e) {}
     if (this.kit) { this.kit.view = 'tower'; this.kitShowTower(); }
   },
 
@@ -2829,7 +2743,7 @@ const App = {
       this.kitTipDocBound = true;
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.kitHideTip(true); });
       // The 3D tower follows the light / dark theme like the other scenes
-      document.addEventListener('gv:theme', () => {
+      document.addEventListener('3dl:theme', () => {
         if (this.kit && this.kit.scene3d && typeof Viewer !== 'undefined') this.kit.scene3d.setBackground(Viewer.sceneColors().background);
       });
       document.addEventListener('mousedown', (e) => {
@@ -2851,14 +2765,14 @@ const App = {
 
   fitPrinterId() {
     let id = 'any';
-    try { id = localStorage.getItem('gv_fit_printer') || 'any'; } catch (e) {}
+    try { id = localStorage.getItem('3dl_fit_printer') || 'any'; } catch (e) {}
     return id === 'any' || (this.printerBeds || []).some(b => b.id === id) ? id : 'any';
   },
 
   // The printer chosen in the top bar applies everywhere: the model list (badges, the "Fits my
   // printer" filter) is fetched again, a model page repaints its sizes
   setFitPrinter(id) {
-    try { localStorage.setItem('gv_fit_printer', id || 'any'); } catch (e) {}
+    try { localStorage.setItem('3dl_fit_printer', id || 'any'); } catch (e) {}
     this.renderFitPicker();
     this.paintFit();
     if (location.hash.slice(1).split('?')[0] === '/models') this.route();
@@ -3040,7 +2954,7 @@ const App = {
   },
 
   setDefaultMaterial(val) {
-    localStorage.setItem('gv_default_material', val);
+    localStorage.setItem('3dl_default_material', val);
     this.toast('Default print material updated');
   },
 
@@ -3128,8 +3042,8 @@ const App = {
             ${file.folderPath ? `<span>·</span><span style="display:inline-flex;align-items:center;gap:3px;color:#f59e0b"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${file.folderPath}</span>` : ''}
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            ${(is3D || isGcode) ? `<button class="btn btn-secondary btn-sm" onclick="App.previewFileModal('${file.url}', '${file.name.replace(/'/g, "\\'")}', '${file.type}')">Full Screen</button>` : ''}
-            ${file.id ? `<a href="/api/files/${file.id}/download" class="btn btn-primary btn-sm" download>Download</a>` : `<a href="${file.url}" class="btn btn-primary btn-sm" download="${file.name}">Download</a>`}
+            ${(is3D || isGcode) ? `<button class="btn btn-secondary btn-sm" onclick="App.previewFileModal(${UI.jsArg(file.url)}, ${UI.jsArg(file.name)}, ${UI.jsArg(file.type)})">Full Screen</button>` : ''}
+            ${file.id ? `<a href="/api/files/${file.id}/download" class="btn btn-primary btn-sm" download>Download</a>` : `<a href="${UI.escapeHtml(file.url)}" class="btn btn-primary btn-sm" download="${UI.escapeHtml(file.name)}">Download</a>`}
           </div>
         </div>
       </div>
@@ -3160,7 +3074,7 @@ const App = {
     }
 
     try {
-      const csrfToken = localStorage.getItem('pv_csrf_token');
+      const csrfToken = localStorage.getItem('3dl_csrf_token');
       const res = await fetch('/api/library/scan', {
         method: 'POST',
         credentials: 'same-origin',
@@ -3600,7 +3514,7 @@ const App = {
       <div class="page-header" style="margin-bottom:20px">
         <div>
           <h1 class="page-title">Settings</h1>
-          <p class="page-subtitle">Configure and personalize your GyroidVault 2.0 instance</p>
+          <p class="page-subtitle">Configure and personalize your 3DLib instance</p>
         </div>
       </div>
 
@@ -3661,7 +3575,7 @@ const App = {
             <div class="settings-nav-group-title">System Info</div>
             <button class="settings-nav-btn" data-tab="about">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              <span>About GyroidVault</span>
+              <span>About 3DLib</span>
             </button>
           </div>
         </aside>
@@ -3796,7 +3710,8 @@ const App = {
               </div>
             </div>`;
         } else if (tab === 'about') {
-          content.innerHTML = UI.aboutSection({ currentVersion: '2.0.2' });
+          if (!this.appVersion) await this.loadVersion();
+          content.innerHTML = UI.aboutSection(this.appVersion);
         }
       } catch (e) { console.error(e); }
     };
@@ -4307,8 +4222,8 @@ const App = {
     label.className = 'tag-pill-checkbox';
     // Use a prefix to identify it as a new tag string rather than an ID
     label.innerHTML = `
-      <input type="checkbox" name="tags" value="NEW:${val}" checked> 
-      <span class="tag-pill new">${val}</span>`;
+      <input type="checkbox" name="tags" value="NEW:${UI.escapeHtml(val)}" checked> 
+      <span class="tag-pill new">${UI.escapeHtml(val)}</span>`;
     container.appendChild(label);
     input.value = '';
     input.focus();
@@ -4412,8 +4327,8 @@ const App = {
           this.pendingSuggestedName = suggestions[0] || null;
           if (container) {
             container.innerHTML = suggestions.map(s => `
-              <button type="button" class="btn btn-secondary btn-xs" onclick="App.applySuggestedName('${s.replace(/'/g, "\\'")}')" style="background:var(--bg-input);border:1px solid var(--border-hover);color:var(--text-primary);padding:4px 10px;font-size:0.75rem;border-radius:6px;display:inline-flex;align-items:center;gap:4px">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> ${s}
+              <button type="button" class="btn btn-secondary btn-xs" onclick="App.applySuggestedName(${UI.jsArg(s)})" style="background:var(--bg-input);border:1px solid var(--border-hover);color:var(--text-primary);padding:4px 10px;font-size:0.75rem;border-radius:6px;display:inline-flex;align-items:center;gap:4px">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> ${UI.escapeHtml(s)}
               </button>
             `).join('');
           }

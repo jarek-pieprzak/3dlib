@@ -291,78 +291,9 @@ router.post('/library/scan/cancel', authenticate, (req, res) => {
   }
 });
 
-// ─── UPDATES & RELEASE NOTES ────────────────────────────────────────────────
-let lastUpdateCheck = { time: 0, data: null };
-
-router.get('/system/updates', async (req, res) => {
-  try {
-    const pkg = require('../../package.json');
-    const currentVersion = pkg.version;
-    
-    // Cache for 1 hour to stay under GitHub rate limits
-    if (lastUpdateCheck.data && (Date.now() - lastUpdateCheck.time < 3600000)) {
-      return res.json({ ...lastUpdateCheck.data, currentVersion });
-    }
-
-    const githubRes = await fetch('https://api.github.com/repos/TeeCodeDev/GyroidVault/releases/latest', {
-      headers: { 'User-Agent': 'GyroidVault-Server' }
-    });
-    
-    if (githubRes.ok) {
-      const release = await githubRes.json();
-      const latestVersion = release.tag_name.replace('v', '');
-      const data = {
-        latestVersion,
-        hasUpdate: latestVersion.localeCompare(currentVersion, undefined, { numeric: true }) > 0,
-        changelog: release.body,
-        published_at: release.published_at,
-        url: release.html_url
-      };
-      lastUpdateCheck = { time: Date.now(), data };
-      res.json({ ...data, currentVersion });
-    } else {
-      const data = {
-        latestVersion: currentVersion,
-        hasUpdate: false,
-        changelog: '',
-        url: 'https://github.com/TeeCodeDev/GyroidVault'
-      };
-      res.json({ ...data, currentVersion });
-    }
-  } catch (e) {
-    console.error('Update check failed:', e);
-    res.status(500).json({ error: 'Failed to check for updates' });
-  }
-});
-
-router.get('/system/release-notes', (req, res) => {
-  try {
-    const rootDir = path.join(__dirname, '..', '..');
-    const files = fs.readdirSync(rootDir).filter(f => f.startsWith('Release_Notes_') && f.endsWith('.md'));
-    files.sort((a, b) => {
-      const vA = a.match(/Release_Notes_v?([\d\.]+)\.md/i)?.[1] || '';
-      const vB = b.match(/Release_Notes_v?([\d\.]+)\.md/i)?.[1] || '';
-      return vB.localeCompare(vA, undefined, { numeric: true });
-    });
-
-    const notes = files.map(filename => {
-      const match = filename.match(/Release_Notes_v?([\d\.]+)\.md/i);
-      const version = match ? match[1] : filename;
-      const content = fs.readFileSync(path.join(rootDir, filename), 'utf8');
-      
-      const titleMatch = content.match(/^#\s+(.+)$/m);
-      const dateMatch = content.match(/\*\*Release Date:\*\*\s*(.+)$/m);
-      const title = titleMatch ? titleMatch[1].trim() : `GyroidVault v${version}`;
-      const releaseDate = dateMatch ? dateMatch[1].trim() : '';
-
-      return { version, filename, content, title, releaseDate };
-    });
-
-    res.json({ notes });
-  } catch (e) {
-    console.error('Failed to get release notes:', e);
-    res.status(500).json({ error: 'Failed to read release notes' });
-  }
+// ─── VERSION ────────────────────────────────────────────────────────────────
+router.get('/system/version', (req, res) => {
+  res.json({ version: require('../../package.json').version });
 });
 
 // ─── SYSTEM LOGS ────────────────────────────────────────────────────────────

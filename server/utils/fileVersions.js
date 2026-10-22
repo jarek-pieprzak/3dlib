@@ -79,7 +79,7 @@ function replaceWithVersion(model, file, srcPath, source) {
     fs.copyFileSync(file.library_path, path.join(dir, name));
     fs.copyFileSync(srcPath, file.library_path);
   } catch (e) {
-    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new projectFiles.FsError(503, 'The library is read-only or not writable for GyroidVault');
+    if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) throw new projectFiles.FsError(503, 'The library is read-only or not writable for 3DLib');
     throw e;
   }
   const size = fs.statSync(path.join(dir, name)).size;

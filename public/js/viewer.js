@@ -1036,7 +1036,7 @@ const Viewer = {
       partSelectEl.onchange = (e) => {
         renderPartSelection(e.target.value);
         // Let the file list highlight the file that is now on screen
-        document.dispatchEvent(new CustomEvent('gv:preview-file', {
+        document.dispatchEvent(new CustomEvent('3dl:preview-file', {
           detail: { modelId, fileId: e.target.value === 'all' ? null : Number(e.target.value) }
         }));
       };
@@ -1100,7 +1100,7 @@ const Viewer = {
       : { background: 0x161625, gridCenter: 0x252545, grid: 0x1a1a35 };
   },
 
-  // Open viewers, recoloured when the theme changes (App.toggleTheme fires 'gv:theme')
+  // Open viewers, recoloured when the theme changes (App.toggleTheme fires '3dl:theme')
   themedScenes: new Set(),
 
   applySceneTheme(scene, grid) {
@@ -1324,7 +1324,7 @@ const Viewer = {
 
 
 // The light / dark theme switch recolours the open 3D scenes
-document.addEventListener('gv:theme', () => {
+document.addEventListener('3dl:theme', () => {
   for (const entry of Viewer.themedScenes) {
     if (entry.canvas.isConnected) Viewer.applySceneTheme(entry.scene, entry.grid);
     else Viewer.themedScenes.delete(entry);

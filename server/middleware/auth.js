@@ -5,7 +5,7 @@ const { get, run } = require('../database');
 let cachedSecret = null;
 
 function getJwtSecret() {
-  if (cachedSecret && !cachedSecret.startsWith('gyroidvault-temp-')) return cachedSecret;
+  if (cachedSecret && !cachedSecret.startsWith('3dlib-temp-')) return cachedSecret;
 
   // 1. Check process.env.JWT_SECRET
   if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim().length >= 16) {
@@ -30,12 +30,37 @@ function getJwtSecret() {
   } catch (err) {
     // Database might not be ready yet during module load
     if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-    return 'gyroidvault-temp-' + crypto.randomBytes(16).toString('hex');
+    return '3dlib-temp-' + crypto.randomBytes(16).toString('hex');
   }
 }
 
+// The login cookie. Before the rename to 3DLib it was called pv_token; a browser that still
+// sends only that one gets the same token under the new name, so nobody is logged out.
+const TOKEN_COOKIE = '3dl_token';
+const LEGACY_TOKEN_COOKIE = 'pv_token';
+
+function tokenCookieOptions(req) {
+  return {
+    httpOnly: true,
+    secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+    sameSite: 'strict',
+    maxAge: 30 * 24 * 60 * 60 * 1000
+  };
+}
+
+function readTokenCookie(req, res) {
+  const cookies = req.cookies || {};
+  if (cookies[TOKEN_COOKIE]) return cookies[TOKEN_COOKIE];
+  const legacy = cookies[LEGACY_TOKEN_COOKIE];
+  if (legacy && res && !res.headersSent) {
+    res.cookie(TOKEN_COOKIE, legacy, tokenCookieOptions(req));
+    res.clearCookie(LEGACY_TOKEN_COOKIE);
+  }
+  return legacy;
+}
+
 function authenticate(req, res, next) {
-  let token = req.cookies.pv_token;
+  let token = readTokenCookie(req, res);
   let isApiToken = false;
   
   if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -86,5 +111,9 @@ module.exports = {
   authenticate,
   requireAdmin,
   requireUploader,
-  getJwtSecret
+  getJwtSecret,
+  TOKEN_COOKIE,
+  LEGACY_TOKEN_COOKIE,
+  tokenCookieOptions,
+  readTokenCookie
 };

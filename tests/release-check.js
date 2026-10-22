@@ -1,5 +1,5 @@
 /**
- * GyroidVault Automated Pre-Release Test Suite
+ * 3DLib Automated Pre-Release Test Suite
  * Run via: npm test (or node tests/release-check.js)
  *
  * Covers:
@@ -220,20 +220,55 @@ async function runStaticAndUiChecks() {
       ['UI.fileHistoryModal', () => UI.fileHistoryModal({ id: 10, original_name: 'Parts/gear.3mf', file_type: '3mf' },
         [{ id: 1, file_size: 100, source: 'slicer', created_at: '2026-10-14 10:00:00', url: '/api/files/10/versions/1/file' }], true)],
       ['UI.slicerSavesPage', () => UI.slicerSavesPage({ quiet_minutes: 5, cleanup_days: 7, now: Date.now(), saves: [
-        { id: 1, name: 'gear_gv-abcdefgh.3mf', clean_name: 'gear.3mf', status: 'pending', file_size: 10, mtime_ms: Date.now(), model_id: 1, model_name: 'Box', file_name: 'gear.3mf' },
+        { id: 1, name: 'gear_3dl-abcdefgh.3mf', clean_name: 'gear.3mf', status: 'pending', file_size: 10, mtime_ms: Date.now(), model_id: 1, model_name: 'Box', file_name: 'gear.3mf' },
         { id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf', status: 'unmatched', file_size: 10, mtime_ms: Date.now() },
         { id: 3, name: 'x.3mf', clean_name: 'x.3mf', status: 'imported', file_size: 10, mtime_ms: Date.now(), message: 'New version of x.3mf', imported_model_id: 1, imported_model_name: 'Box', imported_name: 'x.3mf' },
         { id: 4, name: 'y.3mf', clean_name: 'y.3mf', status: 'error', file_size: 10, mtime_ms: Date.now(), message: 'Read-only' },
         { id: 5, name: 'z.stl', clean_name: 'z.stl', status: 'download', file_size: 10, mtime_ms: Date.now() },
-        { id: 6, name: 'z_gv-abcdefgh(2).3mf', clean_name: 'z.3mf', status: 'superseded', file_size: 10, mtime_ms: Date.now(), message: 'A newer save of this file is already in the library', model_id: 1, model_name: 'Box', file_name: 'z.3mf' }] })],
+        { id: 6, name: 'z_3dl-abcdefgh(2).3mf', clean_name: 'z.3mf', status: 'superseded', file_size: 10, mtime_ms: Date.now(), message: 'A newer save of this file is already in the library', model_id: 1, model_name: 'Box', file_name: 'z.3mf' }] })],
       ['UI.slicerSavesPage (empty)', () => UI.slicerSavesPage({ quiet_minutes: 5, cleanup_days: 7, now: Date.now(), saves: [] })],
-      ['UI.slicerAssignForm', () => UI.slicerAssignForm({ id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf' })]
+      ['UI.slicerAssignForm', () => UI.slicerAssignForm({ id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf' })],
+      ['UI.aboutSection', () => UI.aboutSection('1.0.0')]
     ];
 
     for (const [label, fn] of renders) {
       const html = fn();
       assert(typeof html === 'string' && html.trim().length > 10, `${label} returned empty or non-string output`);
     }
+  });
+
+  await check('Names with quotes and HTML stay data in inline handlers (Folder Explorer, breadcrumbs, settings lists)', () => {
+    const evil = `a'b"c<b>x</b>\\d');alert(1);('`;
+    const decode = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    // Runs every App.* handler of the HTML, as the browser would after decoding the attribute,
+    // with a fake App that records the string arguments
+    const handlerArgs = (html) => {
+      const args = [];
+      const fakeApp = new Proxy({}, { get: () => (...a) => { args.push(...a.filter(x => typeof x === 'string')); } });
+      for (const m of html.matchAll(/\son[a-z]+="([^"]*)"/g)) {
+        const code = decode(m[1]);
+        if (!/\bApp\./.test(code)) continue;
+        let fn;
+        try { fn = new Function('App', 'event', code); } catch (e) { throw new Error(`Handler does not compile: ${code}`); }
+        try { fn.call({ classList: { add() {}, remove() {} } }, fakeApp, { preventDefault() {}, stopPropagation() {} }); } catch (e) {}
+      }
+      return args;
+    };
+    const renders = {
+      breadcrumbs: UI.breadcrumbs(`top/${evil}/leaf`),
+      folderTree: UI.folderTree([{ name: evil, path: evil, children: [] }], ''),
+      folderCard: UI.folderCard({ name: evil, path: evil, itemCount: 1, thumbnails: [] }),
+      browseFileCard: UI.browseFileCard({ name: `${evil}.stl`, type: 'stl', ext: 'stl', size: 1, url: '/library-files/x.stl', folderPath: evil }),
+      settingsPanel: UI.settingsPanel('Tags', [{ id: 1, name: evil, model_count: 0 }], 'tags')
+    };
+    for (const [label, html] of Object.entries(renders)) {
+      assert(!html.includes('<b>x</b>'), `${label}: the name must be escaped`);
+      const args = handlerArgs(html);
+      assert(args.some(a => a.includes(evil)), `${label}: handlers must get the name unchanged, got ${JSON.stringify(args)}`);
+    }
+    const file = JSON.parse(decodeURIComponent(handlerArgs(renders.browseFileCard).find(a => a.startsWith('%7B'))));
+    assert(file.name === `${evil}.stl`, 'The file card must hand over the whole file');
+    assert(!/\son[a-z]+="[^"]*\.replace\(\/'\/g/.test(appCode + compCode), 'Handler arguments go through UI.jsArg, not a quote replace');
   });
 
   await check('VAULT configurator view renders: builder, parts list, view switch; library names are escaped', () => {
@@ -259,7 +294,7 @@ async function runStaticAndUiChecks() {
     assert(!parts.includes('<img src=x') && !page.includes('<img src=x'), 'File names from the library must be escaped');
     const downloads = parts.match(/href="\/api\/files\/\d+\/download"/g) || [];
     assert(downloads.length === bom.parts.length + cat.docs.length && parts.includes('href="/api/files/999/download"'), `Every listed file and instruction PDF downloads on its own, got ${downloads.length} links for ${bom.parts.length} files and ${cat.docs.length} PDFs`);
-    assert(parts.includes('App.kitShowManual(\'01_Instructions Manual.pdf\', 1)'), 'Instruction PDFs open in the preview');
+    assert(parts.includes('App.kitShowManual(&quot;01_Instructions Manual.pdf&quot;, 1)'), 'Instruction PDFs open in the preview');
     assert(page.includes('id="kit-builder"') && page.includes('id="stl-viewer-1"') && !page.includes('tab-content-files'), 'The configurator replaces the file list');
     assert(filesView.includes('tab-content-files') && filesView.includes('?view=files') && !filesView.includes('id="kit-builder"'), 'The Files view keeps the file list and the view switch');
     assert(!UI.modelDetail(mockModel, false).includes('detail-views'), 'Other models have no view switch');
@@ -283,7 +318,7 @@ async function runStaticAndUiChecks() {
     assert(!UI.modelCard({ ...mockModel, fit: null }).includes('badge-fit'), 'No badge without 3D files');
     App.printerBeds = null;
     const roofTip = UI.kitTipContent(K.TIPS.roof, { value: 'bowl', set: 'cfg:roof', available: ['none', 'grid', 'bowl'] });
-    assert(/is-current[^>]*onclick="App.kitTipPick\('cfg:roof', 'bowl'\)"/.test(roofTip) && /disabled[^>]*onclick="App.kitTipPick\('cfg:roof', 'heavy'\)"/.test(roofTip), 'A tip marks the current choice and disables the unavailable ones');
+    assert(/is-current[^>]*onclick="App.kitTipPick\(&quot;cfg:roof&quot;, &quot;bowl&quot;\)"/.test(roofTip) && /disabled[^>]*onclick="App.kitTipPick\(&quot;cfg:roof&quot;, &quot;heavy&quot;\)"/.test(roofTip), 'A tip marks the current choice and disables the unavailable ones');
 
     // The drawing: every roof, base and modification, no broken numbers
     for (const roof of ['grid', 'table', 'bowl', 'heavy', 'undertable', 'none']) {
@@ -354,32 +389,7 @@ async function runStaticAndUiChecks() {
     assert(missingHandlers.size === 0, `Missing App handlers: ${[...missingHandlers].join(', ')}`);
   });
 
-  await check('WhatsNew popup only triggers once and Detail Header CSS does not overflow button row (Issues #79 & #80 guard)', () => {
-    let openedCount = 0;
-    const origOpen = App.openWhatsNew;
-    App.openWhatsNew = function () {
-      openedCount++;
-      sandbox.localStorage.setItem('gv_last_seen_version', this.WHATS_NEW_VERSION || '2.0.2');
-    };
-    const origSetTimeout = sandbox.setTimeout;
-    sandbox.setTimeout = (fn) => { fn(); return 1; };
-
-    // Legacy '2.0.0' seen value should be recognized and NOT trigger popup
-    sandbox.localStorage.setItem('gv_last_seen_version', '2.0.0');
-    App.checkWhatsNew();
-    assert(openedCount === 0, 'Expected checkWhatsNew not to open when gv_last_seen_version is 2.0.0 (Issue #79)');
-    assert(sandbox.localStorage.getItem('gv_last_seen_version') === App.WHATS_NEW_VERSION, 'Expected 2.0.0 to upgrade to WHATS_NEW_VERSION');
-
-    // Fresh user: triggers once, then subsequent refreshes never trigger again
-    sandbox.localStorage.removeItem('gv_last_seen_version');
-    App.checkWhatsNew();
-    assert(openedCount === 1, 'Expected checkWhatsNew to open once for fresh user');
-    App.checkWhatsNew();
-    assert(openedCount === 1, 'Expected checkWhatsNew NOT to open on second refresh (Issue #79)');
-
-    sandbox.setTimeout = origSetTimeout;
-    App.openWhatsNew = origOpen;
-
+  await check('Detail Header CSS does not overflow button row and guests get no ZIP button (Issue #80 guard)', () => {
     // Guest vs Logged-in Download All (.zip) & no duplicate ZIP button check
     const savedUser = App.currentUser;
     App.currentUser = null;
@@ -406,7 +416,7 @@ async function runStaticAndUiChecks() {
 
   await check('"Open in slicer" file names are plain ASCII (Bambu Studio decodes the link: a raw space fails with 400)', () => {
     const name = UI.slicerFileName({ original_name: 'Parts/Część łoża (v2) #1.stl', slicer_token: 'abcdefgh' }, '3mf');
-    assert(name === 'Czesc_loza_v2_1_gv-abcdefgh.3mf', `Unexpected slicer file name: ${name}`);
+    assert(name === 'Czesc_loza_v2_1_3dl-abcdefgh.3mf', `Unexpected slicer file name: ${name}`);
     assert(UI.slicerFileName({ original_name: '¿¿.stl' }, 'stl') === 'model.stl', 'A name with nothing usable falls back to "model"');
     const html = UI.modelDetail({ ...mockModel, files: [{ ...mockModel.files[0], slicer_token: 'abcdefgh', original_name: 'Main body.stl' }] }, false);
     const links = html.match(/[a-z]+:\/\/open\?file=[^"]+/g) || [];
@@ -499,7 +509,7 @@ async function runStaticAndUiChecks() {
   await check('Printer fit: sizes of STL / OBJ / 3MF files, parts checked straight, turned and on the diagonal', async () => {
     const os = require('os');
     const { measure } = require(path.join(ROOT_DIR, 'server/utils/meshSize'));
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gv-size-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-size-'));
     try {
       // Binary STL: one triangle 0..30 × 0..20 × 0..10
       const bin = Buffer.alloc(84 + 50 * 2);
@@ -560,6 +570,58 @@ async function runStaticAndUiChecks() {
     }
     assert(missingApi.size === 0, `Missing API methods: ${[...missingApi].join(', ')}`);
   });
+
+  await check('Browser settings saved under gv_ / pv_ keys move to 3dl_ once (index.html)', () => {
+    const html = fs.readFileSync(path.join(ROOT_DIR, 'public/index.html'), 'utf8');
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
+    // Stored keys are own enumerable properties, as Object.keys(localStorage) lists them in a browser
+    class FakeStorage {
+      getItem(k) { return Object.prototype.hasOwnProperty.call(this, k) ? this[k] : null; }
+      setItem(k, v) { this[k] = String(v); }
+      removeItem(k) { delete this[k]; }
+    }
+    const ls = Object.assign(new FakeStorage(), {
+      gv_theme: 'light', gv_accent: 'green', '3dl_accent': 'rose', gv_kit_7: '{"a":1}',
+      pv_user: '{"id":1}', pv_csrf_token: 'abc', gv_last_seen_version: '2.0.2', other: 'x'
+    });
+    const attrs = {};
+    vm.runInNewContext(script, { localStorage: ls, document: { documentElement: { setAttribute(n, v) { attrs[n] = v; } } } });
+    assert(ls['3dl_theme'] === 'light' && ls['3dl_kit_7'] === '{"a":1}' && ls['3dl_user'] === '{"id":1}' && ls['3dl_csrf_token'] === 'abc', `Keys must move: ${JSON.stringify(ls)}`);
+    assert(ls['3dl_accent'] === 'rose', 'A 3dl_ key that already exists must win');
+    assert(!Object.keys(ls).some(k => /^(gv|pv)_/.test(k)) && !('3dl_last_seen_version' in ls), `Old keys must go: ${Object.keys(ls)}`);
+    assert(ls.other === 'x', 'Other keys stay');
+    assert(attrs['data-theme'] === 'light' && attrs['data-accent'] === 'rose', `The moved theme must apply at once: ${JSON.stringify(attrs)}`);
+  });
+
+  await check('Database file: gyroidvault.db is copied to 3dlib.db once, the old file stays unchanged', () => {
+    const { resolveDbPath } = require(path.join(ROOT_DIR, 'server/utils/dbFile.js'));
+    const quiet = { log() {}, error() {} };
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-dbfile-'));
+    try {
+      const legacy = path.join(dir, 'gyroidvault.db');
+      const current = path.join(dir, '3dlib.db');
+      assert(resolveDbPath(dir, quiet) === current && !fs.existsSync(current), 'A fresh data dir uses 3dlib.db and creates nothing');
+
+      const content = Buffer.from(Array.from({ length: 70000 }, (_, i) => i % 251));
+      fs.writeFileSync(legacy, content);
+      const legacyMtime = fs.statSync(legacy).mtimeMs;
+      assert(resolveDbPath(dir, quiet) === current, 'An old database is opened under the new name');
+      assert(fs.readFileSync(current).equals(content), 'The copy is byte for byte the old database');
+      assert(fs.readFileSync(legacy).equals(content) && fs.statSync(legacy).mtimeMs === legacyMtime, 'The old file is not changed');
+      assert(!fs.readdirSync(dir).some(n => n.endsWith('.migrating')), 'No temporary file is left behind');
+
+      fs.writeFileSync(current, 'newer');
+      assert(resolveDbPath(dir, quiet) === current && fs.readFileSync(current, 'utf8') === 'newer', 'An existing 3dlib.db is never overwritten');
+
+      // A copy that fails keeps the server on the old file instead of an empty database
+      fs.unlinkSync(current);
+      fs.mkdirSync(current + '.migrating');
+      assert(resolveDbPath(dir, quiet) === legacy, 'A failed copy falls back to gyroidvault.db');
+      assert(!fs.existsSync(current) && fs.readFileSync(legacy).equals(content), 'A failed copy changes nothing');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 }
 
 // ─── 2. END-TO-END API, FUNCTIONAL & SECURITY TESTS ─────────────────────────
@@ -567,7 +629,7 @@ async function runStaticAndUiChecks() {
 async function runE2ETests() {
   console.log('\n\x1b[1m[2/2] End-to-End API, Functional & Security Tests\x1b[0m');
 
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gyroidvault-test-'));
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-test-'));
   const tmpDataDir = path.join(tmpRoot, 'data');
   const tmpLibDir = path.join(tmpRoot, 'library');
   fs.mkdirSync(tmpDataDir, { recursive: true });
@@ -653,6 +715,7 @@ async function runE2ETests() {
       adminSession.cookie = (login1.setCookie || '').split(';')[0];
       adminSession.csrfToken = login1.data.csrfToken;
       assert(adminSession.cookie && adminSession.csrfToken, 'Missing cookie or csrfToken for admin');
+      assert(adminSession.cookie.startsWith('3dl_token='), `Login must set the 3dl_token cookie: ${adminSession.cookie}`);
 
       // Enable open registration temporarily so we can register a second user
       await apiReq('/api/settings/system', {
@@ -684,6 +747,36 @@ async function runE2ETests() {
       assert(login2.data.user?.role === 'viewer', `Expected role="viewer", got "${login2.data.user?.role}"`);
       viewerSession.cookie = (login2.setCookie || '').split(';')[0];
       viewerSession.csrfToken = login2.data.csrfToken;
+    });
+
+    await check('A login cookie from before the rename (pv_token) still works and moves to 3dl_token', async () => {
+      const legacy = { cookie: adminSession.cookie.replace(/^3dl_token=/, 'pv_token='), csrfToken: adminSession.csrfToken };
+      // /api/auth/* is checked by authenticate(), everything else by the gatekeeper in index.js
+      for (const endpoint of ['/api/auth/me', '/api/categories']) {
+        const r = await apiReq(endpoint, { session: legacy });
+        assert(r.status === 200, `${endpoint} with pv_token: ${r.status}`);
+        assert(/(^|,\s*)3dl_token=[^;]/.test(r.setCookie || ''), `${endpoint} must set 3dl_token: ${r.setCookie}`);
+        assert(/(^|,\s*)pv_token=;/.test(r.setCookie || ''), `${endpoint} must clear pv_token: ${r.setCookie}`);
+      }
+      const me = await apiReq('/api/auth/me', { session: legacy });
+      assert(me.data.username === 'admin_test', `pv_token must log in as its user: ${JSON.stringify(me.data)}`);
+      const current = await apiReq('/api/auth/me', { session: adminSession });
+      assert(current.status === 200 && !current.setCookie, `3dl_token alone needs no new cookie: ${current.setCookie}`);
+    });
+
+    await check('Security: /uploads and /library-files never serve files outside their folder (database, other files)', async () => {
+      fs.writeFileSync(path.join(tmpDataDir, 'uploads', 'probe.png'), 'probe');
+      fs.writeFileSync(path.join(tmpRoot, 'secret.txt'), 'secret');
+      const ok = await fetch(`${baseUrl}/uploads/probe.png`);
+      assert(ok.status === 200 && await ok.text() === 'probe', `An upload must still load: ${ok.status}`);
+      const missing = await fetch(`${baseUrl}/uploads/nothing.png`);
+      assert(missing.status === 404, `A missing upload is a 404, got ${missing.status}`);
+      for (const p of ['/uploads/..%2F3dlib.db', '/uploads/%2E%2E%2F3dlib.db', '/uploads/..%5C3dlib.db', '/uploads/..%2F..%2Fsecret.txt',
+        '/uploads/sub/..%2F..%2F3dlib.db', '/library-files/..%2F..%2Fsecret.txt', '/library-files/..%2Fdata%2F3dlib.db']) {
+        const r = await fetch(`${baseUrl}${p}`);
+        const body = await r.text();
+        assert(r.status !== 200 && !body.includes('SQLite format 3') && !body.includes('secret'), `${p} must not leave its folder: ${r.status} ${body.slice(0, 40)}`);
+      }
     });
 
     let createdModelId = null;
@@ -790,6 +883,31 @@ async function runE2ETests() {
       assert(getRes.status === 200, 'Failed to fetch model created by slicer upload');
       assert(getRes.data.files && getRes.data.files.length >= 1, 'No files associated with slicer model');
       assert(getRes.data.files[0].file_type === 'gcode', `Expected slicer file type "gcode", got ${getRes.data.files[0].file_type}`);
+
+      // The name comes from the client: "...gcode" parses to the name "..", which once made the
+      // project folder the library's parent
+      for (const evil of ['...gcode', '../../evil.gcode', '.hidden.gcode', 'a:b*?.gcode']) {
+        const f = new FormData();
+        f.append('file', new Blob([gcodeContent], { type: 'text/x-gcode' }), evil);
+        const r = await apiReq('/api/upload-slicer', { method: 'POST', session: adminSession, body: f });
+        assert(r.status === 201, `Upload of "${evil}" failed (${r.status}): ${JSON.stringify(r.data)}`);
+        const m = await apiReq(`/api/models/${r.data.model_id}`, { session: adminSession });
+        const file = m.data.files[0];
+        const rel = path.relative(tmpLibDir, file.library_path);
+        assert(rel && !rel.startsWith('..') && !path.isAbsolute(rel), `"${evil}" must stay in the library: ${file.library_path}`);
+        assert(!rel.split(/[\\/]/).some(part => part.startsWith('.')), `"${evil}" must not make a hidden file or folder: ${rel}`);
+        assert(fs.existsSync(file.library_path), `"${evil}" must be on disk at ${file.library_path}`);
+      }
+      assert(!fs.readdirSync(tmpRoot).some(n => n.endsWith('.gcode')), `Nothing may land next to the library: ${fs.readdirSync(tmpRoot)}`);
+    });
+
+    await check('A taken model name suggests the next version ("Gear v2" -> "Gear v3", "Gear (v2)" -> "Gear v3")', async () => {
+      for (const name of ['Gear v2', 'Gear (v2)']) {
+        const first = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name } });
+        assert(first.status === 200 || first.status === 201, `Create "${name}" failed (${first.status})`);
+        const again = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name } });
+        assert(again.status === 409 && (again.data.suggested_names || []).includes('Gear v3'), `"${name}" taken: ${again.status} ${JSON.stringify(again.data.suggested_names)}`);
+      }
     });
 
     let categoryId = null;
@@ -1321,7 +1439,7 @@ async function runE2ETests() {
       const ok = await apiReq(`/api/models/${model.id}/unlock`, { method: 'POST', session: adminSession, body: { password: 'tajne123' } });
       assert(ok.status === 200 && ok.data.token, `Right password must unlock, got ${ok.status}`);
       const unlockCookie = (ok.setCookie || '').split(';')[0];
-      assert(unlockCookie.startsWith('gv_adult='), 'Unlock must set the gv_adult cookie');
+      assert(unlockCookie.startsWith('3dl_adult='), 'Unlock must set the 3dl_adult cookie');
 
       const open = await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': ok.data.token } });
       assert(open.status === 200, `Unlocked protected model must open, got ${open.status}`);
@@ -1439,7 +1557,7 @@ async function runE2ETests() {
       assert(!fs.existsSync(lib('Workshop Renamed')), 'Purging a model must delete its folder');
     });
 
-    await check('Every file gets a unique slicer token; slicer links named "<name>_gv-<token>.<ext>" download the file', async () => {
+    await check('Every file gets a unique slicer token; slicer links named "<name>_3dl-<token>.<ext>" download the file', async () => {
       const list = (await apiReq('/api/models?limit=100', { session: adminSession })).data.models || [];
       const tokens = [];
       let sample = null;
@@ -1456,11 +1574,12 @@ async function runE2ETests() {
       assert(again.slicer_token === sample.slicer_token, 'A file must keep its slicer token');
       const { tokenFromName } = require(path.join(ROOT_DIR, 'server/utils/slicerToken'));
       const t = sample.slicer_token;
-      assert(tokenFromName(`Xmas_tree_210_gv-${t}.3mf`) === t, 'The token must be read back from a saved file name');
-      assert(tokenFromName(`Xmas_tree_210_gv-${t}(2).3mf`) === t, 'A "(2)" suffix added by the slicer must not hide the token');
-      assert(tokenFromName(`Xmas tree 210 gv-${t.toUpperCase()}.3mf`) === t, 'Spaces and letter case must not hide the token');
-      assert(tokenFromName('model(2).3mf') === null && tokenFromName(`xgv-${t}.3mf`) === null, 'A name without a token has none');
-      const dl = await fetch(`${baseUrl}/api/files/${sample.id}/3mf/Xmas_tree_210_gv-${t}.3mf`, { headers: { Cookie: adminSession.cookie } });
+      assert(tokenFromName(`Xmas_tree_210_3dl-${t}.3mf`) === t, 'The token must be read back from a saved file name');
+      assert(tokenFromName(`Xmas_tree_210_3dl-${t}(2).3mf`) === t, 'A "(2)" suffix added by the slicer must not hide the token');
+      assert(tokenFromName(`Xmas tree 210 3dl-${t.toUpperCase()}.3mf`) === t, 'Spaces and letter case must not hide the token');
+      assert(tokenFromName('model(2).3mf') === null && tokenFromName(`x3dl-${t}.3mf`) === null, 'A name without a token has none');
+      assert(tokenFromName(`Xmas_tree_210_gv-${t}.3mf`) === null, 'Links from before the rename to 3DLib (_gv-) are not read');
+      const dl = await fetch(`${baseUrl}/api/files/${sample.id}/3mf/Xmas_tree_210_3dl-${t}.3mf`, { headers: { Cookie: adminSession.cookie } });
       assert(dl.status === 200, `A slicer link with the file name and token must download, got ${dl.status}`);
     });
 
@@ -1496,7 +1615,7 @@ async function runE2ETests() {
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '0' } });
       const gearModel = await byName('Gear Box');
       const gear = (await detail(gearModel.id)).files.find(f => f.original_name === 'gear.3mf');
-      const saveName = `gear_gv-${gear.slicer_token}.3mf`;
+      const saveName = `gear_3dl-${gear.slicer_token}.3mf`;
 
       // The slicer drops the downloaded file into .slicer-saves: not a save
       const sent = await download(`/api/files/${gear.id}/download/${saveName}`);
@@ -1529,7 +1648,7 @@ async function runE2ETests() {
       // A 3MF saved from a loose STL: the project becomes a folder and the 3MF its main file
       const xmasModel = await byName('Loose Xmas');
       const xmasStl = (await detail(xmasModel.id)).files[0];
-      const xmasSave = `Loose_Xmas_gv-${xmasStl.slicer_token}.3mf`;
+      const xmasSave = `Loose_Xmas_3dl-${xmasStl.slicer_token}.3mf`;
       put(`.slicer-saves/${xmasSave}`, await download(`/api/files/${xmasStl.id}/3mf/${xmasSave}`));
       assert((await saves()).find(x => x.name === xmasSave).status === 'download', 'The converted STL download must be ignored too');
       put(`.slicer-saves/${xmasSave}`, mesh(30));
@@ -1550,7 +1669,7 @@ async function runE2ETests() {
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
     });
 
-    await check('Slicer saves of one file ("x_gv-t.3mf", "x_gv-t(2).3mf"): newest wins, older copies are cleaned up', async () => {
+    await check('Slicer saves of one file ("x_3dl-t.3mf", "x_3dl-t(2).3mf"): newest wins, older copies are cleaned up', async () => {
       const { meshTo3mf } = require(path.join(ROOT_DIR, 'server/utils/3mf'));
       const meshes = {};
       const mesh = (n) => (meshes[n] = meshes[n] || meshTo3mf({ verts: [[0, 0, 0], [n, 0, 0], [0, n, 0]], tris: [[0, 1, 2]] }));
@@ -1563,7 +1682,7 @@ async function runE2ETests() {
       };
       const gearModel = ((await apiReq('/api/models?search=Gear%20Box', { session: adminSession })).data.models || []).find(m => m.name === 'Gear Box');
       const gear = (await apiReq(`/api/models/${gearModel.id}`, { session: adminSession })).data.files.find(f => f.original_name === 'gear.3mf');
-      const name = (suffix) => `gear_gv-${gear.slicer_token}${suffix}.3mf`;
+      const name = (suffix) => `gear_3dl-${gear.slicer_token}${suffix}.3mf`;
       const put = (suffix, data, mtimeSec) => {
         const p = path.join(saves, name(suffix));
         fs.writeFileSync(p, data);
@@ -1598,7 +1717,7 @@ async function runE2ETests() {
       // Clean up now: nothing that holds anything new is left
       const cleaned = await apiReq('/api/slicer-saves/cleanup', { method: 'POST', session: adminSession });
       assert(cleaned.status === 200 && cleaned.data.removed >= 2, `Clean up now failed: ${JSON.stringify(cleaned.data)}`);
-      assert(!fs.readdirSync(saves).some(n => n.startsWith(`gear_gv-${gear.slicer_token}`)), 'Clean up now must delete imported and older copies');
+      assert(!fs.readdirSync(saves).some(n => n.startsWith(`gear_3dl-${gear.slicer_token}`)), 'Clean up now must delete imported and older copies');
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
     });
 
@@ -1846,7 +1965,7 @@ async function runE2ETests() {
 }
 
 (async () => {
-  console.log('\x1b[1;36m═══ GyroidVault Automated Pre-Release Verification Suite ═══\x1b[0m');
+  console.log('\x1b[1;36m═══ 3DLib Automated Pre-Release Verification Suite ═══\x1b[0m');
   const start = Date.now();
   await runStaticAndUiChecks();
   await runE2ETests();

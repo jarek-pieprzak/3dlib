@@ -359,19 +359,25 @@ router.post('/:id/send-to-printer', authenticate, async (req, res) => {
 const uploadSlicerHandler = [authenticate, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    const filename = req.file.originalname;
-    const name = path.parse(filename).name;
+    // The name comes from the client. Keep its last part without signs SMB refuses and without
+    // leading or trailing dots: "...gcode" parses to the name "..", which made the library's
+    // parent the project folder, and a dot name is hidden from the scanner.
+    const ext = path.extname(path.basename(String(req.file.originalname || '')));
+    const name = path.basename(String(req.file.originalname || ''), ext)
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/^[.\s]+|[.\s]+$/g, '') || `model_${Date.now()}`;
+    const filename = name + ext;
     const userId = req.user.id;
-    const safeName = name.replace(/[<>:"/\\|?*]/g, '').trim() || `model_${Date.now()}`;
-    const libPath = path.join(LIBRARY_PATH, safeName);
+    const libPath = validatePathConfinement(LIBRARY_PATH, name);
+    if (!libPath || libPath === path.resolve(LIBRARY_PATH)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Invalid file name' });
+    }
     if (!fs.existsSync(libPath)) fs.mkdirSync(libPath, { recursive: true });
 
     let finalDest = path.join(libPath, filename);
     let counter = 1;
     while (fs.existsSync(finalDest)) {
-      const ext = path.extname(filename);
-      const base = path.basename(filename, ext);
-      finalDest = path.join(libPath, `${base}_${counter}${ext}`);
+      finalDest = path.join(libPath, `${name}_${counter}${ext}`);
       counter++;
     }
     fs.copyFileSync(req.file.path, finalDest);

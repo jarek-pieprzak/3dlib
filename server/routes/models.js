@@ -12,6 +12,7 @@ const { getFileUrl, getThumbUrl, getZipEntryBuffer, zipEntriesForFiles, getSetti
 const { sendZip, entryName } = require('../utils/zipStream');
 const downloadSelections = require('../utils/downloadSelections');
 const adultLock = require('../utils/adult');
+const printFit = require('../utils/printFit');
 const trashUtil = require('../utils/trash');
 const projectFiles = require('../utils/projectFiles');
 const { ensureTokens } = require('../utils/slicerToken');
@@ -83,6 +84,11 @@ router.get('/', (req, res) => {
     if (printed === 'true') conds.push("m.id IN (SELECT DISTINCT model_id FROM print_history)");
     else if (printed === 'false') conds.push("m.id NOT IN (SELECT DISTINCT model_id FROM print_history)");
     if (project_id) { conds.push("m.id IN (SELECT model_id FROM project_models WHERE project_id=?)"); params.push(Number(project_id)); }
+    // ?fits=<printer id | any>: only models whose every measured 3D file fits that printer
+    if (req.query.fits) {
+      const ids = printFit.fittingModelIds(String(req.query.fits));
+      conds.push(ids.length ? `m.id IN (${ids.join(',')})` : '0');
+    }
 
     let countQuery = 'SELECT COUNT(m.id) as total FROM models m';
     if (conds.length) {
@@ -151,6 +157,8 @@ router.get('/', (req, res) => {
       }
     }
 
+    // How the model's 3D files fit my printers (the badge on its card)
+    const fitByModel = printFit.modelFits(modelIds);
     const models = rawModels.map(m => {
       const preview = m.preview_file_id != null ? previewFileById[m.preview_file_id] : null;
       const stlFallback = stlByModel[m.id];
@@ -167,12 +175,14 @@ router.get('/', (req, res) => {
       
       let thumb_url = getThumbUrl(m.thumbnail, m.library_path);
 
+      const fit = fitByModel.get(m.id) || null;
       const fstats = fileStatsByModel[m.id];
       const print_count = printCountByModel[m.id] || 0;
 
       return {
         ...m,
         thumbnail: thumb_url,
+        fit,
         stl_file: stl_url,
         file_count: fstats ? fstats.file_count : 0,
         file_types: fstats && fstats.file_types ? [...new Set(fstats.file_types.split(','))] : [],

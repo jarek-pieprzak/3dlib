@@ -1822,3 +1822,13 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .bed-head{margin-bottom:6px;font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
 .bed-row{margin-bottom:8px}
 @media(max-width:700px){.bed-head{display:none}.bed-row{grid-template-columns:repeat(4, 1fr)}.bed-row .bed-name{grid-column:1/-1}}
+/* The printer for the fit check, in the top bar (App.renderFitPicker); badges on model cards */
+.topbar-fit{display:inline-flex;align-items:center;gap:6px;color:var(--text-muted)}
+.topbar-fit[hidden]{display:none}
+.topbar-fit .fit-select{max-width:190px}
+.fit-icon{flex:none;color:var(--text-muted)}
+.fit-hint{margin-left:auto;font-size:.7rem;color:var(--text-muted);opacity:.8}
+.badge-fit{font-size:.65rem;color:var(--text-muted);background:var(--bg-tertiary);border:1px solid var(--border)}
+.badge-fit.is-ok{color:var(--success);border-color:color-mix(in srgb, var(--success) 40%, transparent);background:color-mix(in srgb, var(--success) 10%, transparent)}
+.badge-fit.is-bad{color:var(--error);border-color:color-mix(in srgb, var(--error) 40%, transparent);background:color-mix(in srgb, var(--error) 10%, transparent)}
+@media(max-width:768px){.topbar-fit svg{display:none}.topbar-fit .fit-select{max-width:130px}.fit-hint{display:none}}

@@ -8,24 +8,7 @@ const { get, all, run } = require('../database');
 const { authenticate } = require('../middleware/auth');
 const adultLock = require('../utils/adult');
 const dimensions = require('../services/dimensions');
-
-// Used until the list is changed in Settings
-const DEFAULT_BEDS = [
-  { id: 'bambu-p1s', name: 'Bambu Lab P1S', x: 256, y: 256, z: 256, margin: 0 },
-  { id: 'snapmaker-u1', name: 'Snapmaker U1', x: 270, y: 270, z: 270, margin: 0 },
-  { id: 'creality-sparkx-i8', name: 'Creality SparkX i8', x: 260, y: 260, z: 255, margin: 0 }
-];
-
-function beds() {
-  const row = get("SELECT value FROM system_settings WHERE key = 'printer_beds'");
-  if (!row) return DEFAULT_BEDS;
-  try {
-    const list = JSON.parse(row.value);
-    return Array.isArray(list) ? list : DEFAULT_BEDS;
-  } catch (e) {
-    return DEFAULT_BEDS;
-  }
-}
+const { beds, DEFAULT_BEDS } = require('../utils/printFit');
 
 // ─── GET /api/printer-beds ────────────────────────────────────────────────────
 router.get('/printer-beds', (req, res) => res.json(beds()));

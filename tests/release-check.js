@@ -273,6 +273,12 @@ async function runStaticAndUiChecks() {
         if (t.manual) assert(docs.has(t.manual[0]) && t.manual[1] >= 1, `Tip ${key}: no manual ${t.manual[0]}`);
       }
     }
+    // Model cards show whether their 3D files fit the printer chosen in the top bar
+    App.printerBeds = [{ id: 'p1s', name: 'P1S', x: 256, y: 256, z: 256 }];
+    assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 1, p1s: 1 } } }).includes('✗ 1 too big'), 'A card marks a model that is too big');
+    assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 0, p1s: 0 } } }).includes('✓ Fits'), 'A card marks a model that fits');
+    assert(!UI.modelCard({ ...mockModel, fit: null }).includes('badge-fit'), 'No badge without 3D files');
+    App.printerBeds = null;
     const roofTip = UI.kitTipContent(K.TIPS.roof, { value: 'bowl', set: 'cfg:roof', available: ['none', 'grid', 'bowl'] });
     assert(/is-current[^>]*onclick="App.kitTipPick\('cfg:roof', 'bowl'\)"/.test(roofTip) && /disabled[^>]*onclick="App.kitTipPick\('cfg:roof', 'heavy'\)"/.test(roofTip), 'A tip marks the current choice and disables the unavailable ones');
 
@@ -1785,6 +1791,28 @@ async function runE2ETests() {
       assert(JSON.stringify(sizes.data.sizes[part.id]) === '[5,5,0]', `part.stl is 5 × 5 × 0 mm, got ${JSON.stringify(sizes.data.sizes[part.id])}`);
       assert(sizes.data.errors[big.id] || sizes.data.sizes[big.id], 'Random bytes as an STL are measured or marked as failed, never left waiting');
       assert(part.dim_x === 5 && part.dim_bytes === part.file_size, 'The model page gets the size with its files');
+
+      // The model list: a badge per model and the "Fits my printer" filter
+      const longBar = 'solid l\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 400 0 0\nvertex 0 10 10\nendloop\nendfacet\nendsolid l\n';
+      fs.mkdirSync(path.join(tmpLibDir, 'Long Bar'), { recursive: true });
+      fs.writeFileSync(path.join(tmpLibDir, 'Long Bar', 'bar.stl'), longBar);
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        if (!(await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning) break;
+      }
+      const bar = ((await apiReq('/api/models?search=Long%20Bar', { session: adminSession })).data.models || []).find(m => m.name === 'Long Bar');
+      for (let i = 0; i < 100 && (await apiReq(`/api/models/${bar.id}/sizes`, { session: adminSession })).data.pending; i++) await new Promise(r => setTimeout(r, 200));
+      const listed = (await apiReq('/api/models?limit=96', { session: adminSession })).data.models;
+      const barFit = listed.find(m => m.id === bar.id).fit;
+      const zipFit = listed.find(m => m.id === model.id).fit;
+      assert(barFit && barFit.total === 1 && barFit.misfit.any === 1 && barFit.misfit['bambu-p1s'] === 1, `A 400 mm bar fits none of the printers: ${JSON.stringify(barFit)}`);
+      assert(zipFit && zipFit.misfit.any === 0 && zipFit.pending === 0, `Zip Project fits: ${JSON.stringify(zipFit)}`);
+      const fitting = (await apiReq('/api/models?fits=bambu-p1s&limit=96', { session: adminSession })).data.models.map(m => m.name);
+      assert(fitting.includes('Zip Project') && !fitting.includes('Long Bar'), `Fits my printer: ${fitting.join(', ')}`);
+      assert(!(await apiReq('/api/models?fits=any&limit=96', { session: adminSession })).data.models.some(m => m.name === 'Long Bar'), 'Fits any printer: not the long bar');
+      const card = (await apiReq('/api/models?search=Long%20Bar', { session: adminSession })).data.models[0];
+      assert(card.fit.misfit.any === 1, 'The search results carry the fit too');
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

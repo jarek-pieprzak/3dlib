@@ -622,7 +622,7 @@ const UI = {
           <div class="model-card-name" style="flex:1">${m.name}</div>
           ${plusBtn}
         </div>
-        <div class="model-card-meta">${cat} ${printed}</div>
+        <div class="model-card-meta">${cat} ${printed} ${this.fitBadge(m)}</div>
         ${(adultBadge || types) ? `<div class="model-card-body-badges">${adultBadge}${types}</div>` : ''}
       </div>
       <div class="model-card-footer">
@@ -630,6 +630,20 @@ const UI = {
         <span style="font-size:.75rem;color:var(--text-muted)">${this.formatDate(m.updated_at)}</span>
       </div>
     </div>`;
+  },
+
+  // The fit badge of a model card: do its 3D files fit the printer chosen in the top bar?
+  fitBadge(m) {
+    const fit = m.fit;
+    if (!fit || !fit.total) return '';
+    const chosen = App.fitPrinterId();
+    const bed = (App.printerBeds || []).find(b => b.id === chosen);
+    const name = this.escapeHtml(bed ? bed.name : 'any of your printers');
+    const misfit = (fit.misfit && fit.misfit[bed ? bed.id : 'any']) || 0;
+    if (misfit) return `<span class="badge badge-fit is-bad" title="${misfit} of ${fit.total} 3D files are too big for ${name}">✗ ${misfit} too big</span>`;
+    if (fit.pending) return '<span class="badge badge-fit" title="The 3D files are being measured">Measuring</span>';
+    if (fit.total === fit.failed) return '';
+    return `<span class="badge badge-fit is-ok" title="Every 3D file fits ${name}">✓ Fits</span>`;
   },
 
   bulkActionBar(count) {
@@ -2011,6 +2025,10 @@ const UI = {
           <option value="true">Printed</option>
           <option value="false">Not Printed</option>
         </select>
+        <select class="filter-select" id="filter-fits" onchange="App.handleFilter()" title="Only models whose 3D files fit the printer chosen in the top bar">
+          <option value="">All sizes</option>
+          <option value="1">Fits my printer</option>
+        </select>
         <select class="filter-select" id="filter-sort" onchange="App.handleFilter()">
           <option value="updated">Last Updated</option>
           <option value="created">Date Created</option>
@@ -2261,7 +2279,8 @@ const UI = {
   },
 
   // ─── Printer fit check (public/js/printfit.js, App.paintFit) ────────────
-  // The bar in the corner of a file list: the printer to check against and how the files fare.
+  // The bar in the corner of a file list: how the files fare against the printer chosen in the
+  // top bar (App.setFitPrinter).
   // s: PrintFit.summarize(); what: 'files' or 'parts'
   fitBar(beds, chosen, s, what = 'files') {
     const esc = (t) => this.escapeHtml(t);
@@ -2274,12 +2293,7 @@ const UI = {
     else if (s.pending) status = `<span class="fit-status">Measuring ${s.pending} of ${s.total} ${what}...</span>`;
     else status = `<span class="fit-status is-ok">✓ All ${s.measured} ${what} fit ${esc(target)}${s.failed ? ` (${s.failed} could not be measured)` : ''}</span>`;
     if (s.misfit.length && s.pending) status += `<span class="fit-status">, measuring ${s.pending}...</span>`;
-    return `
-      <select class="form-select fit-select" onchange="App.setFitPrinter(this.value)" title="Check the files against this printer" aria-label="Printer">
-        <option value="any"${chosen === 'any' ? ' selected' : ''}>Any of my printers</option>
-        ${(beds || []).map(b => `<option value="${esc(b.id)}"${b.id === chosen ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
-      </select>
-      ${status}`;
+    return `<svg class="fit-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>${status}<span class="fit-hint">printer: top bar</span>`;
   },
 
   // The size of one 3D file and whether it fits: ✓, or ✗ with the printers it does fit

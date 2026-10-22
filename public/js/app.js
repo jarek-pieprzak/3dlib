@@ -101,6 +101,8 @@ const App = {
     this.updateUserNav();
     this.updateThemeIcon();
     this.initPrinters();
+    // My printers for the fit check (the picker in the top bar)
+    this.loadPrinterBeds().then(() => this.renderFitPicker());
     this.route();
     this.checkWhatsNew();
   },
@@ -615,7 +617,7 @@ const App = {
   // ─── Models List ──────────────────────────────────────────────────────
   async renderModels(params = {}) {
     // check if we should show folder view instead (only when no search/category/tag/format filter is active)
-    const hasActiveFilter = !!(params.search || params.category || params.tag || (params.format && params.format !== 'all') || params.user || params.printed || params.project_id);
+    const hasActiveFilter = !!(params.search || params.category || params.tag || (params.format && params.format !== 'all') || params.user || params.printed || params.fits || params.project_id);
     if (this.libraryViewMode === 'folder' && !hasActiveFilter) {
       return this.renderBrowse(params.path || '');
     }
@@ -643,6 +645,7 @@ const App = {
     if (params.tag) document.getElementById('filter-tag').value = params.tag;
     if (params.user) document.getElementById('filter-user').value = params.user;
     if (params.printed) document.getElementById('filter-printed').value = params.printed;
+    if (params.fits) document.getElementById('filter-fits').value = params.fits;
     if (params.sort) document.getElementById('filter-sort').value = params.sort;
     if (params.limit) {
       const limitSelect = document.getElementById('filter-limit');
@@ -848,6 +851,11 @@ const App = {
     try {
       if (params.format) this.currentFormatFilter = params.format;
       const queryParams = { ...params };
+      // "Fits my printer": the printer chosen in the top bar
+      if (queryParams.fits) {
+        if (!this.printerBeds) await this.loadPrinterBeds();
+        queryParams.fits = this.fitPrinterId();
+      }
       if (this.currentFormatFilter && this.currentFormatFilter !== 'all') {
         queryParams.format = this.currentFormatFilter;
       }
@@ -1255,11 +1263,13 @@ const App = {
     if (this.currentFormatFilter && this.currentFormatFilter !== 'all') params.set('format', this.currentFormatFilter);
     if (user) params.set('user', user);
     if (printed) params.set('printed', printed);
+    const fits = document.getElementById('filter-fits')?.value;
+    if (fits) params.set('fits', fits);
     if (sort && sort !== 'updated') params.set('sort', sort);
     if (limit && limit !== '24') params.set('limit', limit);
     params.set('page', '1');
 
-    const hasActiveFilter = !!(search || category || tag || (this.currentFormatFilter && this.currentFormatFilter !== 'all') || user || printed);
+    const hasActiveFilter = !!(search || category || tag || (this.currentFormatFilter && this.currentFormatFilter !== 'all') || user || printed || fits);
     if (this.libraryViewMode === 'folder' && !hasActiveFilter) {
       this.renderBrowse(this.currentBrowsePath);
     } else {
@@ -1283,6 +1293,8 @@ const App = {
     if (this.currentFormatFilter && this.currentFormatFilter !== 'all') params.set('format', this.currentFormatFilter);
     if (user) params.set('user', user);
     if (printed) params.set('printed', printed);
+    const fits = document.getElementById('filter-fits')?.value;
+    if (fits) params.set('fits', fits);
     if (sort && sort !== 'updated') params.set('sort', sort);
     if (limit && limit !== '24') params.set('limit', limit);
     params.set('page', pageNumber);
@@ -2843,9 +2855,24 @@ const App = {
     return id === 'any' || (this.printerBeds || []).some(b => b.id === id) ? id : 'any';
   },
 
+  // The printer chosen in the top bar applies everywhere: the model list (badges, the "Fits my
+  // printer" filter) is fetched again, a model page repaints its sizes
   setFitPrinter(id) {
     try { localStorage.setItem('gv_fit_printer', id || 'any'); } catch (e) {}
+    this.renderFitPicker();
     this.paintFit();
+    if (location.hash.slice(1).split('?')[0] === '/models') this.route();
+  },
+
+  renderFitPicker() {
+    const wrap = document.getElementById('fit-printer-wrap');
+    const picker = document.getElementById('fit-printer-picker');
+    if (!wrap || !picker) return;
+    const beds = this.printerBeds || [];
+    const chosen = this.fitPrinterId();
+    wrap.hidden = !beds.length;
+    picker.innerHTML = `<option value="any">Any of my printers</option>${beds.map(b => `<option value="${UI.escapeHtml(b.id)}">${UI.escapeHtml(b.name)}</option>`).join('')}`;
+    picker.value = chosen;
   },
 
   // Size and error of a file of the open model: the latest answer of the server, else the model
@@ -2913,6 +2940,7 @@ const App = {
     });
     try {
       this.printerBeds = await API.savePrinterBeds(list);
+      this.renderFitPicker();
       this.toast('Printers saved');
       this.renderSettings('printers');
     } catch (e) { this.toast(e.message, 'error'); }

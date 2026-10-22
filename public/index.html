@@ -57,7 +57,7 @@
   <meta name="description" content="GyroidVault — Self-hosted 3D model management for 3D printing">
   <title>GyroidVault</title>
   <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=67">
+  <link rel="stylesheet" href="/css/style.css?v=68">
   
   <!-- Core 3D Engine (Local) -->
   <script src="/js/vendor/three.min.js"></script>
@@ -191,6 +191,10 @@
           <div id="update-badge" class="update-badge" style="display:none" onclick="App.showUpdateInfo()">
             <span class="pulse"></span> Update
           </div>
+          <label class="topbar-fit" id="fit-printer-wrap" title="Printer for the fit check: the badges on the models and their files" hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            <select id="fit-printer-picker" class="form-select fit-select" onchange="App.setFitPrinter(this.value)" aria-label="Printer for the fit check"></select>
+          </label>
           <button class="btn btn-primary btn-sm" onclick="App.showCreateModel()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span>New Model</span>
@@ -244,8 +248,8 @@
   <script src="/js/kits/ussa-vault-3d.js?v=5"></script>
   <script src="/js/printfit.js?v=1"></script>
   <script src="/js/api.js?v=70"></script>
-  <script src="/js/components.js?v=73"></script>
-  <script src="/js/app.js?v=74"></script>
+  <script src="/js/components.js?v=74"></script>
+  <script src="/js/app.js?v=75"></script>
   <script src="/js/viewer.js?v=66"></script>
 </body>
 </html>

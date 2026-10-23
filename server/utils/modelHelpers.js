@@ -163,6 +163,19 @@ function getZipEntryBuffer(entry) {
 }
 
 /**
+ * Content-Disposition header for any file name. Node refuses a header with letters past U+00FF
+ * ("Łożysko.3mf": 500), so the name goes as UTF-8 in filename* (RFC 6266) and plain ASCII in
+ * filename for older clients.
+ */
+function contentDisposition(type, name) {
+  const base = path.basename(String(name || '')) || 'download';
+  const ascii = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[łŁ]/g, m => (m === 'ł' ? 'l' : 'L'))
+    .replace(/[^\x20-\x7e]|["\\%]/g, '_');
+  const utf8 = encodeURIComponent(base).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${type}; filename="${ascii}"; filename*=UTF-8''${utf8}`;
+}
+
+/**
  * ZIP download entries (utils/zipStream) for model files: library and uploaded files are read
  * from disk; files found inside a ZIP archive are read from it, unless the archive itself is
  * in the list. folder: optional folder inside the download (collections: one per model).
@@ -203,6 +216,7 @@ function zipEntriesForFiles(files, folder = '') {
 
 module.exports = {
   getZipEntryBuffer,
+  contentDisposition,
   zipEntriesForFiles,
   getFileUrl,
   getThumbUrl,

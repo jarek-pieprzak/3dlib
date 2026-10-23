@@ -904,16 +904,47 @@ async function runE2ETests() {
       assert(Array.isArray(found.file_types) && found.file_types.includes('stl'), `Expected file_types to include "stl", got ${JSON.stringify(found.file_types)}`);
     });
 
-    await check('Uploaded file names keep Polish letters (UTF-8, not latin1)', async () => {
+    await check('Polish file names: kept on upload, in downloads and in the Bambu 3MF link, also inside a ZIP', async () => {
       const createRes = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'Półki' } });
       assert(createRes.data && createRes.data.id, `Model create failed (${createRes.status})`);
+      const stl = 'solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 10 0 0\nvertex 0 10 0\nendloop\nendfacet\nendsolid t\n';
+      const AdmZip = require('adm-zip');
+      const zip = new AdmZip();
+      zip.addFile('Śruba.stl', Buffer.from(stl, 'utf8'));
       const form = new FormData();
-      form.append('files', new Blob(['solid t\nendsolid t\n'], { type: 'model/stl' }), 'Półka ząbek.stl');
+      form.append('files', new Blob([stl], { type: 'model/stl' }), 'Łożysko ząb.stl');
+      form.append('files', new Blob([zip.toBuffer()], { type: 'application/zip' }), 'Części.zip');
       const upRes = await apiReq(`/api/models/${createRes.data.id}/files`, { method: 'POST', session: adminSession, body: form });
       assert(upRes.status === 200 || upRes.status === 201, `File upload failed (${upRes.status}): ${JSON.stringify(upRes.data)}`);
       const model = await apiReq(`/api/models/${createRes.data.id}`, { session: adminSession });
-      const names = (model.data.files || []).map(f => f.original_name);
-      assert(names.includes('Półka ząbek.stl'), `Expected "Półka ząbek.stl", got ${JSON.stringify(names)}`);
+      const files = model.data.files || [];
+      const names = files.map(f => f.original_name);
+      for (const n of ['Łożysko ząb.stl', 'Części.zip', 'Śruba.stl']) assert(names.includes(n), `Expected "${n}", got ${JSON.stringify(names)}`);
+
+      // Node refuses a header with "Ł": the name must travel as filename*=UTF-8''...
+      const fetchName = async (url) => {
+        const r = await fetch(`${baseUrl}${url}`, { headers: { Cookie: adminSession.cookie } });
+        await r.arrayBuffer();
+        assert(r.status === 200, `${url} answered ${r.status}`);
+        const cd = r.headers.get('content-disposition') || '';
+        const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+        assert(m, `${url}: no UTF-8 file name in "${cd}"`);
+        return decodeURIComponent(m[1]);
+      };
+      const bearing = files.find(f => f.original_name === 'Łożysko ząb.stl');
+      const screw = files.find(f => f.original_name === 'Śruba.stl');
+      assert(await fetchName(`/api/files/${bearing.id}/3mf/Lozysko_zab.3mf`) === 'Łożysko ząb.3mf', 'The Bambu 3MF of an STL must keep its name');
+      assert(await fetchName(`/api/files/${bearing.id}/download`) === 'Łożysko ząb.stl', 'A download must keep its name');
+      assert(await fetchName(`/api/files/${screw.id}/download`) === 'Śruba.stl', 'A file inside a ZIP must download with its name');
+      assert(await fetchName(`/api/files/${screw.id}/3mf/Sruba.3mf`) === 'Śruba.3mf', 'The Bambu 3MF of an STL inside a ZIP must keep its name');
+      assert(await fetchName(`/api/files/${screw.id}/stream`) === 'Śruba.stl', 'A file inside a ZIP must stream with its name');
+
+      // SQLite's LIKE folds A-Z only: "PÓŁ" must still find "Półki", also after a save (sql.js
+      // drops SQL functions on export)
+      await new Promise(r => setTimeout(r, 1100));
+      const found = await apiReq(`/api/models?search=${encodeURIComponent('PÓŁ')}`, { session: adminSession });
+      assert((found.data.models || []).some(m => m.id === createRes.data.id), `Search "PÓŁ" must find "Półki": ${JSON.stringify((found.data.models || []).map(m => m.name))}`);
+
       const del = await apiReq(`/api/models/${createRes.data.id}`, { method: 'DELETE', session: adminSession });
       assert(del.status === 200, `Model delete failed (${del.status})`);
     });

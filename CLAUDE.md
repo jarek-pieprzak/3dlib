@@ -52,7 +52,11 @@ page and footer credit GyroidVault; keep that.
 - Backend: Node/Express, sql.js (SQLite in memory, saved to disk). `server/index.js` (security
   middleware, gatekeeper, static routes), `server/routes/*.js`, `server/utils/*.js`,
   `server/database.js` (schema + migrations via `ALTER TABLE ... ADD COLUMN` checks). The database
-  file is `<data>/3dlib.db`.
+  file is `<data>/3dlib.db`. sql.js reopens the database on every save (`db.export()`), dropping
+  pragmas and SQL functions; `prepareConnection` sets them again. Text searches use
+  `fold(column) LIKE ?` with a lower-cased term (SQLite folds only A-Z, not "Ł").
+- Download headers with a file name: `contentDisposition()` (`server/utils/modelHelpers.js`).
+  Node refuses a header with "Ł" or "ś" (500); `res.download` / `res.attachment` are fine.
 - Frontend: vanilla JS, no build step. `public/js/api.js` (API client), `public/js/components.js`
   (`UI.*` HTML templates), `public/js/app.js` (`App.*` router and handlers), `public/js/viewer.js`
   (three.js r138 viewer), `public/js/vendor/*` (three.js loaders, 3MFLoader is patched).

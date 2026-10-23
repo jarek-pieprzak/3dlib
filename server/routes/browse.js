@@ -472,10 +472,10 @@ router.get('/search', authenticate, (req, res) => {
     const matchingModels = all(`
       SELECT library_path FROM models m
       WHERE library_path IS NOT NULL AND deleted_at IS NULL AND (
-        LOWER(m.name) LIKE ?
-        OR LOWER(m.description) LIKE ?
-        OR m.category_id IN (SELECT id FROM categories WHERE LOWER(name) LIKE ?)
-        OR m.id IN (SELECT mt.model_id FROM model_tags mt JOIN tags t ON mt.tag_id = t.id WHERE LOWER(t.name) LIKE ?)
+        fold(m.name) LIKE ?
+        OR fold(m.description) LIKE ?
+        OR m.category_id IN (SELECT id FROM categories WHERE fold(name) LIKE ?)
+        OR m.id IN (SELECT mt.model_id FROM model_tags mt JOIN tags t ON mt.tag_id = t.id WHERE fold(t.name) LIKE ?)
       )
     `, [`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`]);
     const matchingModelPaths = new Set(matchingModels.map(r => r.library_path));

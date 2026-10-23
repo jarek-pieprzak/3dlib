@@ -65,13 +65,13 @@ router.get('/', (req, res) => {
     }
 
     if (search) {
-      const s = `%${search}%`;
+      const s = `%${String(search).toLowerCase()}%`;
       conds.push(`(
-        m.name LIKE ?
-        OR m.description LIKE ?
-        OR m.category_id IN (SELECT id FROM categories WHERE name LIKE ?)
-        OR m.id IN (SELECT mt.model_id FROM model_tags mt JOIN tags t ON mt.tag_id = t.id WHERE t.name LIKE ?)
-        OR m.id IN (SELECT pm.model_id FROM project_models pm JOIN projects p ON pm.project_id = p.id WHERE p.name LIKE ?)
+        fold(m.name) LIKE ?
+        OR fold(m.description) LIKE ?
+        OR m.category_id IN (SELECT id FROM categories WHERE fold(name) LIKE ?)
+        OR m.id IN (SELECT mt.model_id FROM model_tags mt JOIN tags t ON mt.tag_id = t.id WHERE fold(t.name) LIKE ?)
+        OR m.id IN (SELECT pm.model_id FROM project_models pm JOIN projects p ON pm.project_id = p.id WHERE fold(p.name) LIKE ?)
       )`);
       params.push(s, s, s, s, s);
     }

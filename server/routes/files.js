@@ -9,7 +9,7 @@ const { authenticate } = require('../middleware/auth');
 const { heavyLimiter } = require('../middleware/rateLimit');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement } = require('../middleware/security');
-const { getSettingBool, getZipEntryBuffer, canEditModel } = require('../utils/modelHelpers');
+const { getSettingBool, getZipEntryBuffer, canEditModel, contentDisposition } = require('../utils/modelHelpers');
 const protection = require('../utils/protection');
 const { trashFiles } = require('../utils/trash');
 const { tokenFromName } = require('../utils/slicerToken');
@@ -91,7 +91,7 @@ router.get('/:id/stream', (req, res, next) => {
         const contentType = mimeMap[ext] || 'application/octet-stream';
 
         res.setHeader('Content-Type', contentType);
-        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.filename)}"`);
+        res.setHeader('Content-Disposition', contentDisposition('inline', file.filename));
         return res.send(getZipEntryBuffer(entry));
       }
 
@@ -158,7 +158,7 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
         const data = getZipEntryBuffer(entry);
         rememberSlicerDownload(req, file.id, data);
         res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.filename)}"`);
+        res.setHeader('Content-Disposition', contentDisposition('attachment', file.filename));
         return res.send(data);
       }
 
@@ -228,7 +228,7 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
         res.setHeader('Content-Type', 'model/3mf');
         if (file.file_type === '3mf') {
           rememberSlicerDownload(req, file.id, rawBuffer);
-          res.setHeader('Content-Disposition', `attachment; filename="${name}.3mf"`);
+          res.setHeader('Content-Disposition', contentDisposition('attachment', `${name}.3mf`));
           return res.send(rawBuffer);
         }
       } else {
@@ -255,7 +255,7 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
 
       const buffer = meshTo3mf(mesh);
       rememberSlicerDownload(req, file.id, buffer);
-      res.setHeader('Content-Disposition', `attachment; filename="${name}.3mf"`);
+      res.setHeader('Content-Disposition', contentDisposition('attachment', `${name}.3mf`));
       res.setHeader('Content-Length', buffer.length);
       res.send(buffer);
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to build 3MF' }); }

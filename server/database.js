@@ -14,13 +14,22 @@ let db = null;
 let saveTimeout = null;
 let isSaving = false;
 
+// sql.js closes and reopens the database on export(), which drops pragmas and SQL functions:
+// they are set again after every export
+function prepareConnection() {
+  db.run('PRAGMA foreign_keys = ON');
+  // fold(text): lower case of every letter. SQLite's LIKE and LOWER() know only A-Z, so a search
+  // for "łożysko" would miss "Łożysko M8"
+  db.create_function('fold', s => (s == null ? null : String(s).toLowerCase()));
+}
+
 function saveDb(sync = false) {
   if (!db) return;
   
   if (sync) {
     try {
       const data = db.export();
-      db.run('PRAGMA foreign_keys = ON');
+      prepareConnection();
       fs.writeFileSync(DB_PATH, Buffer.from(data));
       console.log('✓ Database written synchronously (shutdown).');
     } catch (err) {
@@ -39,7 +48,7 @@ function saveDb(sync = false) {
     isSaving = true;
     try {
       const data = db.export();
-      db.run('PRAGMA foreign_keys = ON');
+      prepareConnection();
       fs.writeFile(DB_PATH, Buffer.from(data), (err) => {
         isSaving = false;
         if (err) console.error('CRITICAL: Failed to write database asynchronously:', err);
@@ -72,8 +81,8 @@ async function initDatabase() {
     db = new SQL.Database();
   }
 
-  // Enable foreign keys
-  db.run('PRAGMA foreign_keys = ON');
+  // Foreign keys, SQL functions
+  prepareConnection();
 
   // ─── Schema ──────────────────────────────────────────────────────────
   db.run(`

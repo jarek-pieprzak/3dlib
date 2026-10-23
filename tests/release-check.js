@@ -426,6 +426,10 @@ async function runStaticAndUiChecks() {
       model.group.traverse(o => { if (o.isMesh) meshes++; });
       assert(!bad && meshes > 60, `3D: ${meshes} meshes, ${bad} with broken positions (roof ${roof})`);
     }
+    // Geared rails show in the boxes that get them: several boxes in a module, or every box
+    const railMeshes = (c) => { let n = 0; three.VaultKit3D.build(c).group.traverse(o => { if (o.isMesh && o.material.color.getHex() === 0xf06a24 && o.geometry.parameters && o.geometry.parameters.width === 3 && o.geometry.parameters.height === 5) n++; }); return n; };
+    const railCfg = { ...bom.cfg, floors: [{ height: '2F', layout: 'L', slots: [{ type: 'drawer', boxes: '1F+1F', interior: 'empty' }] }, { height: '1F', layout: 'S+S', slots: [{ type: 'drawer', interior: 'empty' }, { type: 'drawer', interior: 'empty' }] }] };
+    assert(railMeshes({ ...railCfg, gearedRails: 'auto' }) === 4 && railMeshes({ ...railCfg, gearedRails: 'all' }) === 8, `3D: two rails per box of the two-box module, in every box with "all", got ${railMeshes({ ...railCfg, gearedRails: 'auto' })} / ${railMeshes({ ...railCfg, gearedRails: 'all' })}`);
 
     // Every box and every sustainer opens; floors above an open sustainer rise
     const openCfg = { ...bom.cfg, floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'sealed' }, { type: 'drawer', boxes: '1F', interior: 'gridfinity' }] },

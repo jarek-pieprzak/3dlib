@@ -196,9 +196,13 @@ globalThis.VaultKit3D = (function () {
             box(cw - 4, 6, D, 'roof', 0, -3, D / 2, 3, { ...so, parent: lid });
             openables.push({ id, kind: 'sustainer', fi, node: lid, angle: -1.9 });
           } else {
-            // Every box slides out with its facade, key, label and interior
+            // Every box slides out with its facade, key, label and interior. Geared rails, as the
+            // parts list has them (several boxes in the module, or "in every box"): toothed strips
+            // in the sides of the box, the lower one on the left, the upper one on the right
+            const boxes = String(slot.boxes || floor.height).split('+');
+            const rails = boxes.length > 1 || cfg.gearedRails === 'all';
             let top = y + h;
-            String(slot.boxes || floor.height).split('+').forEach((bh, bi) => {
+            boxes.forEach((bh, bi) => {
               const bH = (F[bh] || 1) * P;
               const id = `${fi}:${si}:${bi}`;
               const node = new THREE.Group();
@@ -222,6 +226,10 @@ globalThis.VaultKit3D = (function () {
               box(3, wallH, bd, 'box', bx - bw / 2 + 1.5, floorY + wallH / 2, 0, 0, bo);
               box(3, wallH, bd, 'box', bx + bw / 2 - 1.5, floorY + wallH / 2, 0, 0, bo);
               box(bw, wallH, 3, 'box', bx, floorY + wallH / 2, back + 7.5, 0, bo);
+              if (rails) {
+                box(3, 5, bd - 8, 'orange', bx - bw / 2 - 1.5, floorY + 4, 0, 0, bo);
+                box(3, 5, bd - 8, 'orange', bx + bw / 2 + 1.5, floorY + wallH - 4, 0, 0, bo);
+              }
               if (slot.interior === 'gridfinity') gridfinity(bx, floorY + 3, -2, bw - 8, bd - 10, Math.max(12, wallH - 14), bo);
               if (slot.interior === 'dividers') dividers(bx, floorY + 3, -2, bw - 8, bd - 10, slot.low ? 20 : wallH - 4, 1, 1, bo);
               openables.push({ id, kind: 'drawer', fi, node, out: D * 0.72 });

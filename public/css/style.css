@@ -1841,6 +1841,7 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-tower-modes[hidden]{display:none}
 .kit-tower-modes .kit-seg-btn{padding:3px 10px;font-size:.75rem}
 .kit-open-btn[hidden]{display:none}
+#kit-edit-btn[hidden]{display:none}
 .kit-preview-panel>.panel-header>.panel-title{margin-right:auto}
 /* Printer fit check: sizes of 3D files, the bar in the corner of a file list (App.paintFit) */
 .fit-bar{display:flex;flex:none;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:7px 16px;font-size:.78rem;background:var(--bg-input);border-bottom:1px solid var(--border)}

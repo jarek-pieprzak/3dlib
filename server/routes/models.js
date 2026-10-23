@@ -104,7 +104,7 @@ router.get('/', (req, res) => {
     const totalPages = Math.ceil(totalItems / parsedLimit);
     const offset = (parsedPage - 1) * parsedLimit;
 
-    const sortMap = { name:'m.name', created:'m.created_at', updated:'m.updated_at', prints:'print_count', files:'file_count' };
+    const sortMap = { name:'sortkey(m.name)', created:'m.created_at', updated:'m.updated_at', prints:'print_count', files:'file_count' };
     const sqlOrder = order ? (order === 'asc' ? 'ASC' : 'DESC') : (sort === 'name' ? 'ASC' : 'DESC');
     query += ` ORDER BY ${sortMap[sort]||'m.updated_at'} ${sqlOrder} LIMIT ? OFFSET ?`;
     params.push(parsedLimit, offset);

@@ -54,7 +54,8 @@ page and footer credit GyroidVault; keep that.
   `server/database.js` (schema + migrations via `ALTER TABLE ... ADD COLUMN` checks). The database
   file is `<data>/3dlib.db`. sql.js reopens the database on every save (`db.export()`), dropping
   pragmas and SQL functions; `prepareConnection` sets them again. Text searches use
-  `fold(column) LIKE ?` with a lower-cased term (SQLite folds only A-Z, not "Ł").
+  `fold(column) LIKE ?` with a lower-cased term (SQLite folds only A-Z, not "Ł"); name order is
+  `ORDER BY sortkey(name)` (Polish alphabet, case ignored; plain ORDER BY puts "a" after "Z").
 - Download headers with a file name: `contentDisposition()` (`server/utils/modelHelpers.js`).
   Node refuses a header with "Ł" or "ś" (500); `res.download` / `res.attachment` are fine.
 - Frontend: vanilla JS, no build step. `public/js/api.js` (API client), `public/js/components.js`

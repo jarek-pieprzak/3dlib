@@ -3159,17 +3159,22 @@ const UI = {
   renderMarkdown(text) {
     if (!text) return '';
     let escaped = String(text)
+      .replace(/\u0000/g, '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
+    // Code waits aside while the other rules run ("# comment" in a code block is no heading)
+    const code = [];
+    const keep = html => `\u0000${code.push(html) - 1}\u0000`;
+
     // Fenced code blocks
-    escaped = escaped.replace(/```([\s\S]*?)```/g, (m, code) => `<pre><code>${code.trim()}</code></pre>`);
-    
+    escaped = escaped.replace(/```([\s\S]*?)```/g, (m, src) => keep(`<pre><code>${src.trim()}</code></pre>`));
+
     // Inline code
-    escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+    escaped = escaped.replace(/`([^`]+)`/g, (m, src) => keep(`<code>${src}</code>`));
 
     // Headers
     escaped = escaped.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
@@ -3213,6 +3218,8 @@ const UI = {
       if (!cleanHref) return label;
       return `<a href="${this.escapeHtml(cleanHref)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
     });
+
+    escaped = escaped.replace(/\u0000(\d+)\u0000/g, (m, i) => code[i]);
 
     // Newlines to BR (not after block elements, which already break the line; the margin of a
     // list stands for the blank line after it)

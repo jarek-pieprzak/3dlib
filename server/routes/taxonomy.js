@@ -10,7 +10,7 @@ const { getFileUrl } = require('../utils/modelHelpers');
 // ─── CATEGORIES ─────────────────────────────────────────────────────────────
 router.get('/categories', (req, res) => {
   try {
-    res.json(all('SELECT c.*,(SELECT COUNT(*) FROM models WHERE category_id=c.id AND deleted_at IS NULL) as model_count FROM categories c ORDER BY c.name'));
+    res.json(all('SELECT c.*,(SELECT COUNT(*) FROM models WHERE category_id=c.id AND deleted_at IS NULL) as model_count FROM categories c ORDER BY sortkey(c.name)'));
   } catch (e) {
     res.status(500).json({ error: 'Failed' });
   }
@@ -52,7 +52,7 @@ router.delete('/categories/:id', authenticate, (req, res) => {
 // ─── TAGS ───────────────────────────────────────────────────────────────────
 router.get('/tags', (req, res) => {
   try {
-    res.json(all('SELECT t.*,(SELECT COUNT(*) FROM model_tags mt JOIN models m ON m.id=mt.model_id WHERE mt.tag_id=t.id AND m.deleted_at IS NULL) as model_count FROM tags t ORDER BY t.name'));
+    res.json(all('SELECT t.*,(SELECT COUNT(*) FROM model_tags mt JOIN models m ON m.id=mt.model_id WHERE mt.tag_id=t.id AND m.deleted_at IS NULL) as model_count FROM tags t ORDER BY sortkey(t.name)'));
   } catch (e) {
     res.status(500).json({ error: 'Failed' });
   }

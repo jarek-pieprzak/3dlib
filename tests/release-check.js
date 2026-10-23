@@ -243,6 +243,8 @@ async function runStaticAndUiChecks() {
     assert(html.includes('<ol><li>print</li><li>glue</li></ol>'), `Numbered items must form an <ol>: ${html}`);
     assert(html.includes('<ol start="4"><li>paint</li></ol>'), `A list starting at 4 must keep its number: ${html}`);
     assert(html.includes('<blockquote>&lt;b&gt;note&lt;/b&gt;</blockquote>'), `"> " must be a quote with escaped HTML: ${html}`);
+    const code = UI.renderMarkdown('Call `*f*`:\n```\n# size\n- 2*3*4\n```');
+    assert(code.includes('<code>*f*</code>') && code.includes('<pre><code># size<br>- 2*3*4</code></pre>'), `Code must stay as written: ${code}`);
   });
 
   await check('Names with quotes and HTML stay data in inline handlers (Folder Explorer, breadcrumbs, settings lists)', () => {
@@ -947,6 +949,21 @@ async function runE2ETests() {
 
       const del = await apiReq(`/api/models/${createRes.data.id}`, { method: 'DELETE', session: adminSession });
       assert(del.status === 200, `Model delete failed (${del.status})`);
+    });
+
+    await check('Sorting by name follows the Polish alphabet and ignores case ("benchy" before "Zebra", "Łożysko" among the l\'s)', async () => {
+      const names = ['Sortuj Zębatka', 'Sortuj benchy', 'Sortuj Łożysko', 'Sortuj Lampa', 'Sortuj zebra', 'Sortuj Ćma', 'Sortuj Cyrk', 'Sortuj Żaba'];
+      const ids = [];
+      for (const name of names) {
+        const r = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name } });
+        assert(r.data && r.data.id, `Model create failed (${r.status}): ${JSON.stringify(r.data)}`);
+        ids.push(r.data.id);
+      }
+      const list = await apiReq('/api/models?search=Sortuj&sort=name&order=asc&limit=48', { session: adminSession });
+      const got = (list.data.models || []).map(m => m.name.replace('Sortuj ', ''));
+      const want = ['benchy', 'Cyrk', 'Ćma', 'Lampa', 'Łożysko', 'zebra', 'Zębatka', 'Żaba'];
+      assert(JSON.stringify(got) === JSON.stringify(want), `Expected ${want.join(', ')}; got ${got.join(', ')}`);
+      for (const id of ids) await apiReq(`/api/models/${id}`, { method: 'DELETE', session: adminSession });
     });
 
     let matrixModelId = null;

@@ -240,6 +240,5 @@ Feature ideas are in `TODO.md`.
 - Collections marked "private" do not hide their models from the model list, search or the
   dashboard, and `/library-files` does not check collection privacy. Only matters with more
   than one account.
-- The markdown renderer (`UI.renderMarkdown`) shows numbered lists as bullets.
 - Slicers fetch files without browser cookies, so with "Private instance mode" on, "Open in
   slicer" links fail (upstream behaviour).

@@ -3177,14 +3177,25 @@ const UI = {
     escaped = escaped.replace(/^## (.*$)/gim, '<h2>$1</h2>');
     escaped = escaped.replace(/^# (.*$)/gim, '<h1>$1</h1>');
 
+    // Lists: each run of "- item" or "1. item" lines becomes one <ul> or <ol>
+    // (before emphasis, which would take the "*" of a "* item" line)
+    const list = (tag, marker) => run => {
+      const lines = run.replace(/\n$/, '').split('\n');
+      const first = parseInt(lines[0].trim(), 10);
+      const start = tag === 'ol' && first !== 1 ? ` start="${first}"` : '';
+      return `<${tag}${start}>${lines.map(l => `<li>${l.replace(marker, '')}</li>`).join('')}</${tag}>\n`;
+    };
+    escaped = escaped.replace(/(?:^[ \t]*[-*+][ \t]+.*(?:\n|$))+/gm, list('ul', /^[ \t]*[-*+][ \t]+/));
+    escaped = escaped.replace(/(?:^[ \t]*\d+\.[ \t]+.*(?:\n|$))+/gm, list('ol', /^[ \t]*\d+\.[ \t]+/));
+
     // Bold / Italic / Strike
     escaped = escaped.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
     escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     escaped = escaped.replace(/\*(.*?)\*/g, '<em>$1</em>');
     escaped = escaped.replace(/~~(.*?)~~/g, '<del>$1</del>');
 
-    // Blockquotes
-    escaped = escaped.replace(/^\> (.*$)/gim, '<blockquote>$1</blockquote>');
+    // Blockquotes ("&gt;": the source is escaped above)
+    escaped = escaped.replace(/^&gt; (.*$)/gim, '<blockquote>$1</blockquote>');
 
     // Horizontal Rule
     escaped = escaped.replace(/^---$/gim, '<hr>');
@@ -3203,12 +3214,10 @@ const UI = {
       return `<a href="${this.escapeHtml(cleanHref)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
     });
 
-    // Lists
-    escaped = escaped.replace(/^\s*[-*+]\s+(.*)$/gim, '<li style="margin-left:20px">$1</li>');
-    escaped = escaped.replace(/^\s*\d+\.\s+(.*)$/gim, '<li style="margin-left:20px">$1</li>');
-
-    // Newlines to BR (not after block elements, which already break the line)
-    escaped = escaped.replace(/(<\/li>|<\/h[1-4]>|<\/blockquote>|<hr>|<\/pre>)\n/g, '$1');
+    // Newlines to BR (not after block elements, which already break the line; the margin of a
+    // list stands for the blank line after it)
+    escaped = escaped.replace(/(<\/[uo]l>)\n\n?/g, '$1');
+    escaped = escaped.replace(/(<\/h[1-4]>|<\/blockquote>|<hr>|<\/pre>)\n/g, '$1');
     escaped = escaped.replace(/\n/gim, '<br>');
 
     return `<div class="markdown-body">${escaped}</div>`;

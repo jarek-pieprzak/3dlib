@@ -237,6 +237,14 @@ async function runStaticAndUiChecks() {
     }
   });
 
+  await check('Markdown: bullet and numbered lists, quotes, the source stays escaped', () => {
+    const html = UI.renderMarkdown('Parts:\n- body\n* lid with *care*\n\n1. print\n2. glue\n\n4. paint\n> <b>note</b>');
+    assert(html.includes('<ul><li>body</li><li>lid with <em>care</em></li></ul>'), `Bullets must form one <ul>: ${html}`);
+    assert(html.includes('<ol><li>print</li><li>glue</li></ol>'), `Numbered items must form an <ol>: ${html}`);
+    assert(html.includes('<ol start="4"><li>paint</li></ol>'), `A list starting at 4 must keep its number: ${html}`);
+    assert(html.includes('<blockquote>&lt;b&gt;note&lt;/b&gt;</blockquote>'), `"> " must be a quote with escaped HTML: ${html}`);
+  });
+
   await check('Names with quotes and HTML stay data in inline handlers (Folder Explorer, breadcrumbs, settings lists)', () => {
     const evil = `a'b"c<b>x</b>\\d');alert(1);('`;
     const decode = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');

@@ -146,7 +146,8 @@ function getZipEntryBuffer(entry) {
     if (method === 0) {
       out = Buffer.from(compressed);
     } else if (method === 8) {
-      out = zlib.inflateRawSync(compressed);
+      // No more than the central directory declares: this path skips adm-zip's size cap
+      out = zlib.inflateRawSync(compressed, { maxOutputLength: Math.max(1, entry.header.size || 0) });
     } else {
       throw err;
     }

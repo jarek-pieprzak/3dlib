@@ -129,6 +129,11 @@ page and footer credit GyroidVault; keep that.
     (Open in slicer per file, the configuration ZIP) and the preview; "Edit configuration" in the
     header brings the builder (`?edit=1&c=`), Save / Cancel go back. Its cover is the 3D tower
     (`App.kitRenderCover`, `VaultKit3D` `snapshotParts`).
+  - The tower drawing (`UI.kitDrawing`) has a chain of heights (lift, base, every floor, lip +
+    roof) and the whole height with the roof, and a list of them beside it (under it in a
+    panel under 560 px: container query). Heights from the archive's files: 48 mm per F in the
+    stack (a printed module is 9 mm taller: its lip), base 52, roofs grid 10, table 14, bowl
+    21, under-table 20, heavyweight 87 mm (in their files turned 45°); lifts are estimates.
   - Print progress of a configuration: print history entries with the part's file
     (`print_history.file_id`, a file of the archive). The locked parts list has a counter per
     part (− / n/qty / +, a click on the count opens that part's prints and a form with

@@ -1666,13 +1666,18 @@ const UI = {
       <div class="kit-tip-foot">${manual((current && current.manual) || tip.manual)}</div>`;
   },
 
-  // The tower to scale, front and side (millimetres; 48 mm per F), shown in the 3D Studio panel
-  // while no part is open. Floors are clickable (App.kitFocusFloor). height: the tower height
-  // estimate of the parts list.
-  kitDrawing(cfg, height) {
+  // The tower to scale, front and side, with its dimensions (millimetres), shown in the 3D
+  // Studio panel while no part is open. Floors are clickable (App.kitFocusFloor).
+  // Heights as the archive's files measure: a module is 48 mm per F in the stack and printed
+  // 9 mm taller (the lip on top: 57 / 105 / 201 mm), the base 52 mm, the roofs (turned 45° on
+  // the plate in their files) grid 10, table 14, bowl 21, under-table mount 20, heavyweight
+  // 87 mm. The lift of feet, wheels and casters is estimated.
+  kitDrawing(cfg) {
     const mm = { S: 165, M: 254, L: 330, XL: 419 };
     const F = { '1F': 1, '2F': 2, '4F': 4 };
     const P = 48;
+    const LIP = 9;
+    const ROOF_H = { grid: 10, table: 14, bowl: 21, heavy: 87, undertable: 20 };
     const W = mm[cfg.width] || 330;
     const D = 146 + 42 * (Number(cfg.depth) - 3);
     const mods = cfg.mods || {};
@@ -1681,15 +1686,16 @@ const UI = {
     const layoutOf = (f) => layouts.find(l => l.id === f.layout) || layouts[0];
     const hasBase = mods.base && mods.base !== 'none';
     const lift = mods.base === 'wheels' ? 40 : mods.base === 'casters' ? 46 : (hasBase && mods.feet ? 24 : 0);
-    const baseH = hasBase ? 34 : 0;
+    const baseH = hasBase ? 52 : 0;
     const floorsH = floors.reduce((n, f) => n + (F[f.height] || 1) * P, 0);
+    const lipH = floors.length ? LIP : 0;
     // The cut heavyweight roof looks like the full one at this scale
     const roofKind = cfg.roof && cfg.roof !== 'none' ? (cfg.roof === 'heavycut' ? 'heavy' : cfg.roof) : null;
-    const roofH = { grid: 36, table: 8, bowl: 22, heavy: 62, undertable: 30 }[roofKind] || 0;
-    const topY = -lift - baseH - floorsH;
-    const handleTop = mods.pullHandle && mods.backbone !== 'none' ? topY - roofH - 150 : topY - roofH;
+    // The top floor: below its lip; the roof sits on the lip
+    const stackTop = -lift - baseH - floorsH;
+    const topY = stackTop - lipH;
     const fs = Math.round(Math.max(W + D + 200, floorsH + 250) / 30);
-    const wheelX = mods.base === 'wheels' ? 30 : 0;
+    const wheelX = mods.base === 'wheels' ? 46 : 0;
     const sx = W + wheelX + 40 + fs * 2;
     const back = sx + D;
     const r = (cls, x, y, w, h, rx = 0) => `<rect class="${cls}" x="${x}" y="${y}" width="${Math.max(0, w)}" height="${Math.max(0, h)}"${rx ? ` rx="${rx}"` : ''}/>`;
@@ -1750,40 +1756,51 @@ const UI = {
       side.push(`<g class="kd-floor" ${hover}><title>${this.escapeHtml(label)}</title>${r('kd-mod', sx, y + 1, D, h - 2, 4)}${r(firstType, sx - 5, y + 5, 7, h - 10, 2)}${boards}</g>`);
     });
 
-    // Roof on the drawer modules of the top floor (sustainers have their own lids)
+    // The lip of the top floor's modules, the roof on its drawer modules (sustainers have their
+    // own lids)
     let roof = '';
+    let lip = '';
     const top = floors[floors.length - 1];
+    if (top) {
+      let mx = 0;
+      for (const mod of layoutOf(top).modules) { lip += r('kd-mod', mx + 1, topY, mm[mod.w] - 2, lipH, 2); mx += mm[mod.w]; }
+      lip += r('kd-mod', sx, topY, D, lipH, 2);
+    }
     if (roofKind && top) {
       const layout = layoutOf(top);
       const slots = VaultKit.slotsOf(layout);
+      const h = ROOF_H[roofKind];
       let mx = 0;
       layout.modules.forEach((mod, mi) => {
         const mw = mm[mod.w];
         const first = slots.findIndex(s => s.mi === mi);
         const drawer = mod.cols || (top.slots[first] || {}).type !== 'sustainer';
         if (drawer) {
-          if (roofKind === 'grid') roof += r('kd-roof', mx + 2, topY - 10, mw - 4, 10, 2) + r('kd-dark', mx + mw / 2 - Math.min(60, mw * 0.3), topY - 36, Math.min(120, mw * 0.6), 26, 9);
-          if (roofKind === 'table') roof += r('kd-roof', mx - 2, topY - 8, mw + 4, 8, 2);
-          if (roofKind === 'bowl') roof += r('kd-roof', mx + 2, topY - 22, mw - 4, 22, 4) + r('kd-hollow', mx + 10, topY - 18, mw - 20, 9, 3);
-          if (roofKind === 'heavy') roof += r('kd-roof', mx + 2, topY - 8, mw - 4, 8, 2) + r('kd-roof', mx + 4, topY - 62, mw * 0.3, 54, 4) + r('kd-roof', mx + mw * 0.7 - 4, topY - 62, mw * 0.3, 54, 4) + r('kd-dark', mx + mw * 0.3 + 4, topY - 44, mw * 0.4 - 8, 14, 5);
-          if (roofKind === 'undertable') roof += r('kd-roof', mx - 10, topY - 8, mw + 20, 8, 2);
+          if (roofKind === 'grid') roof += r('kd-roof', mx + 2, topY - h, mw - 4, h, 2) + r('kd-dark', mx + mw / 2 - Math.min(40, mw * 0.2), topY - h + 3, Math.min(80, mw * 0.4), 4, 2);
+          if (roofKind === 'table') roof += r('kd-roof', mx - 2, topY - h, mw + 4, h, 2);
+          if (roofKind === 'bowl') roof += r('kd-roof', mx + 2, topY - h, mw - 4, h, 4) + r('kd-hollow', mx + 10, topY - h + 4, mw - 20, 9, 3);
+          if (roofKind === 'heavy') roof += r('kd-roof', mx + 2, topY - 8, mw - 4, 8, 2) + r('kd-roof', mx + 4, topY - h, mw * 0.3, h - 8, 4) + r('kd-roof', mx + mw * 0.7 - 4, topY - h, mw * 0.3, h - 8, 4) + r('kd-dark', mx + mw * 0.3 + 4, topY - h + 22, mw * 0.4 - 8, 14, 5);
+          if (roofKind === 'undertable') roof += r('kd-roof', mx - 10, topY - h, mw + 20, h, 2);
         }
         mx += mw;
       });
-      if (roofKind === 'undertable') roof += r('kd-table', -60, topY - 30, W + 120, 22, 2);
-      const sideRoof = { grid: r('kd-roof', sx + 2, topY - 10, D - 4, 10, 2) + r('kd-dark', sx + D / 2 - 22, topY - 36, 44, 26, 9), table: r('kd-roof', sx - 2, topY - 8, D + 4, 8, 2),
-        bowl: r('kd-roof', sx + 2, topY - 22, D - 4, 22, 4), heavy: r('kd-roof', sx + 4, topY - 62, D - 8, 62, 4), undertable: r('kd-roof', sx - 10, topY - 8, D + 20, 8, 2) + r('kd-table', sx - 40, topY - 30, D + 80, 22, 2) }[roofKind];
+      if (roofKind === 'undertable') roof += r('kd-table', -60, topY - h - 22, W + 120, 22, 2);
+      const sideRoof = { grid: r('kd-roof', sx + 2, topY - h, D - 4, h, 2), table: r('kd-roof', sx - 2, topY - h, D + 4, h, 2),
+        bowl: r('kd-roof', sx + 2, topY - h, D - 4, h, 4), heavy: r('kd-roof', sx + 4, topY - h, D - 8, h, 4), undertable: r('kd-roof', sx - 10, topY - h, D + 20, h, 2) + r('kd-table', sx - 40, topY - h - 22, D + 80, 22, 2) }[roofKind];
       if (roof && sideRoof) roof += sideRoof;
     }
+    // Only a roof that is drawn counts (a top floor of sustainers has none)
+    const roofH = roof ? ROOF_H[roofKind] : 0;
+    const handleTop = mods.pullHandle && mods.backbone !== 'none' ? topY - roofH - 150 : topY - roofH;
 
     // Base, wheels, casters, feet, handles
     let under = '';
     let sideWheel = '';
     if (hasBase) under += r('kd-base', 0, -lift - baseH, W, baseH, 4) + r('kd-base', sx, -lift - baseH, D, baseH, 4);
     if (mods.base === 'wheels') {
-      under += r('kd-wheel', -28, -142, 24, 142, 9) + r('kd-wheel', W + 4, -142, 24, 142, 9);
+      under += r('kd-wheel', -45, -160, 41, 160, 12) + r('kd-wheel', W + 4, -160, 41, 160, 12);
       // Seen from the side the wheel is in front of the modules
-      sideWheel = `<circle class="kd-wheel" cx="${back - 60}" cy="-71" r="71"/><circle class="kd-hub" cx="${back - 60}" cy="-71" r="28"/>`;
+      sideWheel = `<circle class="kd-wheel" cx="${back - 70}" cy="-80" r="80"/><circle class="kd-hub" cx="${back - 70}" cy="-80" r="30"/>`;
     }
     if (mods.base === 'casters') {
       [16, W - 16].forEach(x => { under += r('kd-dark', x - 4, -lift, 8, 18) + `<circle class="kd-wheel" cx="${x}" cy="-14" r="14"/>`; });
@@ -1800,19 +1817,53 @@ const UI = {
     }
     const wall = mods.wallMount ? r('kd-wallside', back + (mods.backbone && mods.backbone !== 'none' ? 24 : 10), handleTop - 30, 14, -handleTop + 30) : '';
 
-    const minY = Math.min(handleTop, topY - roofH) - fs * 1.5;
-    const maxX = back + 90;
-    const minX = -fs * 3 - 40;
+    // The stack from the ground up: lift, base, every floor, the lip with the roof on it
+    const roofName = { grid: 'Grid roof', table: 'Table roof', bowl: 'Bowl roof', heavy: 'Heavyweight roof', undertable: 'Under-table mount' }[roofKind];
+    const liftName = { wheels: 'Wheels', casters: 'Casters' }[mods.base] || 'Feet';
+    const parts = [
+      ...(lift ? [{ h: lift, label: `~${lift}`, name: `${liftName} (lift)`, value: `~${lift} mm` }] : []),
+      ...(baseH ? [{ h: baseH, label: String(baseH), name: 'Base', value: `${baseH} mm` }] : []),
+      ...floors.map((f, fi) => ({ h: (F[f.height] || 1) * P, label: String((F[f.height] || 1) * P), name: `Floor ${fi + 1} · ${f.height}`, value: `${(F[f.height] || 1) * P} mm`, fi })),
+      ...(lipH ? [{ h: lipH + roofH, label: roofH ? `${lipH}+${roofH}` : String(lipH), name: 'Top lip', value: `${lipH} mm` }] : [])
+    ];
+    const total = parts.reduce((n, p) => n + p.h, 0);
+    const roofTop = -total;
+    const cx = -fs * 2.2;
+    const tx = -fs * 4.6;
+    let chain = `<path class="kd-dim" d="M${cx} 0V${roofTop}"/>`;
+    let at = 0;
+    const tick = (y) => `<path class="kd-dim" d="M${cx - 7} ${y}H${cx + 7}"/>`;
+    chain += tick(0);
+    for (const p of parts) {
+      chain += tick(at - p.h) + text(cx - 8, at - p.h / 2 + fs * 0.28, p.label, 'end', ` font-size="${Math.round(fs * 0.72)}"`);
+      at -= p.h;
+    }
+    const minY = Math.min(handleTop, roofTop) - fs * 1.5;
+    const maxX = back + 100;
+    const minX = tx - fs * 1.4;
     const maxY = 30 + fs * 3.2;
-    const dims = dimH(0, W, 26, `${W} mm`) + dimH(sx, back, 26, `${D} mm`) +
-      `<path class="kd-dim" d="M${minX + fs} 0V${topY}M${minX + fs - 8} 0H${minX + fs + 8}M${minX + fs - 8} ${topY}H${minX + fs + 8}"/>` +
-      text(minX + fs * 0.6, topY / 2, `about ${height} mm`, 'middle', ` transform="rotate(-90 ${minX + fs * 0.6} ${topY / 2})"`) +
+    const dims = dimH(0, W, 26, `${W} mm`) + dimH(sx, back, 26, `${D} mm`) + chain +
+      `<path class="kd-dim" d="M${tx} 0V${roofTop}M${tx - 8} 0H${tx + 8}M${tx - 8} ${roofTop}H${tx + 8}"/>` +
+      text(tx - fs * 0.45, roofTop / 2, `${lift ? '≈ ' : ''}${total} mm`, 'middle', ` transform="rotate(-90 ${tx - fs * 0.45} ${roofTop / 2})"`) +
       text(W / 2, 30 + fs * 2.6, 'Front', 'middle', ' class="kd-text kd-caption"') + text(sx + D / 2, 30 + fs * 2.6, 'Side', 'middle', ' class="kd-text kd-caption"');
+    // The list next to the drawing, top floor first like the builder
+    const item = (name, value, extra = '') => `<div class="kd-item"${extra}><dt>${this.escapeHtml(name)}</dt><dd>${this.escapeHtml(value)}</dd></div>`;
+    const list = [
+      item('Width', `${W} mm`), item('Depth', `${D} mm`),
+      item('Height', `${lift ? '≈ ' : ''}${total} mm`, ' class="kd-item is-total"'),
+      ...(roofH ? [item(roofName, `${roofH} mm`)] : []),
+      ...(lipH ? [item('Top lip', `${lipH} mm`)] : []),
+      ...parts.filter(p => p.fi !== undefined).reverse().map(p => item(p.name, p.value, ` data-fi="${p.fi}" onmouseenter="App.kitHoverFloor(${p.fi})" onmouseleave="App.kitHoverFloor(null)"`)),
+      ...parts.filter(p => p.fi === undefined && p.name !== 'Top lip').reverse().map(p => item(p.name, p.value))
+    ].join('');
     return `
-      <svg class="kit-drawing" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="The tower from the front and the side">
-        <path class="kd-ground" d="M${minX + fs * 2} 0H${maxX - 10}"/>
-        ${wall}${under}${front.join('')}${side.join('')}${sideWheel}${roof}${handles}${dims}
-      </svg>`;
+      <div class="kit-drawing-wrap">
+        <svg class="kit-drawing" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="The tower from the front and the side, with its dimensions">
+          <path class="kd-ground" d="M${minX + fs * 2} 0H${maxX - 10}"/>
+          ${wall}${under}${front.join('')}${side.join('')}${lip}${sideWheel}${roof}${handles}${dims}
+        </svg>
+        <dl class="kd-list" title="A module is 48 mm per F in the stack; printed it is 9 mm taller (57 / 105 / 201 mm), the lip that goes into the next one">${list}</dl>
+      </div>`;
   },
 
   // The builder: saved configurations, footprint, floors (top floor first), roof, options and

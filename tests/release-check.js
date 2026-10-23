@@ -395,12 +395,19 @@ async function runStaticAndUiChecks() {
     for (const roof of ['grid', 'table', 'bowl', 'heavy', 'heavycut', 'undertable', 'none']) {
       for (const base of ['none', 'plain', 'wheels', 'casters']) {
         const c = { ...bom.cfg, roof, mods: { base, feet: true, backbone: 'universal', pullHandle: true, stationaryHandle: true, pegboard: 'ussa', wallMount: true } };
-        const svg = UI.kitDrawing(c, 450);
+        const svg = UI.kitDrawing(c);
         assert(svg.includes('<svg') && !/NaN|undefined/.test(svg), `Tower drawing broken for roof ${roof}, base ${base}`);
       }
     }
-    const drawing = UI.kitDrawing(bom.cfg, bom.height);
+    const drawing = UI.kitDrawing(bom.cfg);
     assert((drawing.match(/class="kd-floor"/g) || []).length === bom.cfg.floors.length * 2, 'Every floor is drawn from the front and the side');
+    // Dimensions: every floor (48 mm per F), the lip, the roof, the base, the whole height
+    const dimCfg = { ...bom.cfg, roof: 'bowl', floors: [{ height: '2F', layout: 'L', slots: [{ type: 'drawer', boxes: '', interior: 'empty' }] }, { height: '1F', layout: 'L', slots: [{ type: 'drawer', boxes: '', interior: 'empty' }] }], mods: { ...bom.cfg.mods, base: 'plain', feet: false } };
+    const dimDrawing = UI.kitDrawing(dimCfg);
+    assert(dimDrawing.includes('<dt>Floor 1 · 2F</dt><dd>96 mm</dd>') && dimDrawing.includes('<dt>Floor 2 · 1F</dt><dd>48 mm</dd>'), 'Every floor has its height');
+    assert(dimDrawing.includes('<dt>Bowl roof</dt><dd>21 mm</dd>') && dimDrawing.includes('<dt>Base</dt><dd>52 mm</dd>') && dimDrawing.includes('<dt>Top lip</dt><dd>9 mm</dd>'), 'Roof, base and lip have their heights');
+    assert(dimDrawing.includes('<dt>Height</dt><dd>226 mm</dd>') && dimDrawing.includes('>226 mm</text>'), `The height counts the roof: 52 + 96 + 48 + 9 + 21`);
+    assert(UI.kitDrawing({ ...dimCfg, mods: { ...dimCfg.mods, base: 'wheels' } }).includes('≈ 266 mm'), 'An estimated lift makes the height approximate');
 
     // The 3D tower, built with the real three.js (no WebGL needed to build it)
     const three = { console };

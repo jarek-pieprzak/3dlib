@@ -2650,7 +2650,7 @@ const App = {
     }
     if (!shown3d) {
       this.kitDispose3D();
-      container.innerHTML = UI.kitDrawing(kit.cfg, kit.bom.height);
+      container.innerHTML = UI.kitDrawing(kit.cfg);
     }
     const panel = container.closest('.detail-viewer-panel');
     const title = panel && panel.querySelector('.detail-viewer-title');
@@ -2744,10 +2744,10 @@ const App = {
 
   // The floor under the pointer is marked in the builder and in the drawing (fi null: none)
   kitHoverFloor(fi) {
-    document.querySelectorAll('.kit-floor.is-hover, .kd-floor.is-hover').forEach(el => el.classList.remove('is-hover'));
+    document.querySelectorAll('.kit-floor.is-hover, .kd-floor.is-hover, .kd-item.is-hover').forEach(el => el.classList.remove('is-hover'));
     if (this.kit && this.kit.scene3d) this.kit.scene3d.highlight(fi === null || fi === undefined ? null : Number(fi));
     if (fi === null || fi === undefined) return;
-    document.querySelectorAll(`.kit-floor[data-fi="${Number(fi)}"], .kd-floor[data-fi="${Number(fi)}"]`).forEach(el => el.classList.add('is-hover'));
+    document.querySelectorAll(`.kit-floor[data-fi="${Number(fi)}"], .kd-floor[data-fi="${Number(fi)}"], .kd-item[data-fi="${Number(fi)}"]`).forEach(el => el.classList.add('is-hover'));
   },
 
   // ── Tips (VaultKit.TIPS) ──

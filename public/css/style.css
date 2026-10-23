@@ -1799,7 +1799,22 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-preview-panel>.panel-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .kit-tower-btn[hidden]{display:none}
 /* The tower drawing (UI.kitDrawing): millimetres, scaled to the panel */
-.viewer-container>.kit-drawing{position:absolute;inset:0;width:100%;height:100%;padding:12px;background:var(--bg-card)}
+/* The drawing with its list of dimensions beside it, or under it in a narrow panel */
+.kit-preview-panel .viewer-container{container-type:inline-size}
+.viewer-container>.kit-drawing-wrap{position:absolute;inset:0;display:flex;background:var(--bg-card)}
+.kit-drawing-wrap>.kit-drawing{flex:1 1 auto;min-width:0;width:100%;height:100%;padding:12px}
+.kd-list{flex:none;width:176px;margin:0;padding:12px 14px;overflow-y:auto;font-size:.74rem;border-left:1px solid var(--border)}
+.kd-item{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--border)}
+.kd-item dt{color:var(--text-muted)}
+.kd-item dd{margin:0;font-weight:600;color:var(--text-primary);white-space:nowrap}
+.kd-item.is-total dt,.kd-item.is-total dd{color:var(--accent-cyan)}
+.kd-item[data-fi]{cursor:default}
+.kd-item.is-hover dt,.kd-item.is-hover dd{color:var(--accent-cyan)}
+@container (max-width: 560px){
+  .kit-drawing-wrap{flex-direction:column}
+  .kit-drawing-wrap>.kit-drawing{height:auto;flex:1 1 auto;min-height:0}
+  .kd-list{width:auto;max-height:42%;display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));column-gap:14px;border-left:none;border-top:1px solid var(--border)}
+}
 .kit-drawing .kd-mod{fill:var(--bg-tertiary);stroke:color-mix(in srgb, var(--text-muted) 55%, transparent);stroke-width:1.5}
 .kit-drawing .kd-drawer{fill:color-mix(in srgb, var(--accent-cyan) 20%, var(--bg-card));stroke:color-mix(in srgb, var(--accent-cyan) 55%, transparent);stroke-width:1.2}
 .kit-drawing .kd-sus{fill:color-mix(in srgb, var(--warning) 22%, var(--bg-card));stroke:color-mix(in srgb, var(--warning) 60%, transparent);stroke-width:1.2}

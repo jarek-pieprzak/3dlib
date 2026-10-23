@@ -283,7 +283,7 @@ async function scanLibrary(libraryPath) {
       } catch (e) { return; }
 
       const ft = getFileType(filename);
-      const existingFile = db.get('SELECT id, model_id, thumbnail, original_name FROM files WHERE library_path = ?', [filePath]);
+      const existingFile = db.get('SELECT id, model_id, thumbnail, original_name, file_size FROM files WHERE library_path = ?', [filePath]);
       const thumbRelValue = displayName;
 
       if (!existingFile) {
@@ -356,6 +356,18 @@ async function scanLibrary(libraryPath) {
         // folder; give them their path relative to the project folder
         if (existingFile.original_name !== displayName) {
           db.run('UPDATE files SET original_name = ? WHERE id = ?', [displayName, existingFile.id], true);
+        }
+        // A file replaced on disk (a new version of an archive): its size changes, the printer
+        // fit check measures it again (dim_bytes != file_size) and the browser renders a new preview
+        if (Number(existingFile.file_size) !== stat.size) {
+          const rendered = existingFile.thumbnail && /^\d{10,}-[0-9a-f]{16}\.png$/i.test(existingFile.thumbnail)
+            && !db.get('SELECT 1 FROM models WHERE thumbnail = ?', [existingFile.thumbnail]);
+          db.run(`UPDATE files SET file_size = ?${rendered ? ', thumbnail = NULL' : ''} WHERE id = ?`, [stat.size, existingFile.id], true);
+          if (rendered) {
+            const { UPLOADS_DIR } = require('../database');
+            try { fs.unlinkSync(path.join(UPLOADS_DIR, existingFile.thumbnail)); } catch (e) { /* gone */ }
+          }
+          processedSinceSave++;
         }
         if (ft === 'image' && !model.thumbnail) {
           db.run('UPDATE models SET thumbnail = ? WHERE id = ?', [thumbRelValue, model.id], true);

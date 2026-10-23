@@ -8,10 +8,12 @@
  * are not consistent ("Module 4f" / "4F", "M3 1F Module .stl", "L4F' Facade", double spaces,
  * "Roof" / "Roofs" folders, "Heawyweight"). The archive itself is never changed.
  *
- * Quantities count prints of a file. Some files hold a pair (runner guides, runner slides,
- * springs, geared rails, rods, bottom hinges, the L-XL hinge top): one print per box or
- * sustainer. The rules come from the five PDFs in the archive root; quantities the PDFs leave
- * open are marked as estimates and can be changed by hand (cfg.qty).
+ * Quantities count prints of a file. Some files hold a pair (springs, geared rails, rods,
+ * bottom hinges, the L-XL hinge top): one print per box or sustainer. Runner guides and slides
+ * are single parts since the October 2026 archive: two prints per box. The rules come from the
+ * five PDFs in the archive root; quantities the PDFs leave open are marked as estimates and can
+ * be changed by hand (cfg.qty). Parts the PDFs do not show at all are listed with 0 prints
+ * (optional) when their option is chosen.
  *
  * Pure functions, no DOM: window.VaultKit in the browser, globalThis.VaultKit in the tests.
  */
@@ -44,6 +46,7 @@ globalThis.VaultKit = (function () {
     { id: 'table', label: 'Table' },
     { id: 'bowl', label: 'Bowl' },
     { id: 'heavy', label: 'Heavyweight (handle, two bowls)' },
+    { id: 'heavycut', label: 'Heavyweight, cut (350 × 320 bed)' },
     { id: 'undertable', label: 'Under-table mount' }
   ];
   const DRAWER_INTERIORS = ['empty', 'gridfinity', 'dividers'];
@@ -102,7 +105,7 @@ globalThis.VaultKit = (function () {
       choices: {
         empty: { label: 'Empty', image: 'drawer-empty', text: 'The bare box with its perforated floor.' },
         gridfinity: { label: 'Gridfinity baseplate', image: 'drawer-gridfinity', text: 'A 42 mm Gridfinity grid in the box for Gridfinity bins; with 0, 1 or 2 handles to lift it out.' },
-        dividers: { label: 'Grid dividers', image: 'drawer-dividers', text: 'Slotted strips that cross to make compartments: one along the width and one along the depth (estimate, add more by hand).' }
+        dividers: { label: 'Grid dividers', image: 'drawer-dividers', text: 'Slotted strips that cross to make compartments: one along the width and one along the depth (estimate, add more by hand). The rounded and straight edge pieces and the pins (loose or tight fit) are listed with 0 prints: the manual does not show them, set how many you need.' }
       } },
     handles: { title: 'Baseplate handles', image: 'drawer-gridfinity', manual: [MANUAL, 9],
       text: 'Handles on the Gridfinity baseplate to lift it out of the box with the bins on it. Not every size has every variant.' },
@@ -122,6 +125,7 @@ globalThis.VaultKit = (function () {
         table: { label: 'Table', image: 'roof-table', text: 'A flat top to put things on.' },
         bowl: { label: 'Bowl', image: 'roof-bowl', text: 'A tray with a raised rim for loose items.' },
         heavy: { label: 'Heavyweight', image: 'roof-heavy', text: 'Two bowls with a handle between them, to carry the tower. L and XL only.' },
+        heavycut: { label: 'Heavyweight, cut', image: 'roof-heavy-cut', text: 'The heavyweight roof with the outer corners of both bowls cut off, so it fits a 350 × 320 mm bed: 337 × 320 mm on the plate instead of 366 × 348 mm (picture: both on that bed). Same handle and inserts; XL only. Not in the manual (October 2026 archive).' },
         undertable: { label: 'Under-table mount', image: 'undertable-mount', text: 'A plate screwed under a table top; the tower hangs from it, as many modules as you like.', manual: [MOUNT_PDF, 10] }
       } },
     key: { title: 'Drawer key', image: 'key', manual: [DRAWER_PDF, 1],
@@ -200,20 +204,26 @@ globalThis.VaultKit = (function () {
         const handles = m[3] && m[3] !== 'no' ? m[3] : '0';
         return `d:baseplate:${up(m[1])}${m[2]}:${handles}${m[4] ? `:part${m[4]}` : ''}`;
       }
-      if ((m = name.match(re(`^${W}([3-7]) (bowl|grid|table|under table mount|heawyweight|heavyweight) roof$`)))) {
+      // "XL3 Heavyweight Roof Cut": the heavyweight roof cut down to fit a 350 x 320 bed
+      if ((m = name.match(re(`^${W}([3-7]) (bowl|grid|table|under table mount|heawyweight|heavyweight) roof( cut)?$`)))) {
         const kind = { bowl: 'bowl', grid: 'grid', table: 'table', 'under table mount': 'undertable', heawyweight: 'heavy', heavyweight: 'heavy' }[m[3]];
-        return `d:roof:${up(m[1])}${m[2]}:${kind}`;
+        if (m[4] && kind !== 'heavy') return null;
+        return `d:roof:${up(m[1])}${m[2]}:${kind}${m[4] ? 'cut' : ''}`;
       }
       if ((m = name.match(re(`^${W}([124])f \\(turn on supports\\)$`))) && inDir(/facades/)) return `d:facade:${up(m[1])}:${m[2]}F`;
       if ((m = name.match(/^xl facade ([124])f$/))) return `d:facade:XL:${m[1]}F`;
       if ((m = name.match(re(`^${W} rails$`)))) return `d:rails:${up(m[1])}`;
-      if ((m = name.match(/^(x|xl)([3-7]) runner (guides|slides)$/))) return `d:runner${m[3] === 'guides' ? 'guide' : 'slide'}:${m[1] === 'xl' ? 'XL' : 'x'}${m[2]}`;
+      // One runner per file: "x3 Runner Guide", "XL Runners/x3 Runner Slide XL"
+      if ((m = name.match(/^x([3-7]) runner (guide|slide)( xl)?$/))) return `d:runner${m[2]}:${m[3] ? 'XL' : 'x'}${m[1]}`;
       if (name === 'runner stopper') return 'd:runnerstopper';
       if ((m = name.match(/^x([3-7])$/)) && inDir(/manual supports/)) return `d:support:${m[1]}`;
       if ((m = name.match(/^x([3-7]) accessory (1st|2nd)$/))) return `d:l2acc:${m[1]}:${m[2]}`;
-      if ((m = name.match(/^(\d+)(?:-(?:s|m|l|xl))?(?:, x[3-7])?$/)) && inDir(/grid dividers/)) {
+      if (inDir(/grid dividers/)) {
+        if ((m = name.match(/^grid divider pin_(loose|tight)$/))) return `d:gridpin:${m[1]}`;
         const h = (dirs.find(d => /tall/.test(d)) || '').match(/^([\d.]+)mm/);
-        return h ? `d:griddivider:${h[1]}:${m[1]}` : null;
+        if ((m = name.match(/^(\d+)(?:-(?:s|m|l|xl))?(?:, x[3-7])?$/))) return h ? `d:griddivider:${h[1]}:${m[1]}` : null;
+        // "Rounded Edge Piece 20MM", "Straight Edge Piece 1F" in the folder of their height
+        if ((m = name.match(/^(rounded|straight) edge piece (?:20mm|[12]f)$/))) return h ? `d:gridedge:${h[1]}:${m[1]}` : null;
       }
       const universal = {
         'facade cap': 'd:facadecap', 'heawyweight roof handle': 'd:heavyhandle', 'heavyweight roof handle': 'd:heavyhandle',
@@ -540,6 +550,11 @@ globalThis.VaultKit = (function () {
       if (estimate) row.estimate = true;
       hardware.set(name, row);
     };
+    // A part the manual does not show: listed with 0 prints, the count is set by hand
+    const option = (key, group, label) => {
+      const file = cat.byKey[key];
+      if (file && !parts.has(key)) parts.set(key, { key, file, qty: 0, group, label, estimate: false, optional: true });
+    };
     const d = cfg.depth;
     const width = cfg.width;
     const split = cfg.split && d >= 6;
@@ -555,8 +570,8 @@ globalThis.VaultKit = (function () {
       }
       add(`d:facade:${w}:${bh}`, 1, 'Drawer boxes', `${w}${bh} drawer facade`);
       if (w === 'XL' && has(cat, `d:backpanel:XL${d}`)) add(`d:backpanel:XL${d}`, 1, 'Drawer boxes', `XL${d} back panel`);
-      add(`d:runnerguide:${rk}`, 1, 'Drawer boxes', `${rk} runner guides (pair)`);
-      add(`d:runnerslide:${rk}`, 1, 'Drawer boxes', `${rk} runner slides (pair)`);
+      add(`d:runnerguide:${rk}`, 2, 'Drawer boxes', `${rk} runner guide`);
+      add(`d:runnerslide:${rk}`, 2, 'Drawer boxes', `${rk} runner slide`);
       if (rails) add(`d:rails:${w}`, 1, 'Drawer boxes', `${w} geared rails (top and bottom)`);
       add('d:runnerstopper', 2, 'Small drawer parts', 'Runner stopper');
       if (cfg.key === 'hidden') {
@@ -583,6 +598,10 @@ globalThis.VaultKit = (function () {
         const tall = slot.low ? '20' : (bh === '1F' ? '34.5' : '82.5');
         add(`d:griddivider:${tall}:${DIVIDER_WIDTH[w]}`, 1, 'Interiors', `Grid divider ${DIVIDER_WIDTH[w]} (${w} width, ${tall} mm)`, true);
         add(`d:griddivider:${tall}:${dividerDepth(d)}`, 1, 'Interiors', `Grid divider ${dividerDepth(d)} (depth ${d}, ${tall} mm)`, true);
+        option(`d:gridedge:${tall}:rounded`, 'Interiors', `Rounded edge piece (${tall} mm)`);
+        option(`d:gridedge:${tall}:straight`, 'Interiors', `Straight edge piece (${tall} mm)`);
+        option('d:gridpin:loose', 'Interiors', 'Grid divider pin, loose fit');
+        option('d:gridpin:tight', 'Interiors', 'Grid divider pin, tight fit');
       }
     };
 
@@ -663,9 +682,10 @@ globalThis.VaultKit = (function () {
     if (cfg.roof !== 'none') {
       const roofMods = topDrawerModules(cfg);
       roofMods.forEach(mod => {
-        add(`d:roof:${mod.w}${d}:${cfg.roof}`, 1, 'Roof', `${mod.w}${d} ${(ROOFS.find(r => r.id === cfg.roof) || {}).label || cfg.roof} roof`);
+        add(`d:roof:${mod.w}${d}:${cfg.roof}`, 1, 'Roof', cfg.roof === 'heavycut' ? `${mod.w}${d} heavyweight roof, cut`
+          : `${mod.w}${d} ${(ROOFS.find(r => r.id === cfg.roof) || {}).label || cfg.roof} roof`);
         if (cfg.roof === 'grid') { add('d:tophandle', 1, 'Roof', 'Top handle'); hw('M6 × 50 mm bolt', 2, 'top handle'); }
-        if (cfg.roof === 'heavy') { add('d:heavyhandle', 1, 'Roof', 'Heavyweight roof handle'); add('d:heavyinsert', 2, 'Roof', 'Heavyweight roof insert', true); }
+        if (cfg.roof === 'heavy' || cfg.roof === 'heavycut') { add('d:heavyhandle', 1, 'Roof', 'Heavyweight roof handle'); add('d:heavyinsert', 2, 'Roof', 'Heavyweight roof insert', true); }
       });
       const top = cfg.floors[cfg.floors.length - 1];
       if (roofMods.length && top && top.height !== '2F' && (cfg.mods.base !== 'none' || cfg.mods.backbone !== 'none')) {
@@ -797,7 +817,7 @@ globalThis.VaultKit = (function () {
       mods.pullHandle ? 'pull-out handle' : '', mods.stationaryHandle ? 'handle' : '',
       mods.pegboard && mods.pegboard !== 'none' ? 'pegboard' : '', mods.wallMount ? 'wall mount' : ''
     ].filter(Boolean);
-    const roof = cfg.roof && cfg.roof !== 'none' ? `${cfg.roof === 'undertable' ? 'under-table' : cfg.roof} roof` : '';
+    const roof = cfg.roof && cfg.roof !== 'none' ? `${{ undertable: 'under-table', heavycut: 'heavy cut' }[cfg.roof] || cfg.roof} roof` : '';
     return [`${cfg.width}${cfg.depth}`, floors, roof, extras.join(', ')].filter(Boolean).join(' · ');
   }
 

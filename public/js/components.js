@@ -1683,7 +1683,8 @@ const UI = {
     const lift = mods.base === 'wheels' ? 40 : mods.base === 'casters' ? 46 : (hasBase && mods.feet ? 24 : 0);
     const baseH = hasBase ? 34 : 0;
     const floorsH = floors.reduce((n, f) => n + (F[f.height] || 1) * P, 0);
-    const roofKind = cfg.roof && cfg.roof !== 'none' ? cfg.roof : null;
+    // The cut heavyweight roof looks like the full one at this scale
+    const roofKind = cfg.roof && cfg.roof !== 'none' ? (cfg.roof === 'heavycut' ? 'heavy' : cfg.roof) : null;
     const roofH = { grid: 36, table: 8, bowl: 22, heavy: 62, undertable: 30 }[roofKind] || 0;
     const topY = -lift - baseH - floorsH;
     const handleTop = mods.pullHandle && mods.backbone !== 'none' ? topY - roofH - 150 : topY - roofH;
@@ -1983,6 +1984,8 @@ const UI = {
     const rows = [];
     let group = null;
     for (const p of bom.parts) {
+      // Optional parts nobody asked for are only offered while the configuration is edited
+      if (locked && p.optional && !p.qty) continue;
       if (p.group !== group) {
         group = p.group;
         rows.push(`<div class="kit-group-title">${esc(group)}</div>`);
@@ -1993,7 +1996,7 @@ const UI = {
         <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${track && p.qty > 0 && printedOf(p) >= p.qty ? ' is-printed' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" title="${esc(path)}">
           ${track && p.qty > 0 ? counter(p) : locked ? `<span class="kit-qty is-static" title="Prints">${p.qty}</span>` : `<input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">`}
           <div class="kit-part-main">
-            <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}</div>
+            <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}${p.optional ? ' <span class="kit-est" title="Not in the manual: set how many you need">optional</span>' : ''}</div>
             <div class="kit-part-path">${esc(path)}</div>
             ${locked ? `<div class="kit-part-meta">${this.formatSize(p.file.file_size)}${this.MEASURABLE.includes(p.file.file_type) ? ` <span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}</div>` : ''}
           </div>

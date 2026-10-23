@@ -311,6 +311,10 @@ async function runStaticAndUiChecks() {
       'The locked list shows the counts without inputs, and the configuration ZIP');
     assert((lockedParts.match(/class="(dropdown )?slicer-split/g) || []).length === bom.parts.filter(p => p.file.file_type === 'stl').length && lockedParts.includes('bambustudio://open?file=') && lockedParts.includes('App.placeMenu(this)'),
       'Every 3D part opens in a slicer, the others in a menu placed against the window');
+    const divBom = K.computeBom(cat, { ...K.defaultConfig(), floors: [{ height: '1F', layout: 'L', slots: [{ type: 'drawer', interior: 'dividers' }] }] });
+    const divEdit = UI.kitParts({ ...state, bom: divBom });
+    assert(divEdit.includes('Rounded edge piece (34.5 mm)') && divEdit.includes('>optional</span>') && !UI.kitParts({ ...viewState, bom: divBom }).includes('Rounded edge piece'),
+      'Optional parts are offered while editing, a locked configuration lists only what it prints');
     const firstPart = bom.parts.find(p => p.qty > 0);
     const vf = { ...firstPart.file, model_id: 1, version_count: 2 };
     assert(UI.kitParts({ ...viewState, bom: { ...bom, parts: [{ ...firstPart, file: vf }] } }).includes(`App.openSlicerChooser(1, ${vf.id})`), 'A part with saved slicer projects opens the chooser');
@@ -388,7 +392,7 @@ async function runStaticAndUiChecks() {
     assert(/is-current[^>]*onclick="App.kitTipPick\(&quot;cfg:roof&quot;, &quot;bowl&quot;\)"/.test(roofTip) && /disabled[^>]*onclick="App.kitTipPick\(&quot;cfg:roof&quot;, &quot;heavy&quot;\)"/.test(roofTip), 'A tip marks the current choice and disables the unavailable ones');
 
     // The drawing: every roof, base and modification, no broken numbers
-    for (const roof of ['grid', 'table', 'bowl', 'heavy', 'undertable', 'none']) {
+    for (const roof of ['grid', 'table', 'bowl', 'heavy', 'heavycut', 'undertable', 'none']) {
       for (const base of ['none', 'plain', 'wheels', 'casters']) {
         const c = { ...bom.cfg, roof, mods: { base, feet: true, backbone: 'universal', pullHandle: true, stationaryHandle: true, pegboard: 'ussa', wallMount: true } };
         const svg = UI.kitDrawing(c, 450);
@@ -403,7 +407,7 @@ async function runStaticAndUiChecks() {
     vm.createContext(three);
     vm.runInContext(`${fs.readFileSync(path.join(ROOT_DIR, 'public/js/vendor/three.min.js'), 'utf8')}\n${kitCode}\n${fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/ussa-vault-3d.js'), 'utf8')}`, three);
     const F = { '1F': 1, '2F': 2, '4F': 4 };
-    for (const roof of ['grid', 'heavy', 'undertable', 'none']) {
+    for (const roof of ['grid', 'heavy', 'heavycut', 'undertable', 'none']) {
       const c = { ...bom.cfg, roof, mods: { base: 'wheels', feet: true, backbone: 'universal', pullHandle: true, stationaryHandle: true, pegboard: 'ikea', wallMount: roof === 'none' } };
       const model = three.VaultKit3D.build(c);
       const floorsH = c.floors.reduce((n, f) => n + F[f.height] * 48, 0);
@@ -493,7 +497,8 @@ async function runStaticAndUiChecks() {
   await check('USSA VAULT kit: every STL of the archive is recognised; parts lists follow the manual', () => {
     require(path.join(ROOT_DIR, 'public/js/kits/ussa-vault.js'));
     const K = globalThis.VaultKit;
-    // The real archive: "<size>\t<path in the project folder>" for its 737 files
+    // The real archive: "<size>\t<path in the project folder>" for its 751 files (the October
+    // 2026 archive plus the three baseplates and the sustainer PDF that it no longer has)
     const files = fs.readFileSync(path.join(__dirname, 'fixtures/ussa-vault-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean)
       .map((line, i) => { const [size, name] = line.split('\t'); return { id: i + 1, file_size: Number(size), original_name: name }; });
     const unknownStl = files.filter(f => /\.stl$/i.test(f.original_name) && !K.classify(f.original_name)).map(f => f.original_name);
@@ -517,11 +522,12 @@ async function runStaticAndUiChecks() {
     const drawer = (extra = {}) => ({ type: 'drawer', interior: 'empty', ...extra });
 
     // Default: L4 with 2F L, 1F S+S, 2F L drawers and a grid roof. Runner guides and slides are
-    // pairs in one file: one print per box
+    // single parts: two prints per box
     const def = bom(K.defaultConfig());
     expect(def, 'Default tower', [['L4 Module 2F.stl', 2], ['S4 Module 1f.stl', 2], ['L4 Box 2F.stl', 2], ['S4 Box 1F.stl', 2],
-      ['x4 Runner Guides.stl', 4], ['x4 Runner Slides.stl', 4], ['Runner Stopper.stl', 8], ['Springs.stl', 4], ['Latch.stl', 4],
+      ['x4 Runner Guide.stl', 8], ['x4 Runner Slide.stl', 8], ['Runner Stopper.stl', 8], ['Springs.stl', 4], ['Latch.stl', 4],
       ['L4 Grid Roof.stl', 1], ['Top Handle (Turn On Supports).stl', 1], ['Rails.stl', 0]]);
+    assert(!def.parts.some(p => p.optional), 'Optional parts only come with their option');
     assert(hw(def, 'M4 × 14') === 20 && hw(def, 'M6 × 50') === 2, 'Default tower: 4 + 6 M4x14 per 1F / 2F box, 2 M6x50 for the handle');
     assert(def.warnings.length === 0, `Default tower: no warnings expected, got ${def.warnings.join(' | ')}`);
 
@@ -530,6 +536,13 @@ async function runStaticAndUiChecks() {
     expect(l2, 'L² floor', [['L4² Module 4F.stl', 1], ['Latch.stl', 1], ['S Rails.stl', 6], ['S4 Box 2F.stl', 2], ['S4 Box 1F.stl', 4],
       ['x4 Accessory 1st.stl', 1], ['x4 Accessory 2nd.stl', 1], ['S4 Baseplate_With 2 Handles.stl', 2], ['L4 Table Roof.stl', 1],
       ['34.5MM TALL (full height of 1F drawers)/10-S, x3.stl', 4], ['34.5MM TALL (full height of 1F drawers)/14, x4.stl', 4]]);
+    // Grid divider edge pieces and pins are not in the manual: offered with 0 prints, counted by hand
+    const optional = l2.parts.filter(p => p.optional).map(p => `${p.key}=${p.qty}`).sort().join();
+    assert(optional === 'd:gridedge:34.5:rounded=0,d:gridedge:34.5:straight=0,d:gridpin:loose=0,d:gridpin:tight=0', `Optional divider parts: ${optional}`);
+    const l2Cfg = { width: 'L', depth: 4, roof: 'table', floors: [{ height: '2F', layout: 'L2', slots: [drawer({ boxes: '2F', interior: 'dividers', low: true }), drawer()] }] };
+    const pinned = bom({ ...l2Cfg, qty: { 'd:gridpin:tight': 6 } });
+    expect(pinned, 'Low dividers with pins', [['grid divider pin_tight.stl', 6], ['Rounded Edge Piece 20MM.stl', 0], ['20MM TALL/10-S, x3.stl', 1]]);
+    assert(pinned.parts.find(p => p.key === 'd:gridpin:tight').auto === 0 && pinned.totals.prints === bom(l2Cfg).totals.prints + 6, 'Pins counted by hand join the totals');
 
     // Sustainers: S-M hinge tops are single parts, the L-XL top and every bottom hinge file a pair
     const sus = bom({ width: 'L', depth: 4, floors: [{ height: '2F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'sustainer', interior: 'gridfinity' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'sealed' }] }] });
@@ -539,7 +552,14 @@ async function runStaticAndUiChecks() {
     assert(hw(sus, 'M4 × 10') === 24 && hw(sus, 'M4 × 14') === 48 && hw(sus, 'M4 × 20') === 21, 'Sustainers: 8 / 16 / 7 bolts each');
 
     // XL: 3-5 deep boxes have a back panel, 6-7 deep boxes and baseplates come in two parts
-    expect(bom({ width: 'XL', depth: 3, floors: [{ height: '1F', layout: 'XL', slots: [drawer()] }] }), 'XL3 drawer', [['XL3 Box 1F.stl', 1], ['XL3 Back Panel.stl', 1], ['XL Facade 1F.stl', 1], ['XL3 Runner Guides.stl', 1]]);
+    expect(bom({ width: 'XL', depth: 3, floors: [{ height: '1F', layout: 'XL', slots: [drawer()] }] }), 'XL3 drawer', [['XL3 Box 1F.stl', 1], ['XL3 Back Panel.stl', 1], ['XL Facade 1F.stl', 1], ['x3 Runner Guide XL.stl', 2], ['x3 Runner Slide XL.stl', 2], ['x3 Runner Guide.stl', 0]]);
+    // The cut heavyweight roof (fits a 350 x 320 bed) is an XL roof of its own, with the same handle
+    const xlRoof = { width: 'XL', depth: 5, floors: [{ height: '1F', layout: 'XL', slots: [drawer()] }] };
+    assert(K.choices(cat, xlRoof).roofs.join() === 'grid,table,bowl,heavy,heavycut,undertable', `XL roofs: ${K.choices(cat, xlRoof).roofs.join()}`);
+    expect(bom({ ...xlRoof, roof: 'heavycut' }), 'XL5 cut roof', [['XL5 Heavyweight Roof Cut.stl', 1], ['XL5 Heawyweight Roof.stl', 0], ['Heawyweight Roof Handle.stl', 1], ['Heawyweight Roof Insert.stl', 2]]);
+    assert(K.describe({ ...xlRoof, roof: 'heavycut' }).includes('heavy cut roof'), 'The summary names the cut roof');
+    const lCut = K.normalize(cat, { ...K.defaultConfig(), roof: 'heavycut' });
+    assert(lCut.cfg.roof === 'grid' && lCut.changes.some(c => /No heavycut roof/.test(c)), 'L towers have no cut roof');
     expect(bom({ width: 'XL', depth: 6, floors: [{ height: '1F', layout: 'XL', slots: [drawer({ interior: 'gridfinity' })] }] }), 'XL6 drawer',
       [['XL6 Box 1F Part 1.stl', 1], ['XL6 Box 1F Part 2.stl', 1], ['XL6 Baseplate Part 1.stl', 1], ['XL6 Baseplate Part 2.stl', 1], ['Back Panel.stl', 0]]);
 
@@ -2194,6 +2214,19 @@ async function runE2ETests() {
       assert(!(await apiReq('/api/models?fits=any&limit=96', { session: adminSession })).data.models.some(m => m.name === 'Long Bar'), 'Fits any printer: not the long bar');
       const card = (await apiReq('/api/models?search=Long%20Bar', { session: adminSession })).data.models[0];
       assert(card.fit.misfit.any === 1, 'The search results carry the fit too');
+
+      // A file replaced on disk (a new version of an archive) gets its new size and is measured again
+      const shortBar = longBar.replace('vertex 400 0 0', 'vertex 40.5 0 0');
+      fs.writeFileSync(path.join(tmpLibDir, 'Long Bar', 'bar.stl'), shortBar);
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        if (!(await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning) break;
+      }
+      for (let i = 0; i < 100 && (await apiReq(`/api/models/${bar.id}/sizes`, { session: adminSession })).data.pending; i++) await new Promise(r => setTimeout(r, 200));
+      const replaced = (await apiReq(`/api/models/${bar.id}`, { session: adminSession })).data.files.find(f => f.original_name === 'bar.stl');
+      assert(replaced.file_size === Buffer.byteLength(shortBar) && replaced.dim_x === 40.5 && replaced.dim_bytes === replaced.file_size,
+        `A replaced file: new size and new measurements, got ${replaced.file_size} bytes, ${replaced.dim_x} mm`);
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

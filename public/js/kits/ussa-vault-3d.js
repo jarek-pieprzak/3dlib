@@ -237,9 +237,10 @@ globalThis.VaultKit3D = (function () {
     const topY = y;
     const tp = { parent: topGroup };
 
-    // The roof on the drawer modules of the top floor (sustainers have their own lids)
+    // The roof on the drawer modules of the top floor (sustainers have their own lids); the cut
+    // heavyweight roof is drawn like the full one
     const top = floors[floors.length - 1];
-    const kind = cfg.roof && cfg.roof !== 'none' ? cfg.roof : null;
+    const kind = cfg.roof && cfg.roof !== 'none' ? (cfg.roof === 'heavycut' ? 'heavy' : cfg.roof) : null;
     let roofTop = topY;
     if (kind && top) {
       const layout = layoutOf(top);

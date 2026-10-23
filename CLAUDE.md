@@ -78,6 +78,10 @@ page and footer credit GyroidVault; keep that.
   and print history move along).
 - Files that disappear from disk are purged after a scan; a missing `/library-files/...` path is a
   real 404, never the SPA page.
+- A file replaced on disk keeps its row (and id); a scan updates its `file_size` when it changed,
+  so the printer fit check measures it again and a preview the viewer rendered of it is dropped.
+  To update an archive, overwrite files in place; deleting the folder first lets the hourly sync
+  purge its files and the then empty model.
 
 ## What the fork adds (newest first)
 
@@ -93,14 +97,20 @@ page and footer credit GyroidVault; keep that.
   - A project whose files are the VAULT archive (`VaultKit.detect`: the three top folders and 40+
     known parts) opens in the configurator; the "Files" tab (`#/models/:id?view=files`) is the usual
     model page. From the Trash it always opens as files.
-  - Parts are recognised by normalised name patterns (`classify`), never by paths; the archive is
-    never changed. The test covers every STL of the real archive (`tests/fixtures/ussa-vault-files.tsv`:
-    its 737 file names and sizes). M4 drawers have a second set of baseplates ("M4 Gridfinity
-    Baseplate ..."); the names every family uses win.
+  - Parts are recognised by normalised name patterns (`classify`), never by paths; the app never
+    changes the archive. The test covers every STL of the real archive (`tests/fixtures/ussa-vault-files.tsv`:
+    its 751 file names and sizes: the archive of 2026-10-21, `261021_VAULT_USSA_S.zip`, plus the
+    three older Gridfinity baseplates and `03_Sustainers Assembly.pdf` that it dropped and that stay
+    in my folder). M4 drawers have a second set of baseplates ("M4 Gridfinity Baseplate ..."); the
+    names every family uses win.
   - `computeBom(catalog, config)`: files with print counts, hardware, notes. A count is prints of a
-    file: runner guides and slides, springs, geared rails, rods, bottom hinges and the L-XL hinge top
-    hold a pair. L² / XL² are one L / XL module with two drawer columns (S+S / S+M). Counts the PDFs
-    do not give are marked "estimate"; every count can be changed by hand.
+    file: springs, geared rails, rods, bottom hinges and the L-XL hinge top hold a pair; runner
+    guides and slides are single parts since the 2026-10 archive (two per box). L² / XL² are one L /
+    XL module with two drawer columns (S+S / S+M). Counts the PDFs do not give are marked
+    "estimate"; parts they do not show at all (grid divider edge pieces and pins) are "optional"
+    rows with 0 prints when Grid dividers is chosen, hidden on a locked configuration until counted.
+    Every count can be changed by hand. Roof `heavycut` (`XLn Heavyweight Roof Cut`, the
+    heavyweight roof cut to fit a 350 × 320 bed) is a roof choice of its own, XL only.
   - `normalize` checks a configuration against the archive (unavailable choices fall back, with a
     note). The configuration lives in the URL (`?c=` base64url JSON, `history.replaceState`) and in
     localStorage `3dl_kit_<model id>`.

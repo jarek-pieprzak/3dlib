@@ -8,7 +8,7 @@ const router = express.Router();
 const { all } = require('../database');
 const { authenticate } = require('../middleware/auth');
 const { getFileUrl } = require('../utils/modelHelpers');
-const adultLock = require('../utils/adult');
+const protection = require('../utils/protection');
 
 const VIEWER_COVER = /^\d{10,}-[0-9a-f]{16}\.png$/i;
 
@@ -16,8 +16,8 @@ const VIEWER_COVER = /^\d{10,}-[0-9a-f]{16}\.png$/i;
 router.get('/pending', authenticate, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
-    const locked = Boolean(adultLock.passwordHash());
-    const models = all('SELECT id, name, thumbnail, preview_file_id, is_adult FROM models WHERE deleted_at IS NULL ORDER BY name');
+    const locked = Boolean(protection.passwordHash());
+    const models = all('SELECT id, name, thumbnail, preview_file_id, is_protected FROM models WHERE deleted_at IS NULL ORDER BY name');
     const files = all(`SELECT f.id, f.model_id, f.filename, f.library_path, f.file_type, f.is_archive_entry
       FROM files f JOIN models m ON m.id = f.model_id
       WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL AND f.file_type IN ('stl', '3mf')
@@ -32,7 +32,7 @@ router.get('/pending', authenticate, (req, res) => {
       const candidates = byModel[m.id];
       if (!reason || !candidates) continue;
       // Files of a protected model need its password: they cannot be rendered in bulk
-      if (locked && Number(m.is_adult) === 1) { skippedProtected++; continue; }
+      if (locked && Number(m.is_protected) === 1) { skippedProtected++; continue; }
       const file = candidates.find(f => f.id === m.preview_file_id)
         || candidates.find(f => f.file_type === 'stl')
         || candidates[0];

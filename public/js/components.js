@@ -129,6 +129,76 @@ const UI = {
     return `${stem}${f.slicer_token ? `_3dl-${f.slicer_token}` : ''}.${ext}`;
   },
 
+  // "Open in slicer" links of a file, or of one of its versions (a slicer project, always a
+  // 3MF). A slicer downloads the file itself, without the browser's cookies: an unlocked
+  // protected model passes its unlock token along. The URL ends with the file's name and token,
+  // so a project saved by the slicer comes back to this file.
+  slicerLinks(f, modelId, versionId = null) {
+    const unlockQ = (App.modelUnlock && App.modelUnlock.id === modelId) ? `?unlock=${App.modelUnlock.token}` : '';
+    const abs = (p) => encodeURI(`${window.location.origin}${p}${unlockQ}`);
+    const ext = ((String(f.original_name || f.filename || '').match(/\.([a-z0-9]+)$/i) || [])[1] || f.file_type).toLowerCase();
+    const file = versionId
+      ? abs(`/api/files/${f.id}/versions/${versionId}/file/${this.slicerFileName(f, '3mf')}`)
+      : abs(`/api/files/${f.id}/download/${this.slicerFileName(f, ext)}`);
+    // Bambu Studio refuses a link that does not end in .3mf: an STL is served as a 3MF
+    const bambu = versionId ? file : abs(`/api/files/${f.id}/3mf/${this.slicerFileName(f, '3mf')}`);
+    return {
+      orcaslicer: { name: 'OrcaSlicer', url: `orcaslicer://open?file=${file}` },
+      elegooslicer: { name: 'Elegoo Slicer', url: `elegooslicer://open?file=${file}` },
+      cura: { name: 'Ultimaker Cura', url: `cura://open?file=${file}` },
+      bambustudio: { name: 'Bambu Studio', url: `bambustudio://open?file=${bambu}` }
+    };
+  },
+
+  // The icon of a slicer (public/img/slicers, from the slicers' own repositories); without one
+  // (no default slicer) a generic print icon
+  slicerIcon(id) {
+    return id && App.SLICERS && App.SLICERS[id]
+      ? `<img class="slicer-icon" src="/img/slicers/${id}.png" alt="" width="16" height="16">`
+      : '<svg class="slicer-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>';
+  },
+
+  // "Open in slicer": the button with the icon of the default slicer (top bar / profile) opens
+  // it, the arrow lists the other slicers. onclick: the button opens the slicer chooser instead
+  // (a file with saved slicer projects; versions: how many). compact: the icon alone, for lists;
+  // its menu is placed against the window (App.placeMenu), so a scrolling list does not cut it.
+  slicerButton(links, { onclick = null, versions = 0, compact = false } = {}) {
+    const pref = App.currentUser?.preferred_slicer;
+    const chevron = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+    const main = pref && links[pref] ? links[pref] : null;
+    const icon = this.slicerIcon(main ? pref : null);
+    const label = compact ? '' : `<span>OPEN IN ${(main ? main.name : 'slicer').toUpperCase()}</span>`;
+    const count = versions ? `<span class="slicer-count" title="${Number(versions)} saved version${Number(versions) === 1 ? '' : 's'}">${Number(versions)}</span>` : '';
+    const cls = `btn btn-ghost btn-xs slicer-btn slicer-main${compact ? ' is-compact' : ''}`;
+    const others = Object.entries(links).filter(([k]) => !main || k !== pref);
+    const item = ([id, s]) => `<a href="${s.url}">${this.slicerIcon(id)}${s.name}</a>`;
+    const first = onclick
+      ? `<button type="button" class="${cls} is-joined" title="Open in ${this.escapeHtml(main ? main.name : 'a slicer')}: the original or a saved version" onclick="event.stopPropagation();${onclick}">${icon}${label}${count}</button>`
+      : main ? `<a href="${main.url}" class="${cls} is-joined" title="Open in ${main.name}">${icon}${label}</a>` : '';
+    // Without a default slicer (and nothing to choose from) the menu is the button
+    if (!first) {
+      return `
+      <div class="dropdown slicer-split" onclick="event.stopPropagation()"${compact ? ' onmouseenter="App.placeMenu(this)"' : ''}>
+        <button type="button" class="${cls}" title="Open in Slicer">${icon}${compact ? '' : '<span>OPEN IN SLICER</span>'}${chevron}</button>
+        <div class="dropdown-content slicer-menu">
+          <div class="dropdown-header">Open in Slicer</div>
+          ${others.map(item).join('')}
+        </div>
+      </div>`;
+    }
+    return `
+      <div class="slicer-split${compact ? ' is-compact' : ''}" onclick="event.stopPropagation()">
+        ${first}
+        <div class="dropdown"${compact ? ' onmouseenter="App.placeMenu(this)"' : ''}>
+          <button type="button" class="btn btn-ghost btn-xs slicer-btn slicer-more" aria-label="${main ? 'Other slicers' : 'Open in a slicer'}">${chevron}</button>
+          <div class="dropdown-content slicer-menu">
+            <div class="dropdown-header">${onclick ? 'The original in' : 'Other Slicers'}</div>
+            ${(onclick ? Object.entries(links) : others).map(item).join('')}
+          </div>
+        </div>
+      </div>`;
+  },
+
   // A small version of a library image for cards and tiles (server/routes/images.js): a cover
   // can be a full-size photo, which would cost the browser tens of MB per card
   imgSrc(url, width) {
@@ -219,7 +289,7 @@ const UI = {
 
     const modelRows = models.map(m => `
       <div class="trash-row">
-        <a class="trash-thumb${m.is_adult ? ' is-protected' : ''}" href="#/models/${m.id}?trash=1" title="Open">
+        <a class="trash-thumb${m.is_protected ? ' is-protected' : ''}" href="#/models/${m.id}?trash=1" title="Open">
           ${m.thumbnail_url ? `<img src="${this.escapeHtml(this.imgSrc(m.thumbnail_url, 160))}" alt="" loading="lazy">` : placeholder}
         </a>
         <div class="trash-info">
@@ -301,6 +371,145 @@ const UI = {
         Earlier contents of <strong>${this.escapeHtml(file.original_name)}</strong>, newest first. Restore keeps the current content as a version too.
       </div>
       <div class="glass-panel" style="max-height:60vh;overflow:auto">${rows || '<div class="empty-state" style="padding:24px"><div class="empty-state-text">No earlier versions</div></div>'}</div>`;
+  },
+
+  // ── "Open in slicer" with saved slicer projects ──
+  // The versions of a read-only file are slicer projects saved from it (server/utils/
+  // slicerSettings.js): what each is set up with and what changed from the one before.
+
+  // A name for a version: its own, else made from its settings ("PETG · 25% · supports")
+  slicerVersionName(v) {
+    if (v.label) return v.label;
+    const s = v.summary;
+    if (!s) return 'Saved project';
+    const parts = [[...new Set((s.filaments || []).map(f => f.type).filter(Boolean))].join(' + ')];
+    if (s.infill && s.infill.density) parts.push(s.infill.density);
+    if (s.supports && (s.supports.enabled || s.supports.objects_on)) parts.push('supports');
+    return parts.filter(Boolean).join(' · ') || 'Saved project';
+  },
+
+  // What changed from the version before (`prev`, the next row): the settings people choose, by
+  // name, at most six, the rest counted. Materials compare the filaments the part prints with,
+  // not every slot of the project.
+  slicerVersionChanges(v, prev = null) {
+    if (!v.changes) {
+      const s = v.summary;
+      const geometry = s && s.original_faces && s.faces && s.original_faces !== s.faces;
+      return { items: [geometry ? 'first save · geometry changed' : 'first save'], other: 0 };
+    }
+    const used = (x) => ((x && x.summary && x.summary.filaments) || []);
+    const types = (x) => [...new Set(used(x).map(f => f.type).filter(Boolean))].join(' + ');
+    const items = [];
+    let other = 0;
+    if (prev && prev.summary && v.summary) {
+      if (types(prev) !== types(v)) items.push(`material ${types(prev) || '?'} → ${types(v) || '?'}`);
+      else if (used(prev).map(f => f.colour).join() !== used(v).map(f => f.colour).join()) items.push('colour');
+      else if (used(prev).map(f => f.name).join() !== used(v).map(f => f.name).join()) items.push('filament');
+    }
+    const named = [
+      [/^filament_type$/, 'material', true], [/^filament_colour$/, 'colour'], [/^filament_settings_id$/, 'filament'],
+      [/^sparse_infill_density$/, 'infill', true], [/^sparse_infill_pattern$/, 'infill pattern'], [/^layer_height$/, 'layer', true],
+      [/^wall_loops$/, 'walls', true], [/^(top|bottom)_shell_layers$/, 'top / bottom layers'], [/^(enable_support|support_type)$/, 'supports'],
+      [/^printer_settings_id$/, 'printer'], [/^print_settings_id$/, 'process'], [/^curr_bed_type$/, 'plate type'], [/^brim_type$/, 'brim'],
+      [/: turn$/, 'turned'], [/: faces$/, 'geometry'], [/^object .*: (enable_support|support_)/, 'supports of a part'],
+      [/^object /, 'part settings'], [/^(plates|plate \d+:)/, 'plates'], [/^objects$/, 'objects']
+    ];
+    // In the order of the list above: infill and layer before turns and plates
+    const hits = [];
+    for (const c of v.changes) {
+      const at = named.findIndex(([re]) => re.test(c.key));
+      // Filament slots: the comparison above says what changed for this part
+      if (at < 0 || (prev && /^filament_/.test(c.key))) { other++; continue; }
+      hits.push({ at, c });
+    }
+    hits.sort((a, b) => a.at - b.at);
+    for (const { at, c } of hits) {
+      const [, name, values] = named[at];
+      const text = values && c.from !== null && c.to !== null && String(c.from).length < 24 && String(c.to).length < 24 ? `${name} ${c.from} → ${c.to}` : name;
+      if (items.some(i => i === text || i.startsWith(name + ' '))) continue;
+      if (items.length < 6) items.push(text); else other++;
+    }
+    if (!items.length && !other) items.push('no changes');
+    return { items, other };
+  },
+
+  // The modal: the original and the versions as rows of a table; the chosen one opens below.
+  // ctx: { modelId, canEdit, selected: version id, 0 for the original }
+  slicerChooser(file, versions, ctx) {
+    const esc = (s) => this.escapeHtml(s);
+    const dash = '<span class="sv-none">—</span>';
+    const icon = (path) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+    const swatch = (c) => (/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(String(c || '')) ? `<span class="sv-swatch" style="background:${c}"></span>` : '');
+    const pin = icon('<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>');
+    // "Bambu Lab X1 Carbon 0.4 nozzle" -> "X1 Carbon 0.4": the full name is the title
+    const printer = (name) => String(name).replace(/^Bambu Lab\s+/i, '').replace(/\s+nozzle$/i, '');
+    const row = (v, i) => {
+      const s = v.summary || {};
+      const ch = this.slicerVersionChanges(v, versions[i + 1]);
+      const supports = !s.supports ? null
+        : s.supports.enabled ? `supports ${s.supports.type || 'on'}`
+          : s.supports.objects_on ? `supports on ${s.supports.objects_on} part${s.supports.objects_on === 1 ? '' : 's'}` : 'no supports';
+      const settings = [
+        s.layer_height ? `${s.layer_height} mm layers` : null,
+        s.infill ? `${s.infill.density || '?'} ${s.infill.pattern || ''} infill` : null,
+        s.walls ? `${s.walls} wall${s.walls === '1' ? '' : 's'}` : null,
+        supports
+      ].filter(Boolean);
+      const details = (v.changes || []).map(c => `<li><code>${esc(c.key)}</code> ${esc(c.from === null ? '—' : c.from)} → ${esc(c.to === null ? '—' : c.to)}</li>`).join('');
+      return `
+        <tr class="sv-row${ctx.selected === v.id ? ' is-selected' : ''}" data-version="${v.id}" onclick="App.slicerChooserPick(${v.id})">
+          <td class="sv-pick"><input type="radio" name="sv-pick" aria-label="Choose this version"${ctx.selected === v.id ? ' checked' : ''}></td>
+          <td>
+            <div class="sv-saved">
+              ${v.thumbnail_url ? `<img class="sv-thumb" src="${esc(v.thumbnail_url)}" alt="" loading="lazy">` : '<span class="sv-thumb"></span>'}
+              <div class="sv-saved-text">
+                <div class="sv-name">${v.pinned ? `<span class="sv-pin" title="Pinned: never pruned">${pin}</span>` : ''}<span>${esc(this.slicerVersionName(v))}</span></div>
+                <div class="sv-date">${esc(this.sqlDate(v.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }))}${s.sliced ? ` · ${Math.round(s.sliced.time / 60)} min · ${s.sliced.weight} g` : ''}</div>
+                ${ctx.canEdit ? `
+                <div class="sv-row-actions" onclick="event.stopPropagation()">
+                  <button type="button" class="kit-icon-btn" title="Name this version" onclick="App.slicerVersionLabel(${v.id})">${icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>')}</button>
+                  <button type="button" class="kit-icon-btn${v.pinned ? ' is-on' : ''}" title="${v.pinned ? 'Unpin: may be pruned' : 'Pin: never pruned'}" onclick="App.slicerVersionPin(${v.id}, ${v.pinned ? 'false' : 'true'})">${pin}</button>
+                  <button type="button" class="kit-icon-btn is-danger" title="Delete this version" onclick="App.slicerVersionDelete(${v.id})">${icon('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>')}</button>
+                </div>` : ''}
+              </div>
+            </div>
+          </td>
+          <td>${(s.filaments || []).length ? s.filaments.map(f => `<div class="sv-line sv-filament" title="${esc(f.name || '')}">${swatch(f.colour)}<span>${esc(f.type || '?')}</span><span class="sv-sub">${esc(f.vendor || '')}</span></div>`).join('') : dash}</td>
+          <td>${settings.length ? settings.map(t => `<div class="sv-line">${esc(t)}</div>`).join('') : dash}</td>
+          <td>${s.printer ? `<div class="sv-line" title="${esc(s.printer)}">${esc(printer(s.printer))}</div>` : dash}</td>
+          <td class="sv-changes">
+            <div class="sv-change-list">${ch.items.map(t => `<span class="sv-change">${esc(t)}</span>`).join('')}${ch.other ? `<span class="sv-change is-more">+${ch.other} other</span>` : ''}</div>
+            ${details ? `<details class="sv-details" onclick="event.stopPropagation()"><summary>All changes</summary><ul>${details}</ul></details>` : ''}
+          </td>
+        </tr>`;
+    };
+    return `
+      <div class="sv-intro">Open <strong>${esc(file.original_name)}</strong> as it is in the archive, or a project saved from it in the slicer (newest first). Saving in the slicer adds a new version; the archive file never changes.</div>
+      <div class="sv-table-wrap">
+        <table class="sv-table">
+          <thead><tr><th></th><th>Saved</th><th>Material</th><th>Settings</th><th>Printer</th><th>Changes</th></tr></thead>
+          <tbody>
+            <tr class="sv-row${!ctx.selected ? ' is-selected' : ''}" data-version="0" onclick="App.slicerChooserPick(0)">
+              <td class="sv-pick"><input type="radio" name="sv-pick" aria-label="Choose the original"${!ctx.selected ? ' checked' : ''}></td>
+              <td><div class="sv-saved"><span class="sv-thumb"></span><div class="sv-saved-text"><div class="sv-name">Original</div><div class="sv-date">${esc(this.formatSize(file.file_size))} · as in the archive</div></div></div></td>
+              <td colspan="4"><span class="sv-sub">No slicer settings: the slicer starts with its own defaults</span></td>
+            </tr>
+            ${versions.map(row).join('')}
+            ${versions.length ? '' : `<tr class="sv-empty"><td></td><td colspan="5">No saved versions yet. Open the original, save the project in the slicer (to <code>.slicer-saves</code>) and it comes back here with its settings.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div class="sv-footer" id="sv-footer">${this.slicerChooserFooter(file, ctx.modelId, ctx.selected)}</div>`;
+  },
+
+  // Open / download the chosen one: the original file, or version `versionId`
+  slicerChooserFooter(file, modelId, versionId) {
+    const links = this.slicerLinks(file, modelId, versionId || null);
+    const download = versionId ? `/api/files/${file.id}/versions/${versionId}/file` : `/api/files/${file.id}/download`;
+    return `
+      <span class="sv-chosen">${versionId ? 'The chosen version' : 'The original'}</span>
+      ${this.slicerButton(links)}
+      <a class="btn btn-secondary btn-xs" href="${download}" download>Download</a>`;
   },
 
   // ── Slicer saves page (sidebar) ──
@@ -622,34 +831,48 @@ const UI = {
     const isSelected = App.selectedModelIds?.includes(m.id);
     const checkboxHtml = canManage ? `<div class="model-card-checkbox" onclick="App.toggleModelSelection(event, ${m.id})"></div>` : '';
 
-    const adultBadge = m.is_adult ? '<span class="badge badge-adult" title="Password protected"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : '';
-    return `<div class="model-card ${isSelected ? 'selected' : ''}${m.is_adult ? ' is-adult' : ''}" onclick="App.handleModelCardClick(event, ${m.id})" data-model-id="${m.id}">
+    const protectedBadge = m.is_protected ? '<span class="badge badge-protected" title="Password protected"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : '';
+    // A saved configuration of a kit: no files of its own, its parts are the archive's
+    const kitBadge = m.kit_source_id ? '<span class="badge badge-kit" title="A saved configuration of a kit">Configuration</span>' : '';
+    return `<div class="model-card ${isSelected ? 'selected' : ''}${m.is_protected ? ' is-protected' : ''}" onclick="App.handleModelCardClick(event, ${m.id})" data-model-id="${m.id}">
       ${checkboxHtml}
-      <div class="model-card-thumb">${thumb}<div class="model-card-badges">${adultBadge}${types}</div></div>
+      <div class="model-card-thumb">${thumb}<div class="model-card-badges">${protectedBadge}${kitBadge}${types}</div></div>
       <div class="model-card-body">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div class="model-card-name" style="flex:1">${m.name}</div>
           ${plusBtn}
         </div>
         <div class="model-card-meta">${cat} ${printed} ${this.fitBadge(m)}</div>
-        ${(adultBadge || types) ? `<div class="model-card-body-badges">${adultBadge}${types}</div>` : ''}
+        ${(protectedBadge || kitBadge || types) ? `<div class="model-card-body-badges">${protectedBadge}${kitBadge}${types}</div>` : ''}
       </div>
       <div class="model-card-footer">
-        <span style="font-size:.75rem;color:var(--text-muted)">${m.file_count || 0} files</span>
+        <span style="font-size:.75rem;color:var(--text-muted)">${m.kit_source_id ? 'Configuration' : `${m.file_count || 0} files`}</span>
         <span style="font-size:.75rem;color:var(--text-muted)">${this.formatDate(m.updated_at)}</span>
       </div>
     </div>`;
   },
 
   // The fit badge of a model card: do its 3D files fit the printer chosen in the top bar?
+  // Whether a model's 3D files fit the default printer (top bar); when they do not, whether
+  // another of my printers takes them
   fitBadge(m) {
     const fit = m.fit;
     if (!fit || !fit.total) return '';
+    const beds = App.printerBeds || [];
     const chosen = App.fitPrinterId();
-    const bed = (App.printerBeds || []).find(b => b.id === chosen);
+    const bed = beds.find(b => b.id === chosen);
     const name = this.escapeHtml(bed ? bed.name : 'any of your printers');
     const misfit = (fit.misfit && fit.misfit[bed ? bed.id : 'any']) || 0;
-    if (misfit) return `<span class="badge badge-fit is-bad" title="${misfit} of ${fit.total} 3D files are too big for ${name}">✗ ${misfit} too big</span>`;
+    if (misfit) {
+      const whole = beds.filter(b => b.id !== chosen && fit.misfit && fit.misfit[b.id] === 0);
+      if (bed && whole.length) {
+        return `<span class="badge badge-fit is-other" title="${misfit} of ${fit.total} 3D files are too big for ${name}; everything fits ${this.escapeHtml(whole.map(b => b.name).join(', '))}">⚠ ${this.escapeHtml(whole[0].name)}</span>`;
+      }
+      if (bed && fit.misfit && fit.misfit.any === 0) {
+        return `<span class="badge badge-fit is-other" title="${misfit} of ${fit.total} 3D files are too big for ${name}; each of them fits one of your other printers">⚠ Other printers</span>`;
+      }
+      return `<span class="badge badge-fit is-bad" title="${misfit} of ${fit.total} 3D files are too big for ${name}">✗ ${misfit} too big</span>`;
+    }
     if (fit.pending) return '<span class="badge badge-fit" title="The 3D files are being measured">Measuring</span>';
     if (fit.total === fit.failed) return '';
     return `<span class="badge badge-fit is-ok" title="Every 3D file fits ${name}">✓ Fits</span>`;
@@ -662,7 +885,7 @@ const UI = {
         <div class="bulk-actions">
           <button class="btn btn-secondary btn-sm" onclick="App.openBulkTag()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Tag</button>
           <button class="btn btn-secondary btn-sm" onclick="App.openBulkMove()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Category</button>
-          <button class="btn btn-secondary btn-sm" onclick="App.openBulkAdult()" title="Password protection" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protect</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.openBulkProtect()" title="Password protection" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protect</button>
           <button class="btn btn-secondary btn-sm" onclick="App.openBulkAddToCollection()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>Collection</button>
           <button class="btn btn-danger btn-sm" onclick="App.openBulkDelete()" style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete</button>
           <button class="btn btn-ghost btn-sm" onclick="App.clearSelection()">✕ Clear</button>
@@ -906,13 +1129,19 @@ const UI = {
   modelDetail(model, hasPrinters = false, opts = {}) {
     // A model in the Trash is shown read-only, with Restore / Delete permanently
     const inTrash = Boolean(model.deleted_at);
-    const configure = Boolean(opts.kit) && opts.view === 'configure';
-    const viewSwitch = opts.kit ? `
+    // A saved configuration of a kit (opts.kitConfig): its own page, the configurator with the
+    // archive's files; no files of its own
+    const isConfig = Boolean(opts.kitConfig);
+    const configure = isConfig || (Boolean(opts.kit) && opts.view === 'configure');
+    const viewSwitch = opts.kit && !isConfig ? `
       <div class="detail-views" role="tablist">
         <a href="#/models/${model.id}" role="tab" class="detail-view-tab${configure ? ' is-active' : ''}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="6" rx="1"/><rect x="4" y="11" width="7" height="5" rx="1"/><rect x="13" y="11" width="7" height="5" rx="1"/><rect x="4" y="18" width="16" height="3" rx="1"/></svg>Configurator</a>
         <a href="#/models/${model.id}?view=files" role="tab" class="detail-view-tab${configure ? '' : ' is-active'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>Files (${(model.files || []).length})</a>
       </div>` : '';
     const canEdit = !inTrash && (App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id));
+    // A read-only project (the VAULT archive): its files are never changed, renamed or deleted
+    const readOnly = Number(model.is_readonly) === 1;
+    const canChange = canEdit && !readOnly;
     // Files of a project in the library can be renamed / moved on disk ('folder' projects also
     // have folders); uploads outside the library and entries inside archives can only be deleted
     const layout = model.layout || 'none';
@@ -1084,55 +1313,10 @@ const UI = {
       const isGcode = f.file_type === 'gcode' || f.file_type === 'bgcode';
       const canBePreview = is3D || isImage;
 
-      // A slicer downloads the file itself, without the browser's cookies: an unlocked protected model
-      // passes its unlock token along
-      const unlockQ = (App.adultUnlock && App.adultUnlock.id === model.id) ? `?unlock=${App.adultUnlock.token}` : '';
-      // The slicer names its project after the last part of the URL: it carries the file's name
-      // and token, so a project saved by the slicer can be matched back to this file
-      const ext = (String(f.original_name || f.filename || '').match(/\.([a-z0-9]+)$/i) || [])[1] || f.file_type;
-      const downloadUrl = encodeURI(`${window.location.origin}/api/files/${f.id}/download/${this.slicerFileName(f, ext.toLowerCase())}${unlockQ}`);
-      const slicerLinks = {
-        'orcaslicer': { name: 'OrcaSlicer', url: `orcaslicer://open?file=${downloadUrl}` },
-        'elegooslicer': { name: 'Elegoo Slicer', url: `elegooslicer://open?file=${downloadUrl}` },
-        'cura': { name: 'Ultimaker Cura', url: `cura://open?file=${downloadUrl}` },
-        'bambustudio': { name: 'Bambu Studio', url: `bambustudio://open?file=${encodeURI(`${window.location.origin}/api/files/${f.id}/3mf/${this.slicerFileName(f, '3mf')}${unlockQ}`)}` }
-      };
-      const pref = App.currentUser?.preferred_slicer;
-
-      let slicerBtnHtml = '';
-      if (is3D) {
-        if (pref && slicerLinks[pref]) {
-          slicerBtnHtml = `
-            <div style="display:inline-flex;align-items:stretch">
-              <a href="${slicerLinks[pref].url}" class="btn btn-ghost btn-xs" title="Open in ${slicerLinks[pref].name}" style="color:var(--accent-purple);font-weight:600;font-size:0.7rem;border:1px solid var(--accent-purple);border-right:none;padding:3px 8px;border-radius:4px 0 0 4px;line-height:1;white-space:nowrap;display:inline-flex;align-items:center;gap:5px">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                OPEN IN ${slicerLinks[pref].name.toUpperCase()}
-              </a>
-              <div class="dropdown">
-                <button class="btn btn-ghost btn-xs" style="color:var(--accent-purple);border:1px solid var(--accent-purple);padding:3px 6px;border-radius:0 4px 4px 0;height:100%;display:flex;align-items:center"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
-                <div class="dropdown-content">
-                  <div class="dropdown-header">Other Slicers</div>
-                  ${Object.entries(slicerLinks).filter(([k]) => k !== pref).map(([_, s]) => `<a href="${s.url}">${s.name}</a>`).join('')}
-                </div>
-              </div>
-            </div>
-          `;
-        } else {
-          slicerBtnHtml = `
-            <div class="dropdown" style="display:inline-block">
-              <button class="btn btn-ghost btn-xs" title="Open in Slicer" style="color:var(--accent-purple);font-weight:600;font-size:0.7rem;border:1px solid var(--accent-purple);padding:3px 8px;border-radius:4px;line-height:1;white-space:nowrap;display:inline-flex;align-items:center;gap:5px">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                OPEN IN SLICER
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="dropdown-content">
-                <div class="dropdown-header">Open in Slicer</div>
-                ${Object.values(slicerLinks).map(s => `<a href="${s.url}">${s.name}</a>`).join('')}
-              </div>
-            </div>
-          `;
-        }
-      }
+      // A file of a read-only project with saved slicer projects opens a chooser: the original
+      // or one of the versions
+      const slicerBtnHtml = !is3D ? '' : this.slicerButton(this.slicerLinks(f, model.id),
+        { onclick: readOnly && f.version_count ? `App.openSlicerChooser(${model.id}, ${f.id})` : null, versions: readOnly ? f.version_count : 0 });
 
       const hasBottomBar = (canEdit && !isPreview && canBePreview) || is3D;
       // Rows of files the preview area can show open there when clicked anywhere on the row;
@@ -1142,8 +1326,10 @@ const UI = {
         ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in preview" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
         : ` data-file-id="${f.id}" title="No preview for this file type"`;
       const iconType = this.fileIconType(f);
-      const historyItem = f.version_count ? [{ action: 'showFileHistory', icon: 'history', label: `History (${f.version_count})` }] : [];
-      const menuItems = !canEdit ? historyItem : onDisk(f)
+      // The history of a read-only file holds slicer projects: shown in the slicer chooser
+      const historyItem = !f.version_count ? []
+        : [{ action: readOnly ? 'showSlicerVersions' : 'showFileHistory', icon: 'history', label: `${readOnly ? 'Slicer versions' : 'History'} (${f.version_count})` }];
+      const menuItems = !canChange ? historyItem : onDisk(f)
         ? [
           ...historyItem,
           { action: 'renameEntry', icon: 'rename', label: 'Rename' },
@@ -1193,7 +1379,7 @@ const UI = {
     };
     // Files: every file of the project; Documentation: only the text documents (PDF, TXT, MD).
     // Both keep the folder structure and open the clicked file in the preview area.
-    const folderActions = (canEdit && layout === 'folder') ? () => this.entryMenu([
+    const folderActions = (canChange && layout === 'folder') ? () => this.entryMenu([
       { action: 'newFolder', icon: 'folder', label: 'New folder inside' },
       { action: 'renameEntry', icon: 'rename', label: 'Rename' },
       { action: 'moveEntry', icon: 'move', label: 'Move to...' },
@@ -1249,7 +1435,8 @@ const UI = {
         <a href="#/models">Library</a>
         <span>/</span>
         ${model.category_id ? `<a href="#/models?category=${model.category_id}">${model.category_name}</a><span>/</span>` : ''}
-        <span class="current">${model.name}</span>
+        ${isConfig && model.kit_source ? `<a href="#/models/${Number(model.kit_source.id)}">${this.escapeHtml(model.kit_source.name)}</a><span>/</span>` : ''}
+        <span class="current">${this.escapeHtml(model.name)}</span>
       </div>
     `;
 
@@ -1260,28 +1447,33 @@ const UI = {
       <div class="detail-header">
         <div>
           <div class="detail-title">${this.escapeHtml(model.name)}</div>
-          <div class="detail-meta">${model.is_adult ? '<span class="badge badge-adult"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : ''} ${cat} ${printed}</div>
+          <div class="detail-meta">${model.is_protected ? '<span class="badge badge-protected"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : ''} ${readOnly ? '<span class="badge badge-readonly" title="Read-only: 3DLib never changes, renames or deletes its files. Slicer saves become versions of a file.">Read-only</span>' : ''} ${isConfig ? `<span class="badge badge-kit" title="A saved configuration of ${this.escapeHtml(model.kit_source ? model.kit_source.name : 'a kit')}">Configuration</span>` : ''} ${cat} ${printed}</div>
         </div>
         <div class="detail-actions">
-          ${(App.currentUser && !inTrash && model.files && model.files.length > 0) ? `
+          ${(App.currentUser && !inTrash && !isConfig && model.files && model.files.length > 0) ? `
           <a href="/api/models/${model.id}/download" class="btn btn-secondary btn-sm" download title="Download all files as .zip" style="display:inline-flex;align-items:center;gap:5px;text-decoration:none;white-space:nowrap">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Download All (.zip)
           </a>` : ''}
           ${canEdit ? `
-          <button class="btn btn-secondary btn-sm" onclick="App.showShareModal(${model.id})" title="Share Model">
+          ${isConfig ? '' : `<button class="btn btn-secondary btn-sm" onclick="App.showShareModal(${model.id})" title="Share Model">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             Share
-          </button>
+          </button>`}
           <button class="btn btn-secondary btn-sm" onclick="App.addToProject(${model.id})" title="Add to Collection">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             Collection
           </button>
-          <button class="btn btn-secondary btn-sm" onclick="App.showCreateVersion(${model.id})">
+          ${isConfig ? '' : `<button class="btn btn-secondary btn-sm" onclick="App.showCreateVersion(${model.id})">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New Version
-          </button>
+          </button>`}
           ` : ''}
+          ${isConfig && canEdit ? `
+          <button type="button" class="btn btn-primary btn-sm" id="kit-edit-btn" onclick="App.kitEditConfig()"${opts.edit ? ' hidden' : ''}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Edit configuration
+          </button>` : ''}
           ${App.currentUser ? `
           <button class="btn btn-secondary btn-sm" onclick="App.showPrintHistory(${model.id})" title="Print history">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
@@ -1293,15 +1485,15 @@ const UI = {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Edit
           </button>
-          <button class="btn btn-danger btn-sm" onclick="App.confirmDeleteModel(${model.id})">
+          ${readOnly ? '' : `<button class="btn btn-danger btn-sm" onclick="App.confirmDeleteModel(${model.id})">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
             Delete
-          </button>
+          </button>`}
           ` : ''}
         </div>
       </div>
       ${viewSwitch}
-      ${configure ? this.kitView(model) : `
+      ${configure ? this.kitView(model, isConfig && !opts.edit) : `
       <div class="detail-layout">
         <div class="detail-main">
           ${viewerHtml}
@@ -1350,8 +1542,8 @@ const UI = {
                   </div>` : ''}
                 </div>
                 <div style="padding:12px 16px;display:flex;gap:8px;align-items:center">
-                  ${canEdit && layout === 'folder' ? `<button class="btn btn-secondary btn-xs" onclick="App.newFolder(null)" title="New folder in the project folder" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>Folder</button>` : ''}
-                  ${canEdit ? `<button class="btn btn-primary btn-xs" onclick="App.showUploadFiles(${model.id})" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>` : ''}
+                  ${canChange && layout === 'folder' ? `<button class="btn btn-secondary btn-xs" onclick="App.newFolder(null)" title="New folder in the project folder" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>Folder</button>` : ''}
+                  ${canChange ? `<button class="btn btn-primary btn-xs" onclick="App.showUploadFiles(${model.id})" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>` : ''}
                 </div>
               </div>
             </div>
@@ -1379,10 +1571,11 @@ const UI = {
 
   // ─── Kit configurators (public/js/kits): USSA VAULT ────────────────────
   // The configurator view of a model page. App.initKit fills the builder and the parts list;
-  // the preview panel is the model page's 3D Studio (App.previewFile)
-  kitView(model) {
+  // the preview panel is the model page's 3D Studio (App.previewFile). locked: a saved
+  // configuration's page, the list and the preview only (the builder shows while editing)
+  kitView(model, locked = false) {
     return `
-      <div class="kit-layout">
+      <div class="kit-layout${locked ? ' is-locked' : ''}">
         <div class="glass-panel kit-builder-panel">
           <div class="kit-builder" id="kit-builder"><div class="kit-empty">Loading...</div></div>
         </div>
@@ -1622,9 +1815,12 @@ const UI = {
   },
 
   // The builder: saved configurations, footprint, floors (top floor first), roof, options and
-  // modifications. kit: the configurator state of App (cfg, choices, bom, saved, savedId) plus
-  // loggedIn and dirty. Controls with data-tip show their tip on hover and focus.
+  // modifications. kit: the configurator state of App (cfg, choices, bom, saved, mode) plus
+  // loggedIn and dirty. kit.mode: 'archive' (the archive's page: a draft that can be saved as a
+  // configuration), 'view' (a configuration's page: no builder, only the list and the preview)
+  // or 'edit'. Controls with data-tip show their tip on hover and focus.
   kitBuilder(kit) {
+    if (kit.mode === 'view') return '';
     const { cfg, choices: ch } = kit;
     const esc = (s) => this.escapeHtml(s);
     const tip = (key, set) => this.kitTip(key, set);
@@ -1679,25 +1875,42 @@ const UI = {
         </div>`;
     }).reverse().join('');
 
-    const saved = kit.loggedIn ? `
+    const mode = kit.mode || 'archive';
+    const pencil = icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>');
+    let saved = '';
+    if (mode === 'archive' && kit.loggedIn) {
+      // Each saved configuration is a project of its own: picking one opens its page
+      saved = `
       <div class="kit-section kit-saved">
-        <select class="form-select kit-select" onchange="App.kitOpenSaved(this.value)" title="Saved configurations">
-          ${opt('', kit.saved.length ? 'Not saved' : 'No saved configurations', !kit.savedId)}
-          ${kit.saved.map(s => opt(s.id, s.name, s.id === kit.savedId)).join('')}
+        <select class="form-select kit-select" onchange="App.kitOpenSaved(this.value)" title="Open a saved configuration">
+          ${opt('', kit.saved.length ? `Saved configurations (${kit.saved.length})` : 'No saved configurations', true)}
+          ${kit.saved.map(s => opt(s.id, s.locked ? `${s.name} (protected)` : s.name, false)).join('')}
         </select>
-        ${kit.savedId ? `<button type="button" class="btn btn-${kit.dirty ? 'primary' : 'secondary'} btn-xs" onclick="App.kitSave()"${kit.dirty ? '' : ' disabled'}>Save</button>` : ''}
-        <button type="button" class="btn btn-secondary btn-xs" onclick="App.kitSaveAs()">${kit.savedId ? 'Save as...' : 'Save...'}</button>
-        ${kit.savedId ? `<button type="button" class="kit-icon-btn" title="Rename" onclick="App.kitRenameSaved()">${icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>')}</button>
-        <button type="button" class="kit-icon-btn is-danger" title="Delete this saved configuration" onclick="App.kitDeleteSaved()">${icon('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>')}</button>` : ''}
+        <button type="button" class="btn btn-primary btn-xs" onclick="App.kitSaveAs()">Save as configuration...</button>
         ${tip('saved')}
-      </div>` : '';
+      </div>`;
+    } else if (mode === 'archive') {
+      saved = `
+      <div class="kit-section kit-saved">
+        <span class="kit-locked-note">Log in to save configurations and open saved ones</span>
+        <button type="button" class="btn btn-secondary btn-xs" onclick="App.showLogin()">Log in</button>
+        ${tip('saved')}
+      </div>`;
+    } else if (mode === 'edit') {
+      saved = `
+      <div class="kit-section kit-saved">
+        <span class="kit-locked-note">${pencil}Editing</span>
+        <button type="button" class="btn btn-${kit.dirty ? 'primary' : 'secondary'} btn-xs" onclick="App.kitSaveConfig()"${kit.dirty ? '' : ' disabled'}>Save</button>
+        <button type="button" class="btn btn-secondary btn-xs" onclick="App.kitCancelEdit()">Cancel</button>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="App.kitSaveAs()">Save as copy...</button>
+      </div>`;
+    }
 
     const mods = cfg.mods;
     const noBackbone = mods.backbone === 'none';
     const depthMm = 146 + 42 * (cfg.depth - 3);
     const widthMm = { S: 165, M: 254, L: 330, XL: 419 }[cfg.width];
-    return `
-      ${saved}
+    const body = `
       <div class="kit-section kit-footprint">
         ${this.kitTower(cfg)}
         <div class="kit-footprint-fields">
@@ -1736,6 +1949,7 @@ const UI = {
         </div>
         ${noBackbone ? '<div class="kit-muted">Handles and pegboards attach to the backbone.</div>' : ''}
       </div>`;
+    return `${saved}${body}`;
   },
 
   // The result: files to print with print counts (editable), hardware, notes, download
@@ -1743,6 +1957,11 @@ const UI = {
     const { bom } = kit;
     const esc = (s) => this.escapeHtml(s);
     const t = bom.totals;
+    const locked = kit.mode === 'view';
+    // The star opens the preferred slicer, the arrow the others; a file with saved slicer
+    // projects (a read-only archive) opens the chooser from the star
+    const slicer = (f) => (this.MEASURABLE.includes(f.file_type) ? this.slicerButton(this.slicerLinks(f, f.model_id),
+      { compact: true, versions: f.version_count, onclick: f.version_count ? `App.openSlicerChooser(${Number(f.model_id)}, ${Number(f.id)})` : null }) : '<span class="slicer-slot"></span>');
     // One file on its own, like the download button of the model's file list
     const download = (f) => `<a href="/api/files/${Number(f.id)}/download" class="kit-icon-btn kit-download" title="Download ${esc(String(f.original_name || '').split('/').pop())}" aria-label="Download" download onclick="event.stopPropagation()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>`;
     const rows = [];
@@ -1756,16 +1975,18 @@ const UI = {
       const extra = p.group === 'Extra files';
       rows.push(`
         <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" title="${esc(path)}">
-          <input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">
+          ${locked ? `<span class="kit-qty is-static" title="Prints">${p.qty}</span>` : `<input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">`}
           <div class="kit-part-main">
             <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}</div>
             <div class="kit-part-path">${esc(path)}</div>
+            ${locked ? `<div class="kit-part-meta">${this.formatSize(p.file.file_size)}${this.MEASURABLE.includes(p.file.file_type) ? ` <span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}</div>` : ''}
           </div>
-          ${p.auto !== undefined ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
-          ${this.MEASURABLE.includes(p.file.file_type) ? `<span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}
-          <span class="kit-part-size">${this.formatSize(p.file.file_size)}</span>
+          ${p.auto !== undefined && !locked ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
+          ${locked ? '' : `${this.MEASURABLE.includes(p.file.file_type) ? `<span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}
+          <span class="kit-part-size">${this.formatSize(p.file.file_size)}</span>`}
+          ${locked ? slicer(p.file) : ''}
           ${download(p.file)}
-          ${extra ?`<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
+          ${extra && !locked ?`<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
         </div>`);
     }
     const notes = [
@@ -1782,16 +2003,18 @@ const UI = {
         </div>
         <div class="kit-parts-actions">
           <button type="button" class="btn btn-secondary btn-sm" onclick="App.kitCopyList()">Copy list</button>
-          ${kit.loggedIn ? `<button type="button" class="btn btn-primary btn-sm" onclick="App.kitDownload()"${t.files ? '' : ' disabled'}>Download ZIP</button>` : ''}
+          ${!kit.loggedIn ? '' : locked
+            ? `<a class="btn btn-primary btn-sm" href="/api/models/${Number(kit.modelId)}/download" download${t.files ? '' : ' hidden'}>Download ZIP</a>`
+            : `<button type="button" class="btn btn-primary btn-sm" onclick="App.kitDownload()"${t.files ? '' : ' disabled'}>Download ZIP</button>`}
         </div>
       </div>
       <div class="fit-bar" data-fit-bar="parts"></div>
       <div class="kit-parts-body">
         ${notes ? `<ul class="kit-notes">${notes}</ul>` : ''}
         ${rows.join('') || '<div class="kit-empty">Nothing to print yet.</div>'}
-        <div class="kit-add">
+        ${locked ? '' : `<div class="kit-add">
           <input class="form-input" list="kit-file-list" placeholder="Add a file from the project..." aria-label="Add a file" onchange="App.kitAddExtra(this.value)">
-        </div>
+        </div>`}
         ${hardware ? `<div class="kit-group-title">Hardware to buy</div>${hardware}` : ''}
         ${kit.cat.docs.length ? `<div class="kit-group-title">Instructions</div>
         ${kit.cat.docs.map(f => `
@@ -1800,7 +2023,8 @@ const UI = {
           <span class="kit-part-size">${this.formatSize(f.file_size)}</span>
           ${download(f)}
         </div>`).join('')}
-        <span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>${this.kitTip('docs')}</span>` : ''}
+        ${locked ? (bom.cfg.docs ? `<div class="kit-muted kit-docs-note">The ${kit.cat.docs.length} instruction PDFs are in the ZIP.</div>` : '')
+          : `<span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>${this.kitTip('docs')}</span>`}` : ''}
       </div>`;
   },
 
@@ -1898,11 +2122,18 @@ const UI = {
         </div>
         ${isEdit ? `
         <div class="form-group">
-          <label class="adult-check">
-            <input type="checkbox" name="is_adult" value="1" ${model.is_adult ? 'checked' : ''}>
+          <label class="protected-check">
+            <input type="checkbox" name="is_protected" value="1" ${model.is_protected ? 'checked' : ''}>
             <span><strong>Password protected</strong> — opening this model asks for the password set in Settings → Security</span>
           </label>
-        </div>` : ''}
+        </div>
+        ${model.kit_source_id || model.layout === 'none' ? '' : `
+        <div class="form-group">
+          <label class="protected-check">
+            <input type="checkbox" name="is_readonly" value="1" ${Number(model.is_readonly) === 1 ? 'checked' : ''}>
+            <span><strong>Read-only</strong> — 3DLib never changes, renames or deletes the files of this project; a slicer save of one of them becomes a version of that file</span>
+          </label>
+        </div>`}` : ''}
         ${!isEdit ? `
         <div class="form-group">
           <label class="form-label">Files (Optional)</label>
@@ -2043,9 +2274,10 @@ const UI = {
           <option value="true">Printed</option>
           <option value="false">Not Printed</option>
         </select>
-        <select class="filter-select" id="filter-fits" onchange="App.handleFilter()" title="Only models whose 3D files fit the printer chosen in the top bar">
+        <select class="filter-select" id="filter-fits" onchange="App.handleFilter()" title="Only models whose 3D files fit the printer chosen in the top bar, or any of your printers">
           <option value="">All sizes</option>
           <option value="1">Fits my printer</option>
+          <option value="any">Fits any of my printers</option>
         </select>
         <select class="filter-select" id="filter-sort" onchange="App.handleFilter()">
           <option value="updated">Last Updated</option>
@@ -2300,14 +2532,22 @@ const UI = {
   // The bar in the corner of a file list: how the files fare against the printer chosen in the
   // top bar (App.setFitPrinter).
   // s: PrintFit.summarize(); what: 'files' or 'parts'
-  fitBar(beds, chosen, s, what = 'files') {
+  // s: PrintFit.summarize for the chosen printer. others, for the parts too big for it:
+  // { names: my other printers that take all of them, none: how many fit no printer of mine }
+  fitBar(beds, chosen, s, what = 'files', others = null) {
     const esc = (t) => this.escapeHtml(t);
     const bed = (beds || []).find(b => b.id === chosen);
     const target = bed ? bed.name : 'one of your printers';
+    const none = others ? others.none : s.misfit.length;
+    const elsewhere = s.misfit.length - none;
     let status = '';
     if (!(beds || []).length) status = '<span class="fit-status">Add your printers in Settings → Printers</span>';
     else if (!s.total) status = '';
-    else if (s.misfit.length) status = `<span class="fit-status is-bad" title="Too big for ${esc(bed ? bed.name : 'all of your printers')}: marked ✗ in the list">✗ ${s.misfit.length} of ${s.total} ${what} too big for ${esc(bed ? bed.name : 'all your printers')}</span>`;
+    else if (s.misfit.length && bed && !none) {
+      status = `<span class="fit-status is-other" title="Marked ⚠ in the list, with a printer that takes them">⚠ ${s.misfit.length} of ${s.total} ${what} too big for ${esc(bed.name)}; ${others.names.length ? `they fit ${esc(others.names.join(', '))}` : 'each fits another of your printers'}</span>`;
+    } else if (s.misfit.length && bed && elsewhere) {
+      status = `<span class="fit-status is-bad" title="✗ in the list: too big for all of your printers; ⚠: another printer takes it">✗ ${s.misfit.length} of ${s.total} ${what} too big for ${esc(bed.name)}: ${elsewhere} fit another printer, ${none} none</span>`;
+    } else if (s.misfit.length) status = `<span class="fit-status is-bad" title="Too big for ${esc(bed ? bed.name : 'all of your printers')}: marked ✗ in the list">✗ ${s.misfit.length} of ${s.total} ${what} too big for ${esc(bed ? `${bed.name} and your other printers` : 'all your printers')}</span>`;
     else if (s.pending) status = `<span class="fit-status">Measuring ${s.pending} of ${s.total} ${what}...</span>`;
     else status = `<span class="fit-status is-ok">✓ All ${s.measured} ${what} fit ${esc(target)}${s.failed ? ` (${s.failed} could not be measured)` : ''}</span>`;
     if (s.misfit.length && s.pending) status += `<span class="fit-status">, measuring ${s.pending}...</span>`;
@@ -2324,9 +2564,13 @@ const UI = {
     const how = (f) => (PrintFit.howText(f.fit) ? ` ${PrintFit.howText(f.fit)}` : '');
     const title = all.length ? `Fits: ${all.map(f => `${f.bed.name}${how(f)}`).join('; ')}` : 'Too big for all of your printers';
     const first = ok.length ? ok[0].fit : null;
+    const chosenBed = (beds || []).find(b => b.id === chosen);
+    const other = !first && chosenBed && all.length ? all[0] : null;
     const flag = !(beds || []).length ? '' : first
       ? `<span class="fit-flag is-ok" title="${this.escapeHtml(title)}">✓${first.up !== 'z' ? ' on side' : ''}${first.angle ? ` ${first.angle}°` : ''}</span>`
-      : `<span class="fit-flag is-bad" title="${this.escapeHtml(title)}">✗ too big</span>`;
+      : other
+        ? `<span class="fit-flag is-other" title="${this.escapeHtml(`Too big for ${chosenBed.name}. ${title}`)}">⚠ ${this.escapeHtml(other.bed.name)}</span>`
+        : `<span class="fit-flag is-bad" title="${this.escapeHtml(title)}">✗ too big</span>`;
     return `<span class="fit-dim-text">${PrintFit.sizeText(size)}</span>${flag}`;
   },
 
@@ -2510,12 +2754,12 @@ const UI = {
         <h3 style="margin-bottom:8px; font-size:1.1rem; color:var(--text-primary); display:flex; align-items:center; gap:8px"><svg style="color:var(--accent-purple)" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Password-protected Models</h3>
         <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;max-width:640px">
           Mark a model as password protected in its Edit form. Every opening of such a model asks for this password; its files cannot be opened or downloaded without it. In lists its thumbnail is blurred.
-          <div style="margin-top:6px;color:var(--text-secondary)">Status: ${App.publicConfig && App.publicConfig.adult_password_set ? '<strong style="color:var(--success, #22c55e)">password set</strong>' : '<strong style="color:var(--accent-yellow, #fbbf24)">no password</strong> — protected models open without one'}</div>
+          <div style="margin-top:6px;color:var(--text-secondary)">Status: ${App.publicConfig && App.publicConfig.protection_password_set ? '<strong style="color:var(--success, #22c55e)">password set</strong>' : '<strong style="color:var(--accent-yellow, #fbbf24)">no password</strong> — protected models open without one'}</div>
         </div>
-        <form onsubmit="App.saveAdultPassword(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <form onsubmit="App.saveProtectionPassword(event)" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <input type="text" name="new_unlock_code" class="form-input masked-input" placeholder="New password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" minlength="4" required style="max-width:260px">
-          <button type="submit" class="btn btn-primary btn-sm">${App.publicConfig && App.publicConfig.adult_password_set ? 'Change password' : 'Set password'}</button>
-          ${App.publicConfig && App.publicConfig.adult_password_set ? '<button type="button" class="btn btn-ghost btn-sm" onclick="App.removeAdultPassword()">Remove password</button>' : ''}
+          <button type="submit" class="btn btn-primary btn-sm">${App.publicConfig && App.publicConfig.protection_password_set ? 'Change password' : 'Set password'}</button>
+          ${App.publicConfig && App.publicConfig.protection_password_set ? '<button type="button" class="btn btn-ghost btn-sm" onclick="App.removeProtectionPassword()">Remove password</button>' : ''}
         </form>
       </div>
 

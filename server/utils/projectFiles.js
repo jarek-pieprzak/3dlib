@@ -38,6 +38,21 @@ function assertNotScanning() {
   if (getScanStatus().isScanning) throw new FsError(409, 'A library scan is running, try again when it has finished');
 }
 
+// A read-only project (Edit, or the archive of a kit): the app never changes its files on disk
+function assertWritable(model) {
+  if (model && Number(model.is_readonly) === 1) throw new FsError(409, `"${model.name}" is read-only: turn this off in Edit to change its files`);
+}
+
+// For operations on library paths (Folder Explorer): no read-only project at, inside or around
+// the path
+function assertPathWritable(abs) {
+  const p = path.resolve(abs);
+  for (const m of all('SELECT id, name, library_path, is_readonly FROM models WHERE is_readonly = 1 AND deleted_at IS NULL AND library_path IS NOT NULL')) {
+    const root = path.resolve(m.library_path);
+    if (p === root || p.startsWith(root + path.sep) || root.startsWith(p + path.sep)) assertWritable(m);
+  }
+}
+
 function inLibrary(p) {
   return path.resolve(p).startsWith(path.resolve(LIBRARY_PATH) + path.sep);
 }
@@ -133,6 +148,7 @@ function repointFiles(model, root, oldAbs, newAbs) {
 
 function renameEntry(model, rel, newName) {
   assertNotScanning();
+  assertWritable(model);
   const info = requireProject(model);
   assertName(newName);
   const abs = resolveRel(info, rel);
@@ -151,6 +167,7 @@ function renameEntry(model, rel, newName) {
 
 function moveEntries(model, rels, targetRel) {
   assertNotScanning();
+  assertWritable(model);
   const info = requireProject(model);
   requireFolder(info);
   if (!Array.isArray(rels) || !rels.length) throw new FsError(400, 'Nothing to move');
@@ -179,6 +196,7 @@ function moveEntries(model, rels, targetRel) {
 
 function makeFolder(model, parentRel, name) {
   assertNotScanning();
+  assertWritable(model);
   const info = requireProject(model);
   requireFolder(info);
   assertName(name);
@@ -196,6 +214,7 @@ function makeFolder(model, parentRel, name) {
 // Files go to the Trash; an empty folder (nothing indexed in it) is removed right away
 function deleteEntries(model, rels) {
   assertNotScanning();
+  assertWritable(model);
   const info = requireProject(model);
   if (!Array.isArray(rels) || !rels.length) throw new FsError(400, 'Nothing to delete');
   const rows = all('SELECT id, library_path, deleted_at FROM files WHERE model_id = ?', [model.id]);
@@ -236,6 +255,7 @@ function renameProject(model, newName) {
   const info = projectInfo(model);
   if (!info || model.parent_id) return;
   assertNotScanning();
+  assertWritable(model);
   assertName(newName);
 
   if (info.isFolder) {
@@ -268,6 +288,7 @@ function renameProject(model, newName) {
 // ("Benchy.3mf" + "Benchy.jpg" -> "Benchy/Benchy.3mf" + "Benchy/Benchy.jpg"), so it can hold
 // new files and the .versions history. Returns the project folder.
 function ensureProjectFolder(model) {
+  assertWritable(model);
   const info = requireProject(model);
   if (info.isFolder) return info.root;
   const folder = path.join(info.root, stemOf(path.basename(model.library_path)));
@@ -324,5 +345,5 @@ function visibleFolders(model, files) {
 
 module.exports = {
   FsError, validateName, projectInfo, renameEntry, moveEntries, makeFolder, deleteEntries,
-  renameProject, visibleFolders, ensureProjectFolder, stemOf, relOf, exists, assertNotScanning
+  renameProject, visibleFolders, ensureProjectFolder, stemOf, relOf, exists, assertNotScanning, assertWritable, assertPathWritable
 };

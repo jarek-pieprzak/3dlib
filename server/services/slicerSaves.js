@@ -5,7 +5,8 @@
 //  * a changed file whose token (or, without one, its unique name) matches a library file
 //    replaces that file once it has not changed for slicer_quiet_minutes (default 5); the old
 //    content goes to the file's history (.versions). A 3MF saved from an STL becomes
-//    "<name>.3mf" next to it and the model's main file;
+//    "<name>.3mf" next to it and the model's main file. A file of a read-only project (the
+//    archive of a kit) is never replaced: the save joins its history as a version;
 //  * a file that matches nothing waits on the "Slicer saves" page to be assigned by hand.
 // Files are copied, never moved, so a slicer that keeps the project open can save again.
 // Downloads and imported files are deleted slicer_cleanup_days (default 1) after the last save,
@@ -89,10 +90,15 @@ function addFile(model, srcPath, destPath, { makeMain = false } = {}) {
 }
 
 // Bring a saved file into the library as a new version of `target`. A save of another type
-// (an STL saved as a 3MF) goes to "<name>.<ext>" next to the target instead.
-function importSave(savePath, target) {
+// (an STL saved as a 3MF) goes to "<name>.<ext>" next to the target instead. A target in a
+// read-only project stays as it is: the save is added to its history.
+async function importSave(savePath, target) {
   projectFiles.assertNotScanning();
   const model = get('SELECT * FROM models WHERE id = ?', [target.model_id]);
+  if (Number(model.is_readonly) === 1) {
+    const r = await fileVersions.addVersion(model, target, savePath, 'slicer');
+    return { fileId: target.id, message: r.message };
+  }
   projectFiles.ensureProjectFolder(model); // a loose file becomes a folder first
   const file = get('SELECT * FROM files WHERE id = ?', [target.id]);
   const saveExt = path.extname(savePath).toLowerCase();
@@ -119,9 +125,12 @@ function processSaves(opts) {
   return pass;
 }
 
-// The library file a save would replace (null: the save adds a new file next to the target)
+// The library file a save would replace (null: the save adds a new file next to the target).
+// For a file of a read-only project it is the file, whose history the save joins.
 function destinationOf(target, saveExt) {
   if (path.extname(target.library_path).toLowerCase() === saveExt) return target;
+  const model = get('SELECT is_readonly FROM models WHERE id = ?', [target.model_id]);
+  if (model && Number(model.is_readonly) === 1) return target;
   const sibling = path.join(path.dirname(target.library_path), projectFiles.stemOf(target.filename) + saveExt);
   return get('SELECT * FROM files WHERE library_path = ? AND deleted_at IS NULL', [sibling]);
 }
@@ -184,7 +193,7 @@ async function processOnce({ importNow = [] } = {}) {
       message = 'A newer save of this file is already in the library';
     } else if (Date.now() - st.mtimeMs >= quietMinutes() * 60000 || importNow.includes(rec.id)) {
       try {
-        const r = importSave(p, target);
+        const r = await importSave(p, target);
         run("UPDATE slicer_saves SET imported_hash = ?, imported_file_id = ?, imported_at = datetime('now') WHERE id = ?", [hash, r.fileId, rec.id], true);
         run('UPDATE files SET slicer_saved_at = ? WHERE id = ?', [mtime, r.fileId], true);
         status = 'imported';
@@ -242,10 +251,10 @@ function savePath(rec) {
 }
 
 // Assign a save by hand: as a new version of a file, or as a new file in a model
-function assignToFile(rec, fileId) {
+async function assignToFile(rec, fileId) {
   const target = activeFile(fileId);
   if (!target) throw new projectFiles.FsError(404, 'File not found');
-  const r = importSave(savePath(rec), target);
+  const r = await importSave(savePath(rec), target);
   run('UPDATE files SET slicer_saved_at = ? WHERE id = ?', [rec.mtime_ms, r.fileId], true);
   run("UPDATE slicer_saves SET status = 'imported', imported_hash = hash, imported_file_id = ?, imported_at = datetime('now'), message = ? WHERE id = ?", [r.fileId, r.message, rec.id]);
   return r;

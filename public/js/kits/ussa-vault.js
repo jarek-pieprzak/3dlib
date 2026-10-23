@@ -70,7 +70,7 @@ globalThis.VaultKit = (function () {
   const MODS_PDF = '04_Modifications.pdf';
   const MOUNT_PDF = '05_Mounting Instructions.pdf';
   const TIPS = {
-    saved: { title: 'Saved configurations', text: 'Keep a tower under a name and open it again later, on any device. Save stores the changes into the open one, Save as makes a copy.' },
+    saved: { title: 'Saved configurations', text: 'Save the tower as a configuration: a project of its own in the library, with its parts list, its ZIP and Open in slicer for every file. It opens locked; Edit configuration changes it.' },
     width: { title: 'Width', image: 'sizes', manual: [MANUAL, 6],
       text: 'How wide the tower is: S 165 mm, M 254 mm, L 330 mm, XL 419 mm. L is as wide as two S modules and XL as an S and an M, so an L or XL tower can have floors of smaller modules side by side. XL modules exist only in 1F.' },
     depth: { title: 'Depth', image: 'sizes', manual: [MANUAL, 6],

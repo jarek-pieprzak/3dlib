@@ -154,10 +154,10 @@ app.use('/js/vendor/occt', express.static(path.join(__dirname, '..', 'node_modul
   }
 }));
 
-// Files of password-protected models need the unlock cookie (server/utils/adult.js)
-const adultLock = require('./utils/adult');
-app.use('/uploads', adultLock.staticGuard('uploads', UPLOADS_DIR));
-app.use('/library-files', adultLock.staticGuard('library', LIBRARY_PATH));
+// Files of password-protected models need the unlock cookie (server/utils/protection.js)
+const protection = require('./utils/protection');
+app.use('/uploads', protection.staticGuard('uploads', UPLOADS_DIR));
+app.use('/library-files', protection.staticGuard('library', LIBRARY_PATH));
 app.use('/uploads', express.static(UPLOADS_DIR));
 if (fs.existsSync(LIBRARY_PATH)) {
   app.use('/library-files', express.static(LIBRARY_PATH));
@@ -208,6 +208,8 @@ app.use((err, req, res, next) => {
 (async () => {
   await initDatabase();
   setUploadsDir(UPLOADS_DIR);
+  // Kit archives scanned before archives were recognised on the server become read-only
+  require('./utils/kits').refreshArchives();
 
   // Graceful shutdown handling
   const shutdown = () => {

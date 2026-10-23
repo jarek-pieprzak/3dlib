@@ -86,7 +86,8 @@ router.post('/login', loginLimiter, async (req, res) => {
     
     res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
     
-    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email } });
+    // The preferred slicer and printer too: the top bar and "Open in slicer" need them at once
+    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Login failed' }); }
 });
 
@@ -96,18 +97,28 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', authenticate, (req, res) => {
-  const user = get('SELECT id, username, email, role, preferred_slicer FROM users WHERE id=?', [req.user.id]);
+  const user = get('SELECT id, username, email, role, preferred_slicer, preferred_printer FROM users WHERE id=?', [req.user.id]);
   if (user) user.csrfToken = req.user.csrfToken;
   res.json(user);
 });
 
+// The slicers "Open in slicer" links open (public/js/components.js UI.slicerLinks)
+const SLICERS = ['bambustudio', 'orcaslicer', 'elegooslicer', 'cura'];
+
 router.put('/profile', authenticate, async (req, res) => {
   try {
-    const { username, email, password, preferred_slicer } = req.body;
+    const { username, email, password, preferred_slicer, preferred_printer } = req.body;
     const updates = [], params = [];
     if (username) { updates.push('username=?'); params.push(username); }
     if (email) { updates.push('email=?'); params.push(email); }
-    if (preferred_slicer !== undefined) { updates.push('preferred_slicer=?'); params.push(preferred_slicer); }
+    if (preferred_slicer !== undefined) {
+      if (preferred_slicer && !SLICERS.includes(preferred_slicer)) return res.status(400).json({ error: 'Unknown slicer' });
+      updates.push('preferred_slicer=?'); params.push(preferred_slicer || null);
+    }
+    if (preferred_printer !== undefined) {
+      if (preferred_printer !== null && (typeof preferred_printer !== 'string' || preferred_printer.length > 80)) return res.status(400).json({ error: 'Unknown printer' });
+      updates.push('preferred_printer=?'); params.push(preferred_printer || null);
+    }
     if (password) { 
       if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
         return res.status(400).json({ error: 'Password must be at least 8 characters long and contain both letters and numbers' });

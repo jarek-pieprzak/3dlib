@@ -10,7 +10,7 @@ const { heavyLimiter } = require('../middleware/rateLimit');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement } = require('../middleware/security');
 const { getSettingBool, getZipEntryBuffer, canEditModel } = require('../utils/modelHelpers');
-const adultLock = require('../utils/adult');
+const protection = require('../utils/protection');
 const { trashFiles } = require('../utils/trash');
 const { tokenFromName } = require('../utils/slicerToken');
 const { hashFileStream } = require('../utils/modelHelpers');
@@ -38,7 +38,7 @@ router.get('/:id/stream', (req, res, next) => {
       const file = get('SELECT * FROM files WHERE id=?', [id]);
       if (!file) return res.status(404).json({ error: 'File not found' });
       // A protected model's files need its unlock token (share links carry their own access)
-      if (!shareSlug && !adultLock.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
+      if (!shareSlug && !protection.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
 
       if (shareSlug) {
         const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
@@ -131,7 +131,7 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
       const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
       if (!file) return res.status(404).json({ error: 'File not found' });
       // A protected model's files need its unlock token (share links carry their own access)
-      if (!shareSlug && !adultLock.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
+      if (!shareSlug && !protection.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
 
       if (shareSlug) {
         const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
@@ -193,7 +193,7 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
       const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
       if (!file) return res.status(404).json({ error: 'File not found' });
       // A protected model's files need its unlock token (share links carry their own access)
-      if (!shareSlug && !adultLock.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
+      if (!shareSlug && !protection.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
 
       if (shareSlug) {
         const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
@@ -274,9 +274,10 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
 router.delete('/:id', authenticate, (req, res) => {
   try {
     if (!req.user || req.user.role === 'viewer') return res.status(403).json({ error: 'Viewer accounts cannot delete data' });
-    const file = get('SELECT f.*, m.user_id as model_owner FROM files f JOIN models m ON f.model_id = m.id WHERE f.id=? AND f.deleted_at IS NULL', [Number(req.params.id)]);
+    const file = get('SELECT f.*, m.user_id as model_owner, m.name as model_name, m.is_readonly FROM files f JOIN models m ON f.model_id = m.id WHERE f.id=? AND f.deleted_at IS NULL', [Number(req.params.id)]);
     if (!file) return res.status(404).json({ error: 'File not found' });
     if (req.user.role !== 'admin' && file.model_owner && file.model_owner !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    if (Number(file.is_readonly) === 1) return res.status(409).json({ error: `"${file.model_name}" is read-only: turn this off in Edit to change its files` });
 
     // To the Trash; the file stays on disk until it is purged
     trashFiles([file.id]);

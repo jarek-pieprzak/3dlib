@@ -11,7 +11,8 @@ const { validatePathConfinement, safeUrl } = require('../middleware/security');
 const { getFileUrl, getThumbUrl, getZipEntryBuffer, zipEntriesForFiles, getSettingBool, canEditModel } = require('../utils/modelHelpers');
 const { sendZip, entryName } = require('../utils/zipStream');
 const downloadSelections = require('../utils/downloadSelections');
-const adultLock = require('../utils/adult');
+const kits = require('../utils/kits');
+const protection = require('../utils/protection');
 const printFit = require('../utils/printFit');
 const trashUtil = require('../utils/trash');
 const projectFiles = require('../utils/projectFiles');
@@ -20,9 +21,9 @@ const bcrypt = require('bcryptjs');
 const { authLimiter } = require('../middleware/rateLimit');
 
 // ─── Password-protected models ─────────────────────────────────────────────────────────────────
-// POST /api/models/adult/lock: forget the unlock cookie (the page leaves a protected model)
-router.post('/adult/lock', (req, res) => {
-  res.clearCookie(adultLock.COOKIE, { path: '/' });
+// POST /api/models/protected/lock: forget the unlock cookie (the page leaves a protected model)
+router.post('/protected/lock', (req, res) => {
+  res.clearCookie(protection.COOKIE, { path: '/' });
   res.json({ success: true });
 });
 
@@ -30,14 +31,14 @@ router.post('/adult/lock', (req, res) => {
 router.post('/:id/unlock', authLimiter, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const model = get('SELECT id, is_adult FROM models WHERE id=?', [id]);
+    const model = get('SELECT id, is_protected FROM models WHERE id=?', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
-    if (adultLock.isLocked(model)) {
+    if (protection.isLocked(model)) {
       const password = typeof req.body.password === 'string' ? req.body.password : '';
-      if (!(await bcrypt.compare(password, adultLock.passwordHash()))) return res.status(403).json({ error: 'Wrong password' });
+      if (!(await bcrypt.compare(password, protection.passwordHash()))) return res.status(403).json({ error: 'Wrong password' });
     }
-    const token = adultLock.issueToken(id);
-    res.cookie(adultLock.COOKIE, token, { httpOnly: true, sameSite: 'strict', secure: req.secure, path: '/', maxAge: 6 * 3600 * 1000 });
+    const token = protection.issueToken(id);
+    res.cookie(protection.COOKIE, token, { httpOnly: true, sameSite: 'strict', secure: req.secure, path: '/', maxAge: 6 * 3600 * 1000 });
     res.json({ token });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to unlock' }); }
 });
@@ -216,7 +217,7 @@ router.get('/:id', (req, res) => {
     // A model in the Trash opens only from the Trash (?trash=1), for those who may restore it
     const canEdit = canEditModel(req.user, model);
     if (model.deleted_at && !(req.query.trash && canEdit)) return res.status(404).json({ error: 'Model not found' });
-    if (!adultLock.canOpenModel(req, model, { headerOnly: true })) {
+    if (!protection.canOpenModel(req, model, { headerOnly: true })) {
       return res.status(423).json({ error: 'This model is password protected', locked: true, id: model.id, name: model.name });
     }
 
@@ -255,6 +256,10 @@ router.get('/:id', (req, res) => {
     model.tags = all('SELECT t.id,t.name FROM tags t JOIN model_tags mt ON mt.tag_id=t.id WHERE mt.model_id=?', [model.id]);
     model.projects = all('SELECT p.id, p.name, p.visibility FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=?', [model.id]);
     model.has_printed = model.prints.length > 0;
+    if (kits.isConfiguration(model)) {
+      const src = get('SELECT id, name, is_protected, deleted_at, kit_archive FROM models WHERE id = ?', [model.kit_source_id]);
+      model.kit_source = src ? { id: src.id, name: src.name, is_protected: src.is_protected, deleted_at: src.deleted_at, kit: src.kit_archive || kits.KIT } : null;
+    }
     
     // Versions
     const rootId = model.parent_id || model.id;
@@ -275,7 +280,7 @@ router.get('/:id', (req, res) => {
 // else { status, error }. A share link opens its own model to anyone.
 function zipAccessError(req, model, shareSlug) {
   if (!model) return { status: 404, error: 'Model not found' };
-  if (!shareSlug && !adultLock.canOpenModel(req, model)) return { status: 404, error: 'Model not found' };
+  if (!shareSlug && !protection.canOpenModel(req, model)) return { status: 404, error: 'Model not found' };
   if (shareSlug) {
     const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
     return !share || share.model_id !== model.id ? { status: 403, error: 'Invalid or expired share link' } : null;
@@ -298,6 +303,18 @@ router.get('/:id/download', (req, res) => {
     const denied = zipAccessError(req, model, req.query.share);
     if (denied) return res.status(denied.status).json({ error: denied.error });
 
+    if (kits.isConfiguration(model)) {
+      const selection = kits.zipSelection(model);
+      if (!selection) return res.status(404).json({ error: 'The archive of this configuration is gone or in the Trash' });
+      // The parts are files of the archive: its access rules apply too
+      const deniedSource = req.query.share ? { status: 403, error: 'Configurations cannot be shared' } : zipAccessError(req, selection.source);
+      if (deniedSource) return res.status(deniedSource.status).json({ error: deniedSource.error });
+      const entries = zipEntriesForFiles(selection.files);
+      const buf = Buffer.from(selection.text.content, 'utf8');
+      entries.unshift({ name: entryName(selection.text.name) || 'parts list.txt', size: buf.length, read: () => buf });
+      if (!sendZip(res, model.name || 'configuration', entries)) return res.status(404).json({ error: 'No physical files found on disk for this configuration' });
+      return;
+    }
     const files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at ASC', [id]);
     if (!files.length) return res.status(400).json({ error: 'No files in this model to download' });
 
@@ -570,14 +587,15 @@ router.put('/:id', authenticate, (req, res) => {
     const model = get('SELECT * FROM models WHERE id=?', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-    const { name, description, print_tips, source_url, category_id, tags, custom_meta, is_adult } = req.body;
+    const { name, description, print_tips, source_url, category_id, tags, custom_meta, is_protected, is_readonly } = req.body;
     if (model.deleted_at) return res.status(404).json({ error: 'Model not found' });
+    const readOnly = is_readonly !== undefined ? (is_readonly ? 1 : 0) : (Number(model.is_readonly) === 1 ? 1 : 0);
 
     // A new name renames the project folder (or loose file) in the library too
     const newName = typeof name === 'string' && name.trim() ? name.trim() : model.name;
     if (newName !== model.name) {
       try {
-        projectFiles.renameProject(model, newName);
+        projectFiles.renameProject({ ...model, is_readonly: readOnly }, newName);
       } catch (e) {
         if (e instanceof projectFiles.FsError) return res.status(e.status).json({ error: e.message });
         throw e;
@@ -594,9 +612,9 @@ router.put('/:id', authenticate, (req, res) => {
       cleanSourceUrl = safeUrl(source_url);
     }
 
-    run("UPDATE models SET name=?,description=?,print_tips=?,source_url=?,category_id=?,custom_meta=?,is_adult=?,updated_at=datetime('now') WHERE id=?",
+    run("UPDATE models SET name=?,description=?,print_tips=?,source_url=?,category_id=?,custom_meta=?,is_protected=?,is_readonly=?,updated_at=datetime('now') WHERE id=?",
       [newName, description!==undefined?description:model.description, print_tips!==undefined?print_tips:model.print_tips, cleanSourceUrl, category_id!==undefined?category_id:model.category_id, metaStr,
-       is_adult !== undefined ? (is_adult ? 1 : 0) : (model.is_adult ? 1 : 0), id]);
+       is_protected !== undefined ? (is_protected ? 1 : 0) : (model.is_protected ? 1 : 0), readOnly, id]);
     if (tags !== undefined) {
       run('DELETE FROM model_tags WHERE model_id=?', [id]);
       if (tags?.length) {
@@ -621,9 +639,10 @@ router.delete('/:id', authenticate, (req, res) => {
   try {
     if (!req.user || req.user.role === 'viewer') return res.status(403).json({ error: 'Viewer accounts cannot delete data' });
     const id = Number(req.params.id);
-    const model = get('SELECT user_id FROM models WHERE id=? AND deleted_at IS NULL', [id]);
+    const model = get('SELECT user_id, name, is_readonly FROM models WHERE id=? AND deleted_at IS NULL', [id]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    try { projectFiles.assertWritable(model); } catch (e) { return res.status(e.status).json({ error: e.message }); }
     // To the Trash; purged with its files after the retention period
     trashUtil.trashModels([id]);
     res.json({ success: true, trashed: true });
@@ -637,20 +656,24 @@ router.post('/bulk-delete', authenticate, (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'IDs array required' });
     const allowed = [];
+    const readOnly = [];
     for (const id of ids) {
       const numId = Number(id);
-      const model = get('SELECT user_id FROM models WHERE id=? AND deleted_at IS NULL', [numId]);
-      if (model && (req.user.role === 'admin' || !model.user_id || model.user_id === req.user.id)) allowed.push(numId);
+      const model = get('SELECT user_id, name, is_readonly FROM models WHERE id=? AND deleted_at IS NULL', [numId]);
+      if (!model || !(req.user.role === 'admin' || !model.user_id || model.user_id === req.user.id)) continue;
+      // Read-only projects stay; the answer names them
+      if (Number(model.is_readonly) === 1) readOnly.push(model.name);
+      else allowed.push(numId);
     }
     trashUtil.trashModels(allowed);
-    res.json({ success: true, count: allowed.length, trashed: true });
+    res.json({ success: true, count: allowed.length, trashed: true, read_only: readOnly });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed bulk delete' }); }
 });
 
 // ─── POST /api/models/bulk-update ─────────────────────────────────────────────
 router.post('/bulk-update', authenticate, (req, res) => {
   try {
-    const { ids, category_id, tags, add_tags, remove_tags, is_adult } = req.body;
+    const { ids, category_id, tags, add_tags, remove_tags, is_protected } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'IDs array required' });
     
     for (const id of ids) {
@@ -662,8 +685,8 @@ router.post('/bulk-update', authenticate, (req, res) => {
       if (category_id !== undefined) {
         run("UPDATE models SET category_id=?, updated_at=datetime('now') WHERE id=?", [category_id || null, id]);
       }
-      if (is_adult !== undefined) {
-        run("UPDATE models SET is_adult=?, updated_at=datetime('now') WHERE id=?", [is_adult ? 1 : 0, id]);
+      if (is_protected !== undefined) {
+        run("UPDATE models SET is_protected=?, updated_at=datetime('now') WHERE id=?", [is_protected ? 1 : 0, id]);
       }
 
       if (add_tags && Array.isArray(add_tags)) {
@@ -724,6 +747,8 @@ router.post('/:id/files', authenticate, upload.array('files', 20), (req, res) =>
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
+    if (kits.isConfiguration(model)) return res.status(400).json({ error: 'A configuration has no files of its own' });
+    try { projectFiles.assertWritable(model); } catch (e) { return res.status(e.status).json({ error: e.message }); }
     const { parseGcodeMetadata, extractGcodeThumbnail } = require('../utils/gcode');
     const { extract3mfThumbnail } = require('../utils/3mf');
     const { extractF3dThumbnail } = require('../utils/f3d');

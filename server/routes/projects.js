@@ -261,21 +261,31 @@ router.get('/:id/download', authenticate, heavyLimiter, (req, res) => {
     }
 
     // Password-protected models are left out of collection archives
-    const adultLock = require('../utils/adult');
+    const protection = require('../utils/protection');
     const models = all(`
-      SELECT m.id, m.name, m.is_adult
+      SELECT m.*
       FROM models m
       JOIN project_models pm ON m.id = pm.model_id
       WHERE pm.project_id = ? AND m.deleted_at IS NULL
-    `, [projectId]).filter(m => adultLock.canOpenModel(req, m));
+    `, [projectId]).filter(m => protection.canOpenModel(req, m));
 
     if (!models.length) return res.status(400).json({ error: 'No models in this collection to download' });
 
-    // One folder per model, files keep their subfolders; streamed from disk
+    // One folder per model, files keep their subfolders; streamed from disk. A configuration
+    // brings only its parts list: its parts are the archive's files, many GB.
+    const kits = require('../utils/kits');
     const entries = [];
     for (const model of models) {
+      const folder = model.name.replace(/[/\\?%*:|"<>]/g, '_');
+      if (kits.isConfiguration(model)) {
+        const selection = kits.zipSelection(model);
+        if (!selection) continue;
+        const buf = Buffer.from(selection.text.content, 'utf8');
+        entries.push({ name: `${folder}/parts list.txt`, size: buf.length, read: () => buf });
+        continue;
+      }
       const files = all('SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL ORDER BY uploaded_at ASC', [model.id]);
-      entries.push(...zipEntriesForFiles(files, model.name.replace(/[/\\?%*:|"<>]/g, '_')));
+      entries.push(...zipEntriesForFiles(files, folder));
     }
     if (!sendZip(res, project.name || 'collection', entries)) {
       return res.status(404).json({ error: 'No physical files found on disk for this collection' });

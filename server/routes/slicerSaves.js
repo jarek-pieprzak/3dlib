@@ -79,13 +79,13 @@ router.post('/:id/import', authenticate, requireAdmin, async (req, res) => {
 });
 
 // ─── POST /api/slicer-saves/:id/assign { file_id } | { model_id } | { new_model: true } ─
-router.post('/:id/assign', authenticate, requireAdmin, (req, res) => {
+router.post('/:id/assign', authenticate, requireAdmin, async (req, res) => {
   const rec = loadSave(req, res);
   if (!rec) return;
   try {
     const b = req.body || {};
     let result;
-    if (b.file_id) result = slicerSaves.assignToFile(rec, Number(b.file_id));
+    if (b.file_id) result = await slicerSaves.assignToFile(rec, Number(b.file_id));
     else if (b.model_id) result = slicerSaves.addToModel(rec, Number(b.model_id));
     else if (b.new_model) result = slicerSaves.newModel(rec, req.user.id);
     else return res.status(400).json({ error: 'Choose a file, a model or a new model' });

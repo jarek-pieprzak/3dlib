@@ -6,7 +6,7 @@ const router = express.Router();
 
 const { get, all, run } = require('../database');
 const { authenticate } = require('../middleware/auth');
-const adultLock = require('../utils/adult');
+const protection = require('../utils/protection');
 const dimensions = require('../services/dimensions');
 const { beds, DEFAULT_BEDS } = require('../utils/printFit');
 
@@ -44,8 +44,8 @@ router.put('/printer-beds', authenticate, (req, res) => {
 // files; its files waiting to be measured go first in the queue (?first=: these before the others)
 router.get('/models/:id/sizes', (req, res) => {
   try {
-    const model = get('SELECT id, is_adult FROM models WHERE id = ? AND deleted_at IS NULL', [Number(req.params.id)]);
-    if (!model || !adultLock.canOpenModel(req, model)) return res.status(404).json({ error: 'Model not found' });
+    const model = get('SELECT id, is_protected FROM models WHERE id = ? AND deleted_at IS NULL', [Number(req.params.id)]);
+    if (!model || !protection.canOpenModel(req, model)) return res.status(404).json({ error: 'Model not found' });
     // ?first=1,2,3: the files on screen (the configurator's parts) are measured before the rest
     const first = String(req.query.first || '').split(',').map(Number).filter(Number.isInteger).slice(0, 2000);
     const pending = dimensions.prioritize(model.id, first);

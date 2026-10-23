@@ -767,18 +767,43 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .detail-viewer-hint .hint-actions a{color:var(--accent-cyan)}
 @media(max-width:700px){.detail-viewer-hint .hint-tip{display:none}}
 /* Password-protected models: lock badge, blurred thumbnail in lists, password screen */
-.badge-adult{display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.16);color:var(--accent-purple, #a78bfa);border:1px solid rgba(139,92,246,.4);font-weight:600}
-.model-card.is-adult .model-card-thumb>img,.model-card.is-adult .model-card-thumb>.model-card-placeholder,.model-card.is-adult .model-card-thumb>canvas{filter:blur(16px) saturate(.7);transform:scale(1.08)}
-.model-card.is-adult .model-card-thumb{overflow:hidden}
-.adult-lock{min-height:60vh;display:flex;align-items:center;justify-content:center;padding:24px 0}
-.adult-lock-card{width:100%;max-width:380px;padding:28px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}
-.adult-lock-title{font-size:1.15rem;font-weight:700;color:var(--text-primary);word-break:break-word}
-.adult-lock-text{font-size:.85rem;color:var(--text-secondary)}
-.adult-lock-error{min-height:1.2em;font-size:.8rem;color:#fb7185}
-.adult-lock-actions{display:flex;justify-content:space-between;width:100%;gap:8px}
+.badge-protected{display:inline-flex;align-items:center;gap:4px;background:rgba(139,92,246,.16);color:var(--accent-purple, #a78bfa);border:1px solid rgba(139,92,246,.4);font-weight:600}
+/* Read-only projects (the VAULT archive) and saved configurations of a kit */
+.badge-readonly{background:color-mix(in srgb, var(--warning) 14%, transparent);color:var(--warning);border:1px solid color-mix(in srgb, var(--warning) 40%, transparent);font-weight:600;cursor:help}
+.badge-kit{background:color-mix(in srgb, var(--accent-cyan) 14%, transparent);color:var(--accent-cyan);border:1px solid color-mix(in srgb, var(--accent-cyan) 40%, transparent);font-weight:600}
+/* "Open in slicer" (UI.slicerButton): the preferred slicer, the others in its menu */
+.slicer-split{display:inline-flex;align-items:stretch;vertical-align:middle}
+.slicer-split>.dropdown{display:flex}
+.slicer-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:24px;padding:3px 8px;font-size:.7rem;font-weight:600;line-height:1;white-space:nowrap;color:var(--accent-purple);border:1px solid var(--accent-purple);border-radius:4px;box-sizing:border-box}
+/* The star and the arrow as one button: only the star of that pair loses its right edge */
+.slicer-btn.is-joined{border-right:none;border-radius:4px 0 0 4px}
+.slicer-split .slicer-more{padding:3px 6px;border-radius:0 4px 4px 0}
+.kit-part .slicer-split{flex:none}
+.slicer-btn.is-compact{width:44px;padding:3px 0}
+.dropdown.slicer-split>.slicer-btn.is-compact{width:67px}
+.slicer-btn svg{flex:none}
+.slicer-icon{flex:none;width:16px;height:16px;border-radius:3px;object-fit:contain}
+/* Panels size their images to the panel (.glass-panel img): not these */
+.slicer-split img.slicer-icon,.slicer-menu img.slicer-icon,.topbar-slicer img.slicer-icon{display:block;width:16px;height:16px;max-width:none}
+svg.slicer-icon{width:14px;height:14px;border-radius:0}
+/* Icon and name on one line (.dropdown-content a is a block further down) */
+.dropdown-content.slicer-menu a{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.topbar-slicer .slicer-icon{width:18px;height:18px}
+.topbar-slicer .slicer-icon[hidden]{display:none}
+.slicer-count{display:inline-flex;align-items:center;justify-content:center;min-width:14px;height:14px;padding:0 3px;font-size:.62rem;font-weight:700;color:var(--bg-primary, #111);background:var(--accent-purple);border-radius:999px}
+.slicer-slot{flex:none;width:67px}
+.slicer-split .dropdown-content a{white-space:nowrap}
+.model-card.is-protected .model-card-thumb>img,.model-card.is-protected .model-card-thumb>.model-card-placeholder,.model-card.is-protected .model-card-thumb>canvas{filter:blur(16px) saturate(.7);transform:scale(1.08)}
+.model-card.is-protected .model-card-thumb{overflow:hidden}
+.protected-lock{min-height:60vh;display:flex;align-items:center;justify-content:center;padding:24px 0}
+.protected-lock-card{width:100%;max-width:380px;padding:28px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.protected-lock-title{font-size:1.15rem;font-weight:700;color:var(--text-primary);word-break:break-word}
+.protected-lock-text{font-size:.85rem;color:var(--text-secondary)}
+.protected-lock-error{min-height:1.2em;font-size:.8rem;color:#fb7185}
+.protected-lock-actions{display:flex;justify-content:space-between;width:100%;gap:8px}
 .masked-input{-webkit-text-security:disc;text-security:disc;font-family:var(--font)}
-.adult-check{display:flex;align-items:flex-start;gap:10px;font-size:.85rem;color:var(--text-secondary);cursor:pointer}
-.adult-check input{margin-top:3px;accent-color:#f43f5e}
+.protected-check{display:flex;align-items:flex-start;gap:10px;font-size:.85rem;color:var(--text-secondary);cursor:pointer}
+.protected-check input{margin-top:3px;accent-color:#f43f5e}
 /* Slicer menus near the bottom of the scrolling list open upwards */
 .dropdown.drop-up .dropdown-content{top:auto;bottom:100%}
 .detail-layout .glass-panel{scroll-margin-top:72px}
@@ -1596,6 +1621,59 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .kit-icon-btn:disabled{opacity:.3;cursor:default}
 .kit-saved{flex-direction:row;align-items:center;flex-wrap:wrap;gap:6px}
 .kit-saved .kit-select{flex:1 1 160px}
+.kit-saved .btn{display:inline-flex;align-items:center;gap:5px}
+/* A saved configuration's page: the list and the preview only until Edit configuration */
+.kit-locked-note{display:inline-flex;align-items:center;gap:6px;margin-right:auto;font-size:.8rem;font-weight:600;color:var(--text-secondary)}
+.kit-layout.is-locked{grid-template-columns:minmax(0, 1fr)}
+.kit-layout.is-locked .kit-builder-panel{display:none}
+.kit-part-meta{display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--text-muted)}
+@media(min-width:1025px){
+  .kit-layout.is-locked .kit-result{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,.9fr);grid-template-rows:minmax(0,1fr)}
+  .kit-layout.is-locked .kit-preview-panel{order:2;min-height:420px}
+  .kit-layout.is-locked .kit-parts-panel{order:1;min-height:0}
+}
+@media(min-width:1025px) and (min-height:600px){
+  .detail-page .kit-layout.is-locked .kit-preview-panel{min-height:0}
+}
+.kit-qty.is-static{display:inline-block;background:transparent;border-color:transparent;font-weight:600}
+.kit-part .slicer-split .dropdown-content{right:0}
+.kit-docs-note{padding:4px 16px}
+.kit-problem{padding:24px;color:var(--text-secondary)}
+/* The slicer chooser (UI.slicerChooser): the original and the saved slicer projects */
+.sv-intro{margin-bottom:12px;font-size:.85rem;color:var(--text-secondary)}
+.sv-table-wrap{max-height:58vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-md)}
+.sv-table{width:100%;min-width:640px;border-collapse:collapse;font-size:.78rem}
+.sv-table th{position:sticky;top:0;z-index:1;padding:8px 10px;font-size:.65rem;font-weight:700;letter-spacing:.05em;text-align:left;text-transform:uppercase;color:var(--text-muted);background:var(--bg-secondary);border-bottom:1px solid var(--border)}
+.sv-table td{padding:8px 10px;vertical-align:top;color:var(--text-primary);border-bottom:1px solid var(--border)}
+.sv-row{cursor:pointer}
+.sv-row:hover{background:color-mix(in srgb, var(--text-primary) 5%, transparent)}
+.sv-row.is-selected{background:color-mix(in srgb, var(--accent-cyan) 12%, transparent);box-shadow:inset 3px 0 0 var(--accent-cyan)}
+.sv-pick{width:28px}
+.sv-pick input{margin-top:2px;accent-color:var(--accent-cyan)}
+.sv-saved{display:flex;align-items:flex-start;gap:10px;min-width:190px}
+.sv-saved-text{min-width:0}
+.sv-thumb{flex:none;width:48px;height:48px;object-fit:contain;background:var(--bg-tertiary);border-radius:4px}
+.sv-name{display:flex;align-items:center;gap:4px;font-weight:600;line-height:1.3}
+.sv-row-actions{display:flex;gap:2px;margin:4px 0 0 -4px}
+.sv-empty td{padding:14px 10px;font-size:.78rem;color:var(--text-muted)}
+.sv-empty code{font-size:.74rem;color:var(--text-secondary)}
+@media(max-width:900px){.sv-saved .sv-thumb{display:none}.sv-saved{min-width:130px}.sv-table td.sv-changes{min-width:140px}}
+.sv-line{white-space:nowrap;line-height:1.55}
+.sv-pin{display:inline-flex;color:var(--accent-cyan)}
+.sv-date,.sv-sub{font-size:.7rem;color:var(--text-muted)}
+.sv-none{color:var(--text-muted)}
+.sv-filament{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.sv-swatch{flex:none;width:12px;height:12px;border:1px solid var(--border-hover);border-radius:3px}
+.sv-changes{width:34%;min-width:170px}
+.sv-change-list{display:flex;flex-wrap:wrap;gap:4px}
+.sv-change{padding:2px 7px;font-size:.68rem;line-height:1.35;color:var(--text-secondary);background:var(--bg-tertiary);border-radius:6px}
+.sv-change.is-more{color:var(--text-muted)}
+.sv-details summary{font-size:.7rem;color:var(--accent-cyan);cursor:pointer}
+.sv-details ul{margin:6px 0 0;padding-left:16px;font-size:.7rem;color:var(--text-secondary)}
+.sv-details code{font-size:.68rem;color:var(--text-primary)}
+.kit-icon-btn.is-on{color:var(--accent-cyan)}
+.sv-footer{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:14px}
+.sv-chosen{margin-right:auto;font-size:.8rem;color:var(--text-secondary)}
 .kit-footprint{flex-direction:row;align-items:flex-end;gap:16px}
 .kit-footprint-fields{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}
 .kit-footprint-fields .kit-field>.kit-label{width:48px}
@@ -1739,11 +1817,14 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .fit-status{color:var(--text-muted)}
 .fit-status.is-ok{color:var(--success)}
 .fit-status.is-bad{color:var(--error);font-weight:600}
+/* Too big for the default printer, another of mine takes it */
+.fit-status.is-other{color:var(--warning);font-weight:600}
 .fit-dim{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-muted);white-space:nowrap}
 .file-meta .fit-dim:not(:empty)::before{content:'·'}
 .fit-flag{font-weight:700;cursor:help}
 .fit-flag.is-ok{color:var(--success)}
 .fit-flag.is-bad{color:var(--error)}
+.fit-flag.is-other{color:var(--warning)}
 /* Settings -> Printers: build volumes */
 .bed-head,.bed-row{display:grid;grid-template-columns:minmax(140px,1fr) repeat(4, 84px) auto;align-items:center;gap:8px}
 .bed-head{margin-bottom:6px;font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
@@ -1758,6 +1839,7 @@ select option{background:var(--bg-card);color:var(--text-primary)}
 .badge-fit{font-size:.65rem;color:var(--text-muted);background:var(--bg-tertiary);border:1px solid var(--border)}
 .badge-fit.is-ok{color:var(--success);border-color:color-mix(in srgb, var(--success) 40%, transparent);background:color-mix(in srgb, var(--success) 10%, transparent)}
 .badge-fit.is-bad{color:var(--error);border-color:color-mix(in srgb, var(--error) 40%, transparent);background:color-mix(in srgb, var(--error) 10%, transparent)}
+.badge-fit.is-other{color:var(--warning);border-color:color-mix(in srgb, var(--warning) 40%, transparent);background:color-mix(in srgb, var(--warning) 10%, transparent)}
 @media(max-width:768px){.topbar-fit svg{display:none}.topbar-fit .fit-select{max-width:130px}.fit-hint{display:none}}
 /* Files to print: every file downloads on its own; the instruction PDFs open in the preview */
 .kit-download{color:var(--text-muted)}

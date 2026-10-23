@@ -57,7 +57,7 @@
   <meta name="description" content="3DLib — Self-hosted library of 3D printing models">
   <title>3DLib</title>
   <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=70">
+  <link rel="stylesheet" href="/css/style.css?v=83">
   
   <!-- Core 3D Engine (Local) -->
   <script src="/js/vendor/three.min.js"></script>
@@ -192,6 +192,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
             <select id="fit-printer-picker" class="form-select fit-select" onchange="App.setFitPrinter(this.value)" aria-label="Printer for the fit check"></select>
           </label>
+          <label class="topbar-fit topbar-slicer" id="slicer-picker-wrap" title="Default slicer: what &quot;Open in slicer&quot; opens" hidden>
+            <img id="slicer-picker-icon" class="slicer-icon" src="" alt="" hidden>
+            <select id="slicer-picker" class="form-select fit-select" onchange="App.setPreferredSlicer(this.value)" aria-label="Default slicer"></select>
+          </label>
           <button class="btn btn-primary btn-sm" onclick="App.showCreateModel()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span>New Model</span>
@@ -233,12 +237,12 @@
   <div class="toast-container" id="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/js/kits/ussa-vault.js?v=2"></script>
-  <script src="/js/kits/ussa-vault-3d.js?v=5"></script>
+  <script src="/js/kits/ussa-vault.js?v=3"></script>
+  <script src="/js/kits/ussa-vault-3d.js?v=6"></script>
   <script src="/js/printfit.js?v=2"></script>
-  <script src="/js/api.js?v=72"></script>
-  <script src="/js/components.js?v=79"></script>
-  <script src="/js/app.js?v=78"></script>
+  <script src="/js/api.js?v=73"></script>
+  <script src="/js/components.js?v=87"></script>
+  <script src="/js/app.js?v=83"></script>
   <script src="/js/viewer.js?v=67"></script>
 </body>
 </html>

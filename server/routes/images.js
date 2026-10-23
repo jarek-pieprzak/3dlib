@@ -3,7 +3,7 @@
 // A cover can be a full-size photo from a project folder; a browser decodes a 12 MP photo into
 // about 48 MB, for every card. The small version is a WebP (transparency kept), made with sharp
 // and cached in <data>/cache/img, keyed by the file, its size and modification time.
-// Same access rules as the original: password-protected files stay hidden (adult.js).
+// Same access rules as the original: password-protected files stay hidden (protection.js).
 const express = require('express');
 const router = express.Router();
 const fs = require('fs');
@@ -11,7 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const { DATA_DIR, UPLOADS_DIR, LIBRARY_PATH } = require('../config');
-const adultLock = require('../utils/adult');
+const protection = require('../utils/protection');
 
 const CACHE_DIR = path.join(DATA_DIR, 'cache', 'img');
 const WIDTHS = [160, 320, 480, 960, 1600];
@@ -62,7 +62,7 @@ router.get('/', async (req, res) => {
   const original = String(req.query.u || '');
   const image = resolveImage(original);
   if (!image) return res.status(400).type('text/plain').send('Not an image of the library');
-  if (adultLock.blocksStatic(req, image.kind, image.root, image.rel)) return res.status(404).type('text/plain').send('Not found');
+  if (protection.blocksStatic(req, image.kind, image.root, image.rel)) return res.status(404).type('text/plain').send('Not found');
 
   let stat;
   try { stat = fs.statSync(image.abs); } catch (e) { return res.status(404).type('text/plain').send('Not found'); }

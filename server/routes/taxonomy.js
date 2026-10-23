@@ -121,11 +121,13 @@ router.post('/shares', authenticate, (req, res) => {
     const modelId = safeInt(model_id, 0);
     if (!modelId) return res.status(400).json({ error: 'Valid model_id is required' });
 
-    const model = get('SELECT id, user_id FROM models WHERE id=?', [modelId]);
+    const model = get('SELECT id, user_id, kit_source_id FROM models WHERE id=?', [modelId]);
     if (!model) return res.status(404).json({ error: 'Model not found' });
     if (req.user.role !== 'admin' && model.user_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    // Its parts are files of another model, which a share link does not open
+    if (model.kit_source_id) return res.status(400).json({ error: 'Configurations cannot be shared' });
 
     const slug = crypto.randomBytes(6).toString('hex');
     const days = (expires_days !== undefined && expires_days !== null && expires_days !== '') 

@@ -8,6 +8,7 @@ const { LIBRARY_PATH } = require('../config');
 const { authenticate } = require('../middleware/auth');
 const { getThumbUrl } = require('../utils/modelHelpers');
 const trash = require('../utils/trash');
+const { assertPathWritable, FsError } = require('../utils/projectFiles');
 
 // What of the library is in the Trash: deleted models (a folder or a loose file with its
 // companions) and deleted files. The browser lists the disk, so it hides these itself.
@@ -62,6 +63,8 @@ router.post('/move', authenticate, (req, res) => {
     if (!srcAbs.startsWith(path.resolve(LIBRARY_PATH)) || !targetAbs.startsWith(path.resolve(LIBRARY_PATH))) {
       return res.status(403).json({ error: 'Access denied' });
     }
+    assertPathWritable(srcAbs);
+    assertPathWritable(path.dirname(targetAbs));
     
     fs.renameSync(srcAbs, targetAbs);
     
@@ -71,6 +74,7 @@ router.post('/move', authenticate, (req, res) => {
     
     res.json({ success: true });
   } catch (e) {
+    if (e instanceof FsError) return res.status(e.status).json({ error: e.message });
     console.error('[Move] Error:', e);
     res.status(500).json({ error: 'Failed to move folder/file' });
   }
@@ -88,11 +92,13 @@ router.post('/mkdir', authenticate, (req, res) => {
     if (!fullPath.startsWith(path.resolve(LIBRARY_PATH))) {
       return res.status(403).json({ error: 'Access denied' });
     }
+    assertPathWritable(fullPath);
     
     fs.mkdirSync(fullPath, { recursive: true });
     
     res.json({ success: true });
   } catch (e) {
+    if (e instanceof FsError) return res.status(e.status).json({ error: e.message });
     console.error('[Mkdir] Error:', e);
     res.status(500).json({ error: 'Failed to create directory' });
   }
@@ -104,6 +110,8 @@ router.post('/bulk-move', authenticate, (req, res) => {
   try {
     const { paths, target } = req.body;
     if (!Array.isArray(paths) || typeof target !== 'string') return res.status(400).json({ error: 'Missing paths or target' });
+    assertPathWritable(path.join(LIBRARY_PATH, target));
+    for (const source of paths) assertPathWritable(path.join(LIBRARY_PATH, source));
 
     for (const source of paths) {
       const srcAbs = path.join(LIBRARY_PATH, source);
@@ -124,6 +132,7 @@ router.post('/bulk-move', authenticate, (req, res) => {
     
     res.json({ success: true });
   } catch (e) {
+    if (e instanceof FsError) return res.status(e.status).json({ error: e.message });
     console.error('[Bulk Move] Error:', e);
     res.status(500).json({ error: 'Failed to bulk move' });
   }
@@ -135,6 +144,7 @@ router.post('/bulk-delete', authenticate, (req, res) => {
   try {
     const { paths } = req.body;
     if (!Array.isArray(paths)) return res.status(400).json({ error: 'Missing paths' });
+    for (const source of paths) assertPathWritable(path.resolve(LIBRARY_PATH, source));
 
     // Everything goes to the Trash: projects at or below a path as a whole, other indexed
     // files one by one. A folder with nothing indexed in it is removed when it is empty.
@@ -160,6 +170,7 @@ router.post('/bulk-delete', authenticate, (req, res) => {
     }
     res.json({ success: true, models, files, trashed: true });
   } catch (e) {
+    if (e instanceof FsError) return res.status(e.status).json({ error: e.message });
     console.error('[Bulk Delete] Error:', e);
     res.status(500).json({ error: 'Failed to bulk delete' });
   }

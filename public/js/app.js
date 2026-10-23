@@ -69,8 +69,8 @@ const App = {
     }
     
     // An unlock from an earlier page load must not open a protected model without the password
-    this.adultUnlock = null;
-    API.lockAdult().catch(() => {});
+    this.modelUnlock = null;
+    API.lockProtected().catch(() => {});
     window.addEventListener('hashchange', () => this.route());
     
     // Setup keyboard shortcuts (Ctrl+K for search, Ctrl+B for sidebar toggle)
@@ -368,9 +368,9 @@ const App = {
     this.kitDispose3D();
 
     // Leaving an unlocked protected model locks it again: the next visit asks for the password
-    if (this.adultUnlock && path !== `/models/${this.adultUnlock.id}`) {
-      this.adultUnlock = null;
-      API.lockAdult().catch(() => {});
+    if (this.modelUnlock && path !== `/models/${this.modelUnlock.id}`) {
+      this.modelUnlock = null;
+      API.lockProtected().catch(() => {});
     }
 
     const links = document.querySelectorAll('.sidebar-nav-item, .sidebar-sub-item');
@@ -396,10 +396,11 @@ const App = {
       this.renderModels(Object.fromEntries(params));
     } else if (path.startsWith('/models/')) {
       // ?trash=1: a model in the Trash, opened from the Trash. ?view=files: the file list of a
-      // model that opens in its kit configurator; ?c=: a configurator configuration
+      // model that opens in its kit configurator; ?c=: a configurator configuration; ?edit=1: a
+      // saved configuration being edited
       const fromTrash = params.has('trash');
       document.getElementById(fromTrash ? 'nav-trash' : 'nav-models')?.classList.add('active');
-      this.renderModelDetail(path.split('/')[2], { trash: fromTrash, view: params.get('view'), c: params.get('c') });
+      this.renderModelDetail(path.split('/')[2], { trash: fromTrash, view: params.get('view'), c: params.get('c'), edit: params.has('edit') });
     } else if (path === '/trash') {
       document.getElementById('nav-trash')?.classList.add('active');
       this.renderTrash();
@@ -765,10 +766,10 @@ const App = {
     try {
       if (params.format) this.currentFormatFilter = params.format;
       const queryParams = { ...params };
-      // "Fits my printer": the printer chosen in the top bar
+      // "Fits my printer": the printer chosen in the top bar; "Fits any of my printers"
       if (queryParams.fits) {
         if (!this.printerBeds) await this.loadPrinterBeds();
-        queryParams.fits = this.fitPrinterId();
+        queryParams.fits = queryParams.fits === 'any' ? 'any' : this.fitPrinterId();
       }
       if (this.currentFormatFilter && this.currentFormatFilter !== 'all') {
         queryParams.format = this.currentFormatFilter;
@@ -1477,6 +1478,8 @@ const App = {
   },
   
   updateUserNav() {
+    this.renderSlicerPicker();
+    this.renderFitPicker();
     const avatar = document.getElementById('sidebar-user-avatar');
     const username = document.getElementById('sidebar-username');
     const role = document.getElementById('sidebar-user-role');
@@ -2137,6 +2140,8 @@ const App = {
       const hasPrinters = printers.length > 0;
 
       this.currentModel = model;
+      // A saved configuration of a kit: its own page, the configurator on the archive's files
+      if (model.kit_source_id && !opts.trash) return this.renderConfigPage(model, hasPrinters, opts);
       // A kit archive (USSA VAULT) opens in its configurator; ?view=files shows the file list
       const kit = opts.trash ? null : this.kitFor(model);
       const view = kit && opts.view !== 'files' ? 'configure' : 'files';
@@ -2184,38 +2189,88 @@ const App = {
         }, 100);
       }
     } catch (e) {
-      if (e.status === 423) return this.renderAdultLock(id, (e.data && e.data.name) || '');
+      if (e.status === 423) return this.renderProtectedLock(id, (e.data && e.data.name) || '');
       this.el.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--accent-yellow)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><div class="empty-state-text">Model not found</div></div>';
     }
   },
 
   // ─── Kit configurators (public/js/kits): USSA VAULT ─────────────────────
-  // this.kit: { modelId, cat (parts catalog), cfg, bom, choices, saved, savedId, previewId }.
-  // Every change recomputes the parts list, keeps the configuration in the URL (?c=, without a
-  // new history entry) and in localStorage, and redraws the builder and the list.
+  // this.kit: { mode, modelId (the page), archiveId, cat (parts catalog), cfg, bom, choices,
+  // saved, previewId, config (a configuration's page: { id, name, cfg }) }.
+  // mode 'archive': the archive's page, a draft kept in the URL (?c=) and in localStorage;
+  // "Save as configuration" makes it a model of its own. 'view': a configuration's page, locked.
+  // 'edit': that page while editing (the draft in the URL: ?edit=1&c=).
+  // Every change recomputes the parts list and redraws the builder and the list.
   kitFor(model) {
     return typeof VaultKit !== 'undefined' && !model.deleted_at && VaultKit.detect(model.files || []) ? 'ussa-vault' : null;
   },
 
-  async initKit(model, opts) {
+  // The archive's page. ctx (a configuration's page): { config: { id, name, cfg }, edit }
+  async initKit(model, opts, ctx = null) {
     const stored = (key) => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { return null; } };
     const fromUrl = opts.c ? VaultKit.decodeConfig(opts.c) : null;
     // A re-render of the page (after Edit, an unlock) must not bring back the URL it opened with
     if (this.currentModelOpts) this.currentModelOpts.c = null;
-    const last = stored(`3dl_kit_${model.id}`) || {};
-    // A link with another configuration is not the saved one that was open (a reload is)
-    const otherLink = fromUrl && JSON.stringify(fromUrl) !== JSON.stringify(last.cfg);
-    this.kit = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], savedId: otherLink ? null : last.savedId || null, previewId: null, view: 'tower' };
-    this.kitApply(fromUrl || last.cfg || VaultKit.defaultConfig());
+    const base = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], previewId: null, view: 'tower' };
+    if (ctx) {
+      // The saved choices as the kit reads them against this archive: the draft is compared to them
+      const config = { ...ctx.config, cfg: VaultKit.normalize(base.cat, ctx.config.cfg).cfg };
+      this.kit = { ...base, mode: ctx.edit ? 'edit' : 'view', archiveId: ctx.archiveId, config, canEdit: ctx.canEdit };
+      this.kitApply(ctx.edit && fromUrl ? fromUrl : config.cfg);
+      this.kitBindTips();
+      return;
+    }
+    this.kit = { ...base, mode: 'archive', archiveId: model.id };
+    this.kitApply(fromUrl || (stored(`3dl_kit_${model.id}`) || {}).cfg || VaultKit.defaultConfig());
     this.kitBindTips();
     if (!this.currentUser) return;
     try {
       const saved = await API.getKitConfigs(model.id, 'ussa-vault');
       if (!this.kit || this.kit.modelId !== model.id) return;
       this.kit.saved = saved;
-      if (!saved.some(s => s.id === this.kit.savedId)) this.kit.savedId = null;
       this.kitRenderBuilder();
     } catch (e) {}
+  },
+
+  // A saved configuration (a model without files): the configurator on its archive's files,
+  // locked until "Edit configuration". The page keeps the configuration as currentModel, with
+  // the archive's files, so the previews and the fit check find them.
+  async renderConfigPage(model, hasPrinters, opts) {
+    let archive = null;
+    let problem = null;
+    try {
+      if (!model.kit_source || model.kit_source.deleted_at) throw Object.assign(new Error('gone'), { status: 404 });
+      archive = await API.getModel(model.kit_source_id);
+    } catch (e) {
+      problem = e.status === 423 ? 'locked' : 'gone';
+    }
+    const page = { ...model, files: archive ? archive.files || [] : [] };
+    this.currentModel = page;
+    const canEdit = this.currentUser?.role === 'admin' || (this.currentUser && this.currentUser.role !== 'viewer' && model.user_id === this.currentUser.id);
+    if (!archive) {
+      this.kit = null;
+      const src = model.kit_source;
+      this.el.innerHTML = `${UI.modelDetail(page, hasPrinters, { kitConfig: true, problem })}`;
+      const box = document.querySelector('.kit-layout');
+      if (box) box.innerHTML = `<div class="glass-panel kit-problem">${problem === 'locked'
+        ? `The archive <a href="#/models/${Number(src.id)}">${UI.escapeHtml(src.name)}</a> is password protected: open it first, then come back to this configuration.`
+        : 'The archive of this configuration is gone or in the Trash.'}</div>`;
+      return;
+    }
+    const edit = Boolean(opts.edit) && canEdit;
+    this.el.innerHTML = `${UI.modelDetail(page, hasPrinters, { kitConfig: true, edit })}`;
+    const ready = this.initKit(page, opts, {
+      archiveId: archive.id, canEdit, edit,
+      config: { id: model.id, name: model.name, cfg: model.kit_config ? this.parseJson(model.kit_config) : VaultKit.defaultConfig() }
+    });
+    this.fitPoll(model.id, archive.id);
+    // A configuration without a cover gets the tower
+    if (canEdit && !model.thumbnail) setTimeout(() => this.kitRenderCover(), 1500);
+    return ready;
+  },
+
+  parseJson(text) {
+    try { return JSON.parse(text); } catch (e) { return {}; }
   },
 
   kitApply(input) {
@@ -2224,9 +2279,11 @@ const App = {
     kit.bom = VaultKit.computeBom(kit.cat, input);
     kit.cfg = kit.bom.cfg;
     kit.choices = VaultKit.choices(kit.cat, kit.cfg);
-    try { localStorage.setItem(`3dl_kit_${kit.modelId}`, JSON.stringify({ cfg: kit.cfg, savedId: kit.savedId })); } catch (e) {}
-    if (location.hash.startsWith(`#/models/${kit.modelId}`)) {
-      history.replaceState(null, '', `#/models/${kit.modelId}?c=${VaultKit.encodeConfig(kit.cfg)}`);
+    if (kit.mode === 'archive') {
+      try { localStorage.setItem(`3dl_kit_${kit.modelId}`, JSON.stringify({ cfg: kit.cfg })); } catch (e) {}
+    }
+    if (kit.mode !== 'view' && location.hash.startsWith(`#/models/${kit.modelId}`)) {
+      history.replaceState(null, '', `#/models/${kit.modelId}?${kit.mode === 'edit' ? 'edit=1&' : ''}c=${VaultKit.encodeConfig(kit.cfg)}`);
     }
     this.kitRenderBuilder();
     this.kitRenderParts();
@@ -2240,8 +2297,8 @@ const App = {
 
   kitState() {
     const kit = this.kit;
-    const saved = kit.saved.find(s => s.id === kit.savedId);
-    return { ...kit, loggedIn: Boolean(this.currentUser), dirty: Boolean(saved) && JSON.stringify(saved.config) !== JSON.stringify(kit.cfg) };
+    const dirty = kit.mode === 'edit' && JSON.stringify(kit.config.cfg) !== JSON.stringify(kit.cfg);
+    return { ...kit, loggedIn: Boolean(this.currentUser), dirty };
   },
 
   // The builder and the list scroll on their own: keep where they were when they are redrawn
@@ -2347,7 +2404,6 @@ const App = {
 
   kitReset() {
     if (!this.kit) return;
-    this.kit.savedId = null;
     this.kitApply(VaultKit.defaultConfig());
   },
 
@@ -2371,8 +2427,9 @@ const App = {
   },
 
   kitListText() {
-    const saved = this.kit.saved.find(s => s.id === this.kit.savedId);
-    return VaultKit.bomText(this.kit.bom, saved ? `${this.currentModel.name}: ${saved.name}` : this.currentModel.name);
+    const kit = this.kit;
+    const model = this.currentModel;
+    return VaultKit.bomText(kit.bom, kit.config && model.kit_source ? `${model.kit_source.name}: ${kit.config.name}` : model.name);
   },
 
   kitCopyList() {
@@ -2387,10 +2444,10 @@ const App = {
     if (!kit || !model) return;
     const ids = [...new Set([...kit.bom.parts.filter(p => p.qty > 0).map(p => p.file.id), ...kit.bom.docs.map(f => f.id)])];
     if (!ids.length) return this.toast('Nothing to download', 'error');
-    const saved = kit.saved.find(s => s.id === kit.savedId);
-    const label = saved ? saved.name : VaultKit.describe(kit.cfg).split(' · ')[0];
+    const label = kit.config ? kit.config.name : VaultKit.describe(kit.cfg).split(' · ')[0];
     try {
-      const res = await API.prepareSelectionDownload(model.id, {
+      // The files are the archive's
+      const res = await API.prepareSelectionDownload(kit.archiveId, {
         file_ids: ids,
         name: `${model.name} ${label}`,
         text: { name: `${model.name} parts list.txt`, content: this.kitListText() }
@@ -2407,40 +2464,18 @@ const App = {
     }
   },
 
-  // ── Saved configurations ──
+  // ── Saved configurations: models of their own ──
+  // The archive's list opens a configuration's page
   kitOpenSaved(id) {
-    const kit = this.kit;
-    if (!kit) return;
-    const saved = kit.saved.find(s => String(s.id) === String(id));
-    kit.savedId = saved ? saved.id : null;
-    if (saved) this.kitApply(saved.config);
-    else this.kitApply(kit.cfg);
+    if (id) this.navigate(`/models/${Number(id)}`);
   },
 
-  async kitSave() {
-    const kit = this.kit;
-    if (!kit || !kit.savedId) return this.kitSaveAs();
-    try {
-      const row = await API.updateKitConfig(kit.modelId, kit.savedId, { config: kit.cfg });
-      kit.saved = kit.saved.map(s => (s.id === row.id ? row : s));
-      this.kitRenderBuilder();
-      this.toast('Configuration saved');
-    } catch (e) { this.toast(e.message, 'error'); }
-  },
-
+  // A new configuration from the tower in the builder (the archive's draft, or a copy of the
+  // one being edited); its page opens
   kitSaveAs() {
     if (!this.kit) return;
-    const saved = this.kit.saved.find(s => s.id === this.kit.savedId);
-    this.kitNameOp = 'create';
-    this.openModal('Save configuration', UI.kitNameForm({ value: saved ? `${saved.name} (copy)` : VaultKit.describe(this.kit.cfg), submitLabel: 'Save' }));
-    setTimeout(() => document.getElementById('kit-name-input')?.select(), 60);
-  },
-
-  kitRenameSaved() {
-    const saved = this.kit && this.kit.saved.find(s => s.id === this.kit.savedId);
-    if (!saved) return;
-    this.kitNameOp = 'rename';
-    this.openModal('Rename configuration', UI.kitNameForm({ value: saved.name, submitLabel: 'Rename' }));
+    const name = this.kit.config ? `${this.kit.config.name} (copy)` : VaultKit.describe(this.kit.cfg);
+    this.openModal('Save configuration', UI.kitNameForm({ value: name, submitLabel: 'Save' }));
     setTimeout(() => document.getElementById('kit-name-input')?.select(), 60);
   },
 
@@ -2450,31 +2485,70 @@ const App = {
     if (!kit) return;
     const name = String(new FormData(e.target).get('name') || '').trim();
     try {
-      if (this.kitNameOp === 'rename') {
-        const row = await API.updateKitConfig(kit.modelId, kit.savedId, { name });
-        kit.saved = kit.saved.map(s => (s.id === row.id ? row : s));
-      } else {
-        const row = await API.createKitConfig(kit.modelId, { kit: 'ussa-vault', name, config: kit.cfg });
-        kit.saved = [row, ...kit.saved];
-        kit.savedId = row.id;
-      }
+      const row = await API.createKitConfig(kit.archiveId, { kit: 'ussa-vault', name, config: kit.cfg });
       this.closeModal();
-      this.kitApply(kit.cfg);
       this.toast('Configuration saved');
+      this.navigate(`/models/${row.id}`);
     } catch (err) { this.toast(err.message, 'error'); }
   },
 
-  async kitDeleteSaved() {
+  // A configuration's page: Edit unlocks the builder, Save stores the choices, Cancel drops them
+  kitEditConfig() {
     const kit = this.kit;
-    const saved = kit && kit.saved.find(s => s.id === kit.savedId);
-    if (!saved || !confirm(`Delete the saved configuration "${saved.name}"? The tower stays in the builder.`)) return;
+    if (!kit || kit.mode !== 'view' || !kit.canEdit) return;
+    this.kitSetMode('edit');
+  },
+
+  kitCancelEdit() {
+    const kit = this.kit;
+    if (!kit || kit.mode !== 'edit') return;
+    if (this.kitState().dirty && !confirm('Drop the changes to this configuration?')) return;
+    this.kitSetMode('view', kit.config.cfg);
+  },
+
+  async kitSaveConfig() {
+    const kit = this.kit;
+    if (!kit || kit.mode !== 'edit') return;
     try {
-      await API.deleteKitConfig(kit.modelId, saved.id);
-      kit.saved = kit.saved.filter(s => s.id !== saved.id);
-      kit.savedId = null;
-      this.kitApply(kit.cfg);
-      this.toast('Configuration deleted');
+      const res = await API.saveKitConfig(kit.config.id, kit.cfg);
+      kit.config.cfg = VaultKit.normalize(kit.cat, res.config).cfg;
+      this.kitSetMode('view', kit.config.cfg);
+      this.toast('Configuration saved');
+      this.kitRenderCover();
     } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  // Locked or editing: the page's URL follows (?edit=1 while editing)
+  kitSetMode(mode, cfg) {
+    const kit = this.kit;
+    kit.mode = mode;
+    const hash = `#/models/${kit.modelId}${mode === 'edit' ? `?edit=1&c=${VaultKit.encodeConfig(kit.cfg)}` : ''}`;
+    history.replaceState(null, '', hash);
+    if (this.currentModelOpts) this.currentModelOpts.edit = mode === 'edit';
+    // Locked: the list and the preview only; editing brings the builder back
+    document.querySelector('.kit-layout')?.classList.toggle('is-locked', mode === 'view');
+    const editButton = document.getElementById('kit-edit-btn');
+    if (editButton) editButton.hidden = mode === 'edit';
+    this.kitApply(cfg || kit.cfg);
+  },
+
+  // The cover of a configuration: its tower in 3D, on a transparent background like other covers
+  async kitRenderCover() {
+    const kit = this.kit;
+    if (!kit || !kit.config || typeof VaultKit3D === 'undefined' || typeof Viewer === 'undefined') return;
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:-10000px;top:0;width:480px;height:320px';
+    document.body.appendChild(box);
+    const scene = VaultKit3D.mount(box, kit.cfg, { background: 0x000000 });
+    try {
+      if (!scene || !scene.snapshotParts) return;
+      const { renderer, scene: s, camera } = scene.snapshotParts();
+      const res = await Viewer.takeSnapshot(kit.config.id, renderer, s, camera);
+      if (res && this.currentModel && this.currentModel.id === kit.config.id) this.currentModel.thumbnail = res.thumbnail || this.currentModel.thumbnail;
+    } catch (e) { /* the page works without a cover */ } finally {
+      if (scene) scene.dispose();
+      box.remove();
+    }
   },
 
   // ── The tower drawing and the manual in the preview panel ──
@@ -2528,7 +2602,7 @@ const App = {
       hint.classList.remove('is-media');
       hint.textContent = shown3d
         ? 'Click a drawer or a sustainer to open it · drag to turn · scroll to zoom · right-drag to move'
-        : 'Front and side, to scale · click a floor to edit it · click a part in the list to see it in 3D';
+        : `Front and side, to scale · ${kit.mode === 'view' ? '' : 'click a floor to edit it · '}click a part in the list to see it in 3D`;
     }
   },
 
@@ -2763,19 +2837,69 @@ const App = {
     return this.printerBeds;
   },
 
+  // The default printer: the user's (profile), else the last one picked in this browser, else
+  // the first of Settings -> Printers ('any' only while there are no printers)
   fitPrinterId() {
-    let id = 'any';
-    try { id = localStorage.getItem('3dl_fit_printer') || 'any'; } catch (e) {}
-    return id === 'any' || (this.printerBeds || []).some(b => b.id === id) ? id : 'any';
+    const beds = this.printerBeds || [];
+    const known = (id) => Boolean(id) && beds.some(b => b.id === id);
+    let local = null;
+    try { local = localStorage.getItem('3dl_fit_printer'); } catch (e) {}
+    const mine = this.currentUser && this.currentUser.preferred_printer;
+    if (known(mine)) return mine;
+    if (known(local)) return local;
+    return beds.length ? beds[0].id : 'any';
   },
 
-  // The printer chosen in the top bar applies everywhere: the model list (badges, the "Fits my
-  // printer" filter) is fetched again, a model page repaints its sizes
+  // The printer chosen in the top bar is the default printer (kept in the profile) and applies
+  // everywhere: the model list (badges, the "Fits my printer" filter) is fetched again, a model
+  // page repaints its sizes
   setFitPrinter(id) {
-    try { localStorage.setItem('3dl_fit_printer', id || 'any'); } catch (e) {}
+    try { localStorage.setItem('3dl_fit_printer', id || ''); } catch (e) {}
+    if (this.currentUser) {
+      this.currentUser.preferred_printer = id || null;
+      try { localStorage.setItem('3dl_user', JSON.stringify(this.currentUser)); } catch (e) {}
+      API.updateProfile({ preferred_printer: id || null }).catch(() => {});
+    }
     this.renderFitPicker();
     this.paintFit();
     if (location.hash.slice(1).split('?')[0] === '/models') this.route();
+  },
+
+  // ── The default slicer (top bar, also in the profile) ──
+  SLICERS: { bambustudio: 'Bambu Studio', orcaslicer: 'OrcaSlicer', elegooslicer: 'Elegoo Slicer', cura: 'Ultimaker Cura' },
+
+  renderSlicerPicker() {
+    const wrap = document.getElementById('slicer-picker-wrap');
+    const picker = document.getElementById('slicer-picker');
+    const icon = document.getElementById('slicer-picker-icon');
+    if (!wrap || !picker) return;
+    wrap.hidden = !this.currentUser;
+    if (!this.currentUser) return;
+    const chosen = this.SLICERS[this.currentUser.preferred_slicer] ? this.currentUser.preferred_slicer : '';
+    picker.innerHTML = `<option value="">Ask every time</option>${Object.entries(this.SLICERS).map(([id, name]) => `<option value="${id}">${name}</option>`).join('')}`;
+    picker.value = chosen;
+    if (icon) {
+      icon.hidden = !chosen;
+      if (chosen) icon.src = `/img/slicers/${chosen}.png`;
+    }
+  },
+
+  // Saved in the profile; the "Open in slicer" buttons of the page follow
+  async setPreferredSlicer(id) {
+    if (!this.currentUser) return;
+    const value = this.SLICERS[id] ? id : null;
+    try {
+      await API.updateProfile({ preferred_slicer: value });
+      this.currentUser.preferred_slicer = value;
+      try { localStorage.setItem('3dl_user', JSON.stringify(this.currentUser)); } catch (e) {}
+      this.renderSlicerPicker();
+      if (this.kit) this.kitRenderParts();
+      else if (this.currentModel && location.hash.startsWith(`#/models/${this.currentModel.id}`)) this.renderModelDetail(this.currentModel.id, this.currentModelOpts || {});
+      this.toast(value ? `Opens in ${this.SLICERS[value]}` : 'The slicer is asked every time');
+    } catch (e) {
+      this.toast(e.message, 'error');
+      this.renderSlicerPicker();
+    }
   },
 
   renderFitPicker() {
@@ -2785,7 +2909,7 @@ const App = {
     const beds = this.printerBeds || [];
     const chosen = this.fitPrinterId();
     wrap.hidden = !beds.length;
-    picker.innerHTML = `<option value="any">Any of my printers</option>${beds.map(b => `<option value="${UI.escapeHtml(b.id)}">${UI.escapeHtml(b.name)}</option>`).join('')}`;
+    picker.innerHTML = beds.map(b => `<option value="${UI.escapeHtml(b.id)}">${UI.escapeHtml(b.name)}</option>`).join('');
     picker.value = chosen;
   },
 
@@ -2819,23 +2943,32 @@ const App = {
         ? this.kit.bom.parts.filter(p => p.qty > 0 && measurable(p.file)).map(p => byId.get(p.file.id) || p.file)
         : (model.files || []).filter(measurable);
       const parts = files.map(f => ({ id: f.id, ...this.fitSizeOf(f) }));
-      bar.innerHTML = UI.fitBar(beds, chosen, PrintFit.summarize(parts, beds, chosen), bar.dataset.fitBar === 'parts' ? 'parts' : 'files');
+      const s = PrintFit.summarize(parts, beds, chosen);
+      // The parts too big for the chosen printer: the other printers that take them all, and
+      // how many fit none of mine
+      const misfit = parts.filter(p => s.misfit.includes(p.id));
+      const others = misfit.length ? {
+        names: beds.filter(b => b.id !== chosen && misfit.every(p => PrintFit.fits(p.size, b)?.ok)).map(b => b.name),
+        none: misfit.filter(p => !PrintFit.fitting(p.size, beds).length).length
+      } : null;
+      bar.innerHTML = UI.fitBar(beds, chosen, s, bar.dataset.fitBar === 'parts' ? 'parts' : 'files', others);
     });
   },
 
   // Ask the server for the model's sizes (its files are measured first) until none is waiting
-  async fitPoll(modelId) {
+  // sourceId: the model whose files are measured (a configuration's archive)
+  async fitPoll(modelId, sourceId = modelId) {
     clearTimeout(this.fitPollTimer);
     if (!this.printerBeds) await this.loadPrinterBeds();
     try {
       // The configurator's parts first
       const first = this.kit && this.kit.modelId === modelId ? this.kit.bom.parts.filter(p => p.qty > 0).map(p => p.file.id) : [];
-      const data = await API.getModelSizes(modelId, first);
+      const data = await API.getModelSizes(sourceId, first);
       if (!this.currentModel || this.currentModel.id !== modelId) return;
       this.fitData = { modelId, sizes: data.sizes || {}, errors: data.errors || {} };
       this.paintFit();
       if (data.pending > 0 && location.hash.startsWith(`#/models/${modelId}`)) {
-        this.fitPollTimer = setTimeout(() => this.fitPoll(modelId), 4000);
+        this.fitPollTimer = setTimeout(() => this.fitPoll(modelId, sourceId), 4000);
       }
     } catch (e) {}
   },
@@ -2861,32 +2994,32 @@ const App = {
   },
 
   // ─── Password-protected models ───────────────────────────────────────
-  renderAdultLock(id, name) {
+  renderProtectedLock(id, name) {
     if (typeof Viewer !== 'undefined') Viewer.cleanup();
     this.el.innerHTML = `
-      <div class="adult-lock">
-        <form class="glass-panel adult-lock-card" onsubmit="App.submitAdultUnlock(event, ${Number(id)})">
-          <span class="badge badge-adult"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>
-          <div class="adult-lock-title">${UI.escapeHtml(name || 'Protected model')}</div>
-          <div class="adult-lock-text">This model is password protected. Enter the password to open it.</div>
-          <input type="text" class="form-input masked-input" name="unlock_code" id="adult-password-input" placeholder="Password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" required>
-          <div class="adult-lock-error" id="adult-lock-error"></div>
-          <div class="adult-lock-actions">
+      <div class="protected-lock">
+        <form class="glass-panel protected-lock-card" onsubmit="App.submitModelUnlock(event, ${Number(id)})">
+          <span class="badge badge-protected"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>
+          <div class="protected-lock-title">${UI.escapeHtml(name || 'Protected model')}</div>
+          <div class="protected-lock-text">This model is password protected. Enter the password to open it.</div>
+          <input type="text" class="form-input masked-input" name="unlock_code" id="protection-password-input" placeholder="Password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" required>
+          <div class="protected-lock-error" id="protected-lock-error"></div>
+          <div class="protected-lock-actions">
             <a href="#/models" class="btn btn-ghost btn-sm">Back to library</a>
             <button type="submit" class="btn btn-primary btn-sm">Open</button>
           </div>
         </form>
       </div>`;
-    setTimeout(() => { UI.maskFallback(this.el); document.getElementById('adult-password-input')?.focus(); }, 50);
+    setTimeout(() => { UI.maskFallback(this.el); document.getElementById('protection-password-input')?.focus(); }, 50);
   },
 
-  async submitAdultUnlock(e, id) {
+  async submitModelUnlock(e, id) {
     e.preventDefault();
     const input = e.target.querySelector('[name="unlock_code"]');
-    const errEl = document.getElementById('adult-lock-error');
+    const errEl = document.getElementById('protected-lock-error');
     try {
       const r = await API.unlockModel(id, input.value);
-      this.adultUnlock = { id: Number(id), token: r.token };
+      this.modelUnlock = { id: Number(id), token: r.token };
       this.renderModelDetail(id);
     } catch (err) {
       if (errEl) errEl.textContent = err.status === 403 ? 'Wrong password' : (err.message || 'Could not unlock');
@@ -2895,40 +3028,40 @@ const App = {
     }
   },
 
-  openBulkAdult() {
+  openBulkProtect() {
     const n = this.selectedModelIds.length;
     this.openModal('Password protection', `
       <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:16px">${n} selected model${n === 1 ? '' : 's'}. Opening a protected model asks for the password set in Settings → Security; its thumbnail is blurred in lists.</div>
       <div class="form-actions">
-        <button type="button" class="btn btn-secondary" onclick="App.applyBulkAdult(false)">Remove protection</button>
-        <button type="button" class="btn btn-primary" onclick="App.applyBulkAdult(true)">Protect</button>
+        <button type="button" class="btn btn-secondary" onclick="App.applyBulkProtect(false)">Remove protection</button>
+        <button type="button" class="btn btn-primary" onclick="App.applyBulkProtect(true)">Protect</button>
       </div>`);
   },
 
-  async applyBulkAdult(isAdult) {
+  async applyBulkProtect(isProtected) {
     try {
-      await API.bulkUpdateModels(this.selectedModelIds, { is_adult: isAdult });
-      this.toast(isAdult ? 'Password protection on' : 'Password protection removed');
+      await API.bulkUpdateModels(this.selectedModelIds, { is_protected: isProtected });
+      this.toast(isProtected ? 'Password protection on' : 'Password protection removed');
       this.closeModal();
       this.route();
     } catch (e) { this.toast(e.message || 'Failed to update', 'error'); }
   },
 
-  async saveAdultPassword(e) {
+  async saveProtectionPassword(e) {
     e.preventDefault();
     const pw = e.target.querySelector('[name="new_unlock_code"]').value;
     try {
-      await API.setAdultPassword(pw);
-      this.publicConfig = { ...(this.publicConfig || {}), adult_password_set: true };
+      await API.setProtectionPassword(pw);
+      this.publicConfig = { ...(this.publicConfig || {}), protection_password_set: true };
       this.toast('Password saved');
       this.renderSettings('security');
     } catch (err) { this.toast(err.message || 'Failed to save the password', 'error'); }
   },
 
-  async removeAdultPassword() {
+  async removeProtectionPassword() {
     try {
-      await API.setAdultPassword('');
-      this.publicConfig = { ...(this.publicConfig || {}), adult_password_set: false };
+      await API.setProtectionPassword('');
+      this.publicConfig = { ...(this.publicConfig || {}), protection_password_set: false };
       this.toast('Password removed');
       this.renderSettings('security');
     } catch (err) { this.toast(err.message || 'Failed to remove the password', 'error'); }
@@ -4028,7 +4161,7 @@ const App = {
     try {
       this.historyFile = file;
       this.historyVersions = await API.getFileVersions(file.id);
-      const canEdit = !model.deleted_at && (this.currentUser?.role === 'admin' || (this.currentUser?.role !== 'viewer' && model.user_id === this.currentUser?.id));
+      const canEdit = !model.deleted_at && Number(model.is_readonly) !== 1 && (this.currentUser?.role === 'admin' || (this.currentUser?.role !== 'viewer' && model.user_id === this.currentUser?.id));
       this.openModal(`History of ${file.original_name.split('/').pop()}`, UI.fileHistoryModal(file, this.historyVersions, canEdit));
     } catch (err) { this.toast(err.message, 'error'); }
   },
@@ -4059,6 +4192,113 @@ const App = {
       this.toast('Version deleted');
       this.closeModal();
       this.reloadModel();
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  // A menu that opens on hover inside a scrolling list (the slicers of a part): placed against
+  // the window, below its button or above it when there is no room, so the list does not cut it
+  placeMenu(el) {
+    const menu = el && el.querySelector('.dropdown-content');
+    if (!menu) return;
+    const r = el.getBoundingClientRect();
+    // Measured while shown (the hover may not have opened it yet)
+    const display = menu.style.display;
+    menu.style.display = 'block';
+    const height = menu.offsetHeight;
+    menu.style.display = display;
+    menu.style.position = 'fixed';
+    menu.style.left = 'auto';
+    menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    menu.style.top = `${r.bottom + height > window.innerHeight - 8 ? Math.max(8, r.top - height) : r.bottom}px`;
+  },
+
+  // ── "Open in slicer" with saved slicer projects ──
+  // A file of a read-only project (the VAULT archive) keeps the projects saved from it in the
+  // slicer as versions: the chooser lists them with their settings, the chosen one opens.
+  // this.slicerChooser: { modelId, file, versions, selected }
+  async openSlicerChooser(modelId, fileId, selected = null) {
+    const model = this.currentModel;
+    const file = model && (model.files || []).find(f => f.id === Number(fileId));
+    if (!file) return;
+    try {
+      const versions = await API.getFileVersions(file.id);
+      // The newest version is chosen: it holds the last settings
+      const pick = selected !== null ? selected : (versions[0] ? versions[0].id : 0);
+      this.slicerChooser = { modelId: Number(modelId), file, versions, selected: versions.some(v => v.id === pick) ? pick : 0 };
+      this.renderSlicerChooser(true);
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  // The file's "..." menu of a read-only project
+  showSlicerVersions(el) {
+    const entry = this.entryFrom(el);
+    if (entry && entry.fileId && this.currentModel) this.openSlicerChooser(this.currentModel.id, entry.fileId);
+  },
+
+  renderSlicerChooser(open = false) {
+    const c = this.slicerChooser;
+    if (!c) return;
+    const model = this.currentModel;
+    const canEdit = Boolean(model) && (this.currentUser?.role === 'admin' || (this.currentUser && this.currentUser.role !== 'viewer' && (model.kit_source_id ? true : model.user_id === this.currentUser.id)));
+    const html = UI.slicerChooser(c.file, c.versions, { modelId: c.file.model_id || c.modelId, canEdit, selected: c.selected });
+    const title = `Open ${c.file.original_name.split('/').pop()}`;
+    if (open) this.openModal(title, html, 'modal-xl');
+    else {
+      const body = document.getElementById('modal-body');
+      if (body) body.innerHTML = html;
+    }
+  },
+
+  slicerChooserPick(versionId) {
+    const c = this.slicerChooser;
+    if (!c) return;
+    c.selected = Number(versionId) || 0;
+    document.querySelectorAll('.sv-row').forEach(r => {
+      const on = Number(r.dataset.version) === c.selected;
+      r.classList.toggle('is-selected', on);
+      const radio = r.querySelector('input[type="radio"]');
+      if (radio) radio.checked = on;
+    });
+    const footer = document.getElementById('sv-footer');
+    if (footer) footer.innerHTML = UI.slicerChooserFooter(c.file, c.file.model_id || c.modelId, c.selected);
+  },
+
+  async slicerVersionUpdate(versionId, data, message) {
+    const c = this.slicerChooser;
+    if (!c) return;
+    try {
+      await API.updateFileVersion(c.file.id, versionId, data);
+      c.versions = await API.getFileVersions(c.file.id);
+      this.renderSlicerChooser();
+      if (message) this.toast(message);
+    } catch (err) { this.toast(err.message, 'error'); }
+  },
+
+  slicerVersionLabel(versionId) {
+    const c = this.slicerChooser;
+    const v = c && c.versions.find(x => x.id === Number(versionId));
+    if (!v) return;
+    const name = prompt('A name for this version (empty: made from its settings)', v.label || UI.slicerVersionName(v));
+    if (name === null) return;
+    this.slicerVersionUpdate(v.id, { label: name.trim() === UI.slicerVersionName({ ...v, label: null }) ? '' : name }, 'Version renamed');
+  },
+
+  slicerVersionPin(versionId, pinned) {
+    this.slicerVersionUpdate(Number(versionId), { pinned: Boolean(pinned) }, pinned ? 'Pinned: this version is never pruned' : 'Unpinned');
+  },
+
+  async slicerVersionDelete(versionId) {
+    const c = this.slicerChooser;
+    if (!c || !confirm('Delete this saved slicer project for good?')) return;
+    try {
+      await API.deleteFileVersion(c.file.id, Number(versionId));
+      c.versions = await API.getFileVersions(c.file.id);
+      if (c.selected === Number(versionId)) c.selected = c.versions[0] ? c.versions[0].id : 0;
+      c.file.version_count = c.versions.length;
+      this.renderSlicerChooser();
+      this.toast('Version deleted');
+      // The rows of the page show whether a file has versions
+      if (this.kit) this.kitRenderParts();
     } catch (err) { this.toast(err.message, 'error'); }
   },
 
@@ -4274,7 +4514,8 @@ const App = {
       custom_meta: customMeta,
       tags,
     };
-    if (id && e.target.querySelector('[name="is_adult"]')) data.is_adult = form.has('is_adult');
+    if (id && e.target.querySelector('[name="is_protected"]')) data.is_protected = form.has('is_protected');
+    if (id && e.target.querySelector('[name="is_readonly"]')) data.is_readonly = form.has('is_readonly');
     
     if (form.has('parent_folder')) {
       data.parent_folder = form.get('parent_folder');

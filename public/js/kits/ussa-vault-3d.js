@@ -351,7 +351,8 @@ globalThis.VaultKit3D = (function () {
     if (typeof THREE === 'undefined' || !THREE.OrbitControls) return null;
     let renderer;
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+      // Transparent where the scene has no background: the cover of a configuration
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     } catch (e) {
       return null;
     }
@@ -566,6 +567,8 @@ globalThis.VaultKit3D = (function () {
         applyOpen(false);
       },
       openCount: () => open.size,
+      // For Viewer.takeSnapshot (a cover)
+      snapshotParts: () => ({ renderer, scene, camera }),
       setBackground(color) { scene.background.set(color); render(); },
       // Back to the first view of the tower
       reset() {

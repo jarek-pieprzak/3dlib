@@ -17,32 +17,32 @@ router.get('/system/public-config', (req, res) => {
   res.json({
     open_registration: getSettingBool('open_registration') || userCount === 0,
     require_login_to_view: getSettingBool('require_login_to_view'),
-    adult_password_set: Boolean(require('../utils/adult').passwordHash())
+    protection_password_set: Boolean(require('../utils/protection').passwordHash())
   });
 });
 
 // ─── PASSWORD-PROTECTED MODELS ───────────────────────────────────────────────────────────
-// PUT /api/settings/adult-password { password }: the password of password-protected models;
+// PUT /api/settings/protection-password { password }: the password of password-protected models;
 // an empty password removes the protection
-router.put('/settings/adult-password', authenticate, async (req, res) => {
+router.put('/settings/protection-password', authenticate, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
     const password = typeof req.body.password === 'string' ? req.body.password : '';
     if (!password) {
-      run("DELETE FROM system_settings WHERE key = 'adult_password_hash'");
-      return res.json({ success: true, adult_password_set: false });
+      run("DELETE FROM system_settings WHERE key = 'protection_password_hash'");
+      return res.json({ success: true, protection_password_set: false });
     }
     if (password.length < 4) return res.status(400).json({ error: 'Use at least 4 characters' });
     const hash = await require('bcryptjs').hash(password, 10);
-    run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('adult_password_hash', ?)", [hash]);
-    res.json({ success: true, adult_password_set: true });
+    run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('protection_password_hash', ?)", [hash]);
+    res.json({ success: true, protection_password_set: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the password' }); }
 });
 
 // ─── SYSTEM SETTINGS ────────────────────────────────────────────────────────
 router.get('/settings/system', authenticate, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const settings = all('SELECT * FROM system_settings WHERE key NOT LIKE "smtp_%" AND key != "adult_password_hash"');
+  const settings = all('SELECT * FROM system_settings WHERE key NOT LIKE "smtp_%" AND key != "protection_password_hash"');
   const config = {};
   settings.forEach(s => config[s.key] = s.value);
   res.json(config);
@@ -53,7 +53,7 @@ router.post('/settings/system', authenticate, (req, res) => {
   try {
     const config = req.body;
     for (const [key, value] of Object.entries(config)) {
-      if (key === 'adult_password_hash') continue; // set only through /settings/adult-password
+      if (key === 'protection_password_hash') continue; // set only through /settings/protection-password
       run('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)', [key, String(value)]);
     }
     

@@ -30,14 +30,14 @@ router.get('/', authenticate, requireEditor, (req, res) => {
   try {
     const own = req.user.role === 'admin' ? '' : ' AND m.user_id = ?';
     const params = req.user.role === 'admin' ? [] : [req.user.id];
-    const models = all(`SELECT m.id, m.name, m.thumbnail, m.library_path, m.deleted_at, m.is_adult,
+    const models = all(`SELECT m.id, m.name, m.thumbnail, m.library_path, m.deleted_at, m.is_protected,
         (SELECT COUNT(*) FROM files WHERE model_id = m.id AND (library_path IS NULL OR library_path NOT LIKE '%::%')) as file_count,
         (SELECT COALESCE(SUM(file_size), 0) FROM files WHERE model_id = m.id AND (library_path IS NULL OR library_path NOT LIKE '%::%')) as total_size
       FROM models m WHERE m.deleted_at IS NOT NULL${own} ORDER BY m.deleted_at DESC`, params)
       .map(m => ({ ...m, thumbnail_url: getThumbUrl(m.thumbnail, m.library_path), library_path: undefined, thumbnail: undefined }));
 
     const rows = all(`SELECT f.id, f.model_id, f.original_name, f.filename, f.file_type, f.file_size, f.library_path, f.is_archive_entry, f.deleted_at,
-        m.name as model_name, m.is_adult
+        m.name as model_name, m.is_protected
       FROM files f JOIN models m ON m.id = f.model_id
       WHERE f.deleted_at IS NOT NULL AND m.deleted_at IS NULL${own} ORDER BY f.deleted_at DESC`, params);
     // Entries of a deleted archive are listed with the archive itself

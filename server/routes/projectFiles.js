@@ -6,7 +6,7 @@ const router = express.Router();
 const { get } = require('../database');
 const { authenticate } = require('../middleware/auth');
 const { canEditModel } = require('../utils/modelHelpers');
-const adultLock = require('../utils/adult');
+const protection = require('../utils/protection');
 const projectFiles = require('../utils/projectFiles');
 
 function handle(op) {
@@ -15,7 +15,7 @@ function handle(op) {
       const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [Number(req.params.id)]);
       if (!model) return res.status(404).json({ error: 'Model not found' });
       if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
-      if (!adultLock.canOpenModel(req, model)) return res.status(423).json({ error: 'This model is password protected', locked: true });
+      if (!protection.canOpenModel(req, model)) return res.status(423).json({ error: 'This model is password protected', locked: true });
       const result = op(model, req.body || {});
       res.json({ success: true, ...(result && typeof result === 'object' ? result : {}) });
     } catch (e) {

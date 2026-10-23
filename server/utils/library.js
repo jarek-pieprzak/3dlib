@@ -411,7 +411,7 @@ async function scanLibrary(libraryPath) {
       db.run('UPDATE OR IGNORE model_tags SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
       db.run('UPDATE OR IGNORE project_models SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
       db.run('UPDATE print_history SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
-      db.run('UPDATE kit_configs SET model_id = ? WHERE model_id = ?', [model.id, child.id], true);
+      db.run('UPDATE models SET kit_source_id = ? WHERE kit_source_id = ?', [model.id, child.id], true);
       db.run('DELETE FROM model_tags WHERE model_id = ?', [child.id], true);
       db.run('DELETE FROM project_models WHERE model_id = ?', [child.id], true);
       db.run('DELETE FROM shares WHERE model_id = ?', [child.id], true);
@@ -526,6 +526,8 @@ async function scanLibrary(libraryPath) {
     }
 
     db.saveDb(); // Final save upon scan completion
+    // Archives of a kit found by this scan become read-only
+    require('./kits').refreshArchives();
     console.log(`[Scanner] Scan complete. Models: ${results.modelsAdded}, Files: ${results.filesAdded}, Skipped: ${results.skipped}`);
 
     scanStatus.lastCompleted = new Date().toISOString();

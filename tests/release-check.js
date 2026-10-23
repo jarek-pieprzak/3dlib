@@ -300,6 +300,48 @@ async function runStaticAndUiChecks() {
     assert(!UI.modelDetail(mockModel, false).includes('detail-views'), 'Other models have no view switch');
     assert(App.kitFor(vault) === 'ussa-vault' && App.kitFor(mockModel) === null, 'Only the VAULT archive opens in the configurator');
 
+    // A saved configuration's page: locked until Edit configuration, Open in slicer for each file
+    const viewState = { ...state, mode: 'view', canEdit: true, modelId: 50, archiveId: 1, config: { id: 50, name: 'Garage', cfg: bom.cfg } };
+    assert(UI.kitBuilder(viewState) === '', 'A saved configuration opens without the builder');
+    assert(UI.kitBuilder({ ...viewState, mode: 'edit', dirty: true }).includes('App.kitSaveConfig()') && !UI.kitBuilder({ ...viewState, mode: 'edit' }).includes('class="kit-lock"'), 'Edit unlocks the builder, with Save and Cancel');
+    assert(builder.includes('Save as configuration'), "The archive's builder saves new configurations");
+    assert(UI.kitBuilder({ ...state, loggedIn: false }).includes('App.showLogin()') && !UI.kitBuilder({ ...state, loggedIn: false }).includes('App.kitSaveAs()'), 'Without a login the builder says how to save');
+    const lockedParts = UI.kitParts(viewState);
+    assert(!lockedParts.includes('class="kit-qty"') && lockedParts.includes('kit-qty is-static') && !lockedParts.includes('App.kitAddExtra') && lockedParts.includes('href="/api/models/50/download"'),
+      'The locked list shows the counts without inputs, and the configuration ZIP');
+    assert((lockedParts.match(/class="(dropdown )?slicer-split/g) || []).length === bom.parts.filter(p => p.file.file_type === 'stl').length && lockedParts.includes('bambustudio://open?file=') && lockedParts.includes('App.placeMenu(this)'),
+      'Every 3D part opens in a slicer, the others in a menu placed against the window');
+    const firstPart = bom.parts.find(p => p.qty > 0);
+    const vf = { ...firstPart.file, model_id: 1, version_count: 2 };
+    assert(UI.kitParts({ ...viewState, bom: { ...bom, parts: [{ ...firstPart, file: vf }] } }).includes(`App.openSlicerChooser(1, ${vf.id})`), 'A part with saved slicer projects opens the chooser');
+    const configPage = UI.modelDetail({ ...vault, id: 50, name: 'Garage', kit_source_id: 1, kit_source: { id: 1, name: '<b>VAULT</b>' } }, false, { kitConfig: true });
+    assert(configPage.includes('id="kit-builder"') && configPage.includes('Configuration</span>') && configPage.includes('&lt;b&gt;VAULT&lt;/b&gt;') && !configPage.includes('<b>VAULT</b>'), 'The configuration page names its archive, escaped');
+    assert(!configPage.includes('App.showShareModal(50)') && !configPage.includes('detail-views'), 'A configuration cannot be shared and has no view switch');
+    assert(configPage.includes('kit-layout is-locked') && configPage.includes('App.kitEditConfig()'), 'The page opens locked, Edit configuration in its header');
+    assert(!UI.modelDetail({ ...vault, id: 50, name: 'Garage', kit_source_id: 1, kit_source: { id: 1, name: 'V' } }, false, { kitConfig: true, edit: true }).includes('kit-layout is-locked'), 'Editing shows the builder');
+
+    // The slicer chooser: the original and the versions with their settings and changes
+    const versions = [
+      { id: 12, created_at: '2026-10-22 10:00:00', label: '<i>x</i>', pinned: true, thumbnail_url: '/api/files/5/versions/12/thumbnail',
+        summary: { filaments: [{ type: 'PETG', vendor: 'Bambu Lab', colour: '#000000' }], layer_height: '0.2', infill: { density: '25%', pattern: 'grid' }, walls: '3', supports: { enabled: true, type: 'tree(auto)' }, printer: 'Bambu Lab P1S 0.4 nozzle' },
+        changes: [{ key: 'filament_type', from: 'PLA', to: 'PETG' }, { key: 'sparse_infill_density', from: '15%', to: '25%' }, { key: 'item 1: turn', from: '1 0 0', to: '0 1 0' }, { key: 'wipe_tower_x', from: '1', to: '2' }] },
+      { id: 11, created_at: '2026-10-21 10:00:00', label: null, pinned: false, summary: { filaments: [{ type: 'PLA', colour: 'red;"><b>' }], infill: { density: '15%' } }, changes: null }
+    ];
+    const chooser = UI.slicerChooser(vf, versions, { modelId: 1, canEdit: true, selected: 12 });
+    assert(UI.slicerChooser(vf, [], { modelId: 1, canEdit: true, selected: 0 }).includes('No saved versions yet'), 'A file without versions says how they come');
+    assert(chooser.includes('material PLA → PETG') && chooser.includes('infill 15% → 25%') && chooser.includes('turned') && chooser.includes('+2 other'), 'Changes are named, the rest counted');
+    assert(chooser.includes('&lt;i&gt;x&lt;/i&gt;') && !chooser.includes('<i>x</i>') && !chooser.includes('red;"'), 'Names and colours from a project are escaped or checked');
+    assert(UI.slicerVersionName(versions[1]) === 'PLA · 15%' && chooser.includes('first save'), 'A version without a name gets one from its settings');
+    assert(chooser.includes(`/api/files/${vf.id}/versions/12/file/`) && chooser.includes('App.slicerVersionPin(12, false)') && chooser.includes('App.slicerChooserPick(0)'), 'The chosen version opens in the slicer, the original too; pins toggle');
+
+    // A read-only project: no file changes, no Delete; a file with versions opens the chooser
+    const roFiles = vault.files.map((f, i) => ({ ...f, library_path: `/library/VAULT/${f.original_name}`, version_count: i === 0 ? 1 : 0, url: '/library-files/x' }));
+    const ro = UI.modelDetail({ ...vault, is_readonly: 1, layout: 'folder', user_id: 1, files: roFiles }, false, { kit: 'ussa-vault', view: 'files' });
+    assert(ro.includes('badge-readonly') && !ro.includes('App.confirmDeleteModel(') && !ro.includes("App.renameEntry(") && !ro.includes('App.showUploadFiles(') && !ro.includes('App.newFolder(null)'), 'A read-only project offers no changes to its files');
+    assert(ro.includes(`App.openSlicerChooser(${vault.id}, ${roFiles[0].id})`) && ro.includes('App.showSlicerVersions(this)'), 'A read-only file with versions opens the chooser');
+    const rw = UI.modelDetail({ ...vault, layout: 'folder', user_id: 1, files: roFiles }, false, { kit: 'ussa-vault', view: 'files' });
+    assert(rw.includes('App.confirmDeleteModel(') && rw.includes('App.renameEntry(') && !rw.includes('badge-readonly'), 'A writable project keeps its file actions');
+
     // Tips: every option of the builder has one, every picture and manual page exists
     const tipKeys = [...new Set([...builder.matchAll(/data-tip="([^"]+)"/g), ...parts.matchAll(/data-tip="([^"]+)"/g)].map(m => m[1]))];
     const missingTips = tipKeys.filter(k => !K.TIPS[k]);
@@ -316,6 +358,22 @@ async function runStaticAndUiChecks() {
     assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 1, p1s: 1 } } }).includes('✗ 1 too big'), 'A card marks a model that is too big');
     assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 0, p1s: 0 } } }).includes('✓ Fits'), 'A card marks a model that fits');
     assert(!UI.modelCard({ ...mockModel, fit: null }).includes('badge-fit'), 'No badge without 3D files');
+    // Too big for the default printer: another of mine that takes it all, else "other printers"
+    App.printerBeds = [{ id: 'p1s', name: 'P1S', x: 256, y: 256, z: 256 }, { id: 'u1', name: 'U1', x: 270, y: 270, z: 270 }];
+    const userBefore = App.currentUser;
+    App.currentUser = { ...userBefore, preferred_printer: 'p1s', preferred_slicer: 'bambustudio' };
+    assert(App.fitPrinterId() === 'p1s', 'The default printer comes from the profile');
+    assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 0, p1s: 1, u1: 0 } } }).includes('⚠ U1'), 'A card names the printer that takes the model');
+    assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 0, p1s: 1, u1: 1 } } }).includes('⚠ Other printers'), 'Each part fits another printer');
+    assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 1, p1s: 1, u1: 1 } } }).includes('✗ 1 too big'), 'Too big for every printer');
+    if (!sandbox.PrintFit) vm.runInContext(fs.readFileSync(path.join(ROOT_DIR, 'public/js/printfit.js'), 'utf8'), sandbox);
+    const dim = UI.fitDim([268, 268, 146], null, App.printerBeds, 'p1s');
+    assert(dim.includes('fit-flag is-other') && dim.includes('⚠ U1'), `A file too big for the P1S fits the U1: ${dim}`);
+    // "Open in slicer": the icon of the default slicer, the others with theirs in the menu
+    const sb = UI.slicerButton(UI.slicerLinks({ id: 5, original_name: 'a.stl', file_type: 'stl', slicer_token: 'abcdefgh' }, 1));
+    assert(sb.includes('src="/img/slicers/bambustudio.png"') && sb.includes('src="/img/slicers/orcaslicer.png"') && !sb.includes('polygon points="12 2'), 'Slicer icons instead of the star');
+    for (const id of Object.keys(App.SLICERS)) assert(fs.existsSync(path.join(ROOT_DIR, 'public/img/slicers', `${id}.png`)), `No icon for ${id}`);
+    App.currentUser = userBefore;
     App.printerBeds = null;
     const roofTip = UI.kitTipContent(K.TIPS.roof, { value: 'bowl', set: 'cfg:roof', available: ['none', 'grid', 'bowl'] });
     assert(/is-current[^>]*onclick="App.kitTipPick\(&quot;cfg:roof&quot;, &quot;bowl&quot;\)"/.test(roofTip) && /disabled[^>]*onclick="App.kitTipPick\(&quot;cfg:roof&quot;, &quot;heavy&quot;\)"/.test(roofTip), 'A tip marks the current choice and disables the unavailable ones');
@@ -504,6 +562,38 @@ async function runStaticAndUiChecks() {
     const code = K.encodeConfig(edited.cfg);
     assert(/^[A-Za-z0-9_-]+$/.test(code) && JSON.stringify(K.decodeConfig(code)) === JSON.stringify(edited.cfg), 'Configurations survive the URL');
     assert(K.decodeConfig('%%%') === null, 'A broken ?c= is ignored');
+  });
+
+  await check('Old databases: is_adult and adult_password_hash become is_protected and protection_password_hash; saved configurations become models', () => {
+    const os = require('os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-db-'));
+    try {
+      const node = (code) => execFileSync(process.execPath, ['-e', code], { cwd: ROOT_DIR, env: { ...process.env, DATA_DIR: dir }, encoding: 'utf8' });
+      // A database as the older versions left it
+      node(`const d = require('./server/database'); d.initDatabase().then(() => {
+        d.run('ALTER TABLE models RENAME COLUMN is_protected TO is_adult', [], true);
+        d.run("INSERT INTO models (name, is_adult) VALUES ('Locked', 1)", [], true);
+        d.run("INSERT INTO system_settings (key, value) VALUES ('adult_password_hash', 'hash')", [], true);
+        d.run('CREATE TABLE kit_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL, user_id INTEGER, kit TEXT NOT NULL, name TEXT NOT NULL, config TEXT NOT NULL, created_at DATETIME, updated_at DATETIME)', [], true);
+        const vault = d.get("SELECT id FROM models WHERE name = 'Locked'").id;
+        d.run("INSERT INTO kit_configs (model_id, user_id, kit, name, config) VALUES (?, 1, 'ussa-vault', 'Garage', ?)", [vault, JSON.stringify({ width: 'L' })], true);
+        d.run("INSERT INTO kit_configs (model_id, user_id, kit, name, config) VALUES (999, 1, 'ussa-vault', 'Orphan', '{}')", [], true);
+        d.saveDb(true); process.exit(0);
+      });`);
+      const out = node(`const d = require('./server/database'); d.initDatabase().then(() => {
+        process.stdout.write('\\n' + JSON.stringify({ cols: d.all('PRAGMA table_info(models)').map(c => c.name).filter(n => /adult|protected/.test(n)),
+          locked: d.get("SELECT is_protected FROM models WHERE name = 'Locked'").is_protected,
+          keys: d.all("SELECT key FROM system_settings WHERE key LIKE '%password_hash'").map(r => r.key),
+          configs: d.all('SELECT m.name, m.kit_config, s.name AS source FROM models m JOIN models s ON s.id = m.kit_source_id').map(r => r.name + ":" + r.source + ":" + r.kit_config),
+          table: Boolean(d.get("SELECT name FROM sqlite_master WHERE name = 'kit_configs'")) }));
+        process.exit(0);
+      });`);
+      const result = JSON.parse(out.trim().split('\n').pop());
+      assert(JSON.stringify(result) === JSON.stringify({ cols: ['is_protected'], locked: 1, keys: ['protection_password_hash'], configs: ['Garage:Locked:{"width":"L"}'], table: false }),
+        `Unexpected migration: ${JSON.stringify(result)}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   await check('Printer fit: sizes of STL / OBJ / 3MF files, parts checked straight, turned and on the diagonal', async () => {
@@ -1350,35 +1440,35 @@ async function runE2ETests() {
 
     await check('Password-protected models stay in lists; with a password every opening and every file needs it', async () => {
       const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
-      fs.mkdirSync(path.join(tmpLibDir, 'Adult Test'), { recursive: true });
-      fs.writeFileSync(path.join(tmpLibDir, 'Adult Test', 'part.stl'), stl);
-      fs.writeFileSync(path.join(tmpLibDir, 'Adult Test', 'notes.txt'), 'secret notes');
+      fs.mkdirSync(path.join(tmpLibDir, 'Protected Test'), { recursive: true });
+      fs.writeFileSync(path.join(tmpLibDir, 'Protected Test', 'part.stl'), stl);
+      fs.writeFileSync(path.join(tmpLibDir, 'Protected Test', 'notes.txt'), 'secret notes');
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
       for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 100));
         const st = await apiReq('/api/library/scan/status', { session: adminSession });
         if (st.status === 200 && !st.data.isScanning) break;
       }
-      const find = async () => ((await apiReq('/api/models?search=Adult%20Test', { session: adminSession })).data.models || []).filter(m => m.name === 'Adult Test');
+      const find = async () => ((await apiReq('/api/models?search=Protected%20Test', { session: adminSession })).data.models || []).filter(m => m.name === 'Protected Test');
       const [model] = await find();
-      assert(model, 'Adult Test project was not scanned');
+      assert(model, 'Protected Test project was not scanned');
 
-      const mark = await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: true } });
-      assert(mark.status === 200, `bulk-update is_adult failed (${mark.status})`);
+      const mark = await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: true } });
+      assert(mark.status === 200, `bulk-update is_protected failed (${mark.status})`);
       const listed = await find();
-      assert(listed.length === 1 && listed[0].is_adult === 1, 'A protected model must stay in the list, flagged is_adult');
+      assert(listed.length === 1 && listed[0].is_protected === 1, 'A protected model must stay in the list, flagged is_protected');
 
       // No password yet: the model still opens
       assert((await apiReq(`/api/models/${model.id}`, { session: adminSession })).status === 200, 'Without a password an protected model must open');
 
-      const setPw = await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
+      const setPw = await apiReq('/api/settings/protection-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
       assert(setPw.status === 200, `Setting the password failed (${setPw.status})`);
       const sys = await apiReq('/api/settings/system', { session: adminSession });
-      assert(!('adult_password_hash' in sys.data), 'The password hash must never be sent to the client');
+      assert(!('protection_password_hash' in sys.data), 'The password hash must never be sent to the client');
 
       const locked = await apiReq(`/api/models/${model.id}`, { session: adminSession });
       assert(locked.status === 423 && locked.data.locked === true, `Locked protected model must answer 423, got ${locked.status}`);
-      const files = (await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': 'garbage' } }));
+      const files = (await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Model-Unlock': 'garbage' } }));
       assert(files.status === 423, 'A forged unlock token must not open the model');
 
       const wrong = await apiReq(`/api/models/${model.id}/unlock`, { method: 'POST', session: adminSession, body: { password: 'nope' } });
@@ -1386,9 +1476,9 @@ async function runE2ETests() {
       const ok = await apiReq(`/api/models/${model.id}/unlock`, { method: 'POST', session: adminSession, body: { password: 'tajne123' } });
       assert(ok.status === 200 && ok.data.token, `Right password must unlock, got ${ok.status}`);
       const unlockCookie = (ok.setCookie || '').split(';')[0];
-      assert(unlockCookie.startsWith('3dl_adult='), 'Unlock must set the 3dl_adult cookie');
+      assert(unlockCookie.startsWith('3dl_unlock='), 'Unlock must set the 3dl_unlock cookie');
 
-      const open = await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': ok.data.token } });
+      const open = await apiReq(`/api/models/${model.id}`, { session: adminSession, headers: { 'X-Model-Unlock': ok.data.token } });
       assert(open.status === 200, `Unlocked protected model must open, got ${open.status}`);
       const txt = open.data.files.find(f => f.original_name === 'notes.txt');
 
@@ -1403,12 +1493,12 @@ async function runE2ETests() {
 
       const other = (await apiReq('/api/models?limit=100', { session: adminSession, })).data.models.find(m => m.id !== model.id);
       if (other) {
-        const wrongModel = await apiReq(`/api/models/${other.id}`, { session: adminSession, headers: { 'X-Adult-Unlock': ok.data.token } });
+        const wrongModel = await apiReq(`/api/models/${other.id}`, { session: adminSession, headers: { 'X-Model-Unlock': ok.data.token } });
         assert(wrongModel.status === 200, 'An unlock token must not break opening other models');
       }
 
-      await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: '' } });
-      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: false } });
+      await apiReq('/api/settings/protection-password', { method: 'PUT', session: adminSession, body: { password: '' } });
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: false } });
     });
 
     await check('Project files: rename, move, new folder, delete to the Trash, restore, purge; renaming a project renames it on disk', async () => {
@@ -1667,6 +1757,172 @@ async function runE2ETests() {
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
     });
 
+    await check('Read-only projects: a VAULT archive is marked on scan, nothing changes its files, slicer saves become versions with their settings', async () => {
+      const yazl = require('yazl');
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
+      const scanLibrary = async () => {
+        await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+        for (let i = 0; i < 300; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const s = await apiReq('/api/library/scan/status', { session: adminSession });
+          if (s.status === 200 && !s.data.isScanning) return;
+        }
+        throw new Error('Library scanner did not complete within 30s');
+      };
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const detail = async (id) => (await apiReq(`/api/models/${id}`, { session: adminSession })).data;
+      const saves = async () => {
+        assert((await apiReq('/api/slicer-saves/scan', { method: 'POST', session: adminSession })).status === 200, 'Checking .slicer-saves failed');
+        return (await apiReq('/api/slicer-saves', { session: adminSession })).data.saves;
+      };
+      // A Bambu Studio project: settings, one object on one plate, turned by `turn`
+      const project = async ({ filament = 'PLA', infill = '15%', turn = '1 0 0 0 1 0 0 0 1' } = {}) => {
+        const zip = new yazl.ZipFile();
+        zip.addBuffer(Buffer.from(JSON.stringify({
+          printer_settings_id: 'Bambu Lab P1S 0.4 nozzle', nozzle_diameter: ['0.4'], print_settings_id: '0.20mm Standard @BBL X1C', layer_height: '0.2',
+          filament_type: [filament], filament_vendor: ['Bambu Lab'], filament_settings_id: [`Bambu ${filament} Basic @BBL X1C`], filament_colour: ['#000000'],
+          sparse_infill_density: infill, sparse_infill_pattern: 'grid', wall_loops: '2', enable_support: '0', support_type: 'tree(auto)',
+          curr_bed_type: 'Textured PEI Plate', version: '02.07.01.62', machine_start_gcode: 'G28'
+        })), 'Metadata/project_settings.config');
+        zip.addBuffer(Buffer.from('<?xml version="1.0"?><config><object id="2"><metadata key="name" value="part"/><metadata key="extruder" value="1"/><metadata face_count="1"/>'
+          + '<part id="1" subtype="normal_part"><metadata key="name" value="part"/><metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/></part></object>'
+          + '<plate><metadata key="plater_id" value="1"/><metadata key="plater_name" value=""/><model_instance><metadata key="object_id" value="2"/></model_instance></plate></config>'), 'Metadata/model_settings.config');
+        zip.addBuffer(Buffer.from(`<?xml version="1.0"?><model><metadata name="Application">BambuStudio-02.07.01.62</metadata><resources><object id="2" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="5" y="0" z="0"/><vertex x="0" y="5" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="2" transform="${turn} 128 128 0"/></build></model>`), '3D/3dmodel.model');
+        zip.end();
+        const chunks = [];
+        for await (const c of zip.outputStream) chunks.push(c);
+        return Buffer.concat(chunks);
+      };
+
+      // An archive the VAULT configurator knows: its three top folders and enough known parts
+      const names = fs.readFileSync(path.join(__dirname, 'fixtures/ussa-vault-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean).map(l => l.split('\t')[1]);
+      const pick = ['01. DRAWERS', '02. SUSTAINERS', '03. MODIFICATIONS'].flatMap(top => names.filter(n => n.startsWith(top + '/') && /\.stl$/i.test(n)).slice(0, 25));
+      const tri = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      for (const n of pick) put(`VAULT Test/${n}`, tri);
+      put('Free Project/free.stl', tri);
+      await scanLibrary();
+      const vault = await byName('VAULT Test');
+      assert(vault && vault.kit_archive === 'ussa-vault' && vault.is_readonly === 1, `The archive must be recognised and read-only: ${JSON.stringify(vault && { kit: vault.kit_archive, ro: vault.is_readonly })}`);
+      assert((await byName('Free Project')).is_readonly === 0, 'Other projects stay writable');
+      const vd = await detail(vault.id);
+      const part = vd.files.find(f => f.original_name === pick[0]);
+      const partPath = lib(`VAULT Test/${pick[0]}`);
+
+      // Nothing changes the files of a read-only project
+      const fsOp = (op, body) => apiReq(`/api/models/${vault.id}/fs/${op}`, { method: 'POST', session: adminSession, body });
+      assert((await fsOp('rename', { path: pick[0], name: 'x.stl' })).status === 409, 'Renaming a file of a read-only project is refused');
+      assert((await fsOp('mkdir', { path: '', name: 'New' })).status === 409, 'A new folder in a read-only project is refused');
+      assert((await fsOp('delete', { paths: [pick[0]] })).status === 409, 'Deleting a file of a read-only project is refused');
+      assert((await apiReq(`/api/files/${part.id}`, { method: 'DELETE', session: adminSession })).status === 409, 'Deleting a file by id is refused too');
+      assert((await apiReq(`/api/models/${vault.id}`, { method: 'DELETE', session: adminSession })).status === 409, 'A read-only project cannot go to the Trash');
+      const bulk = await apiReq('/api/models/bulk-delete', { method: 'POST', session: adminSession, body: { ids: [vault.id] } });
+      assert(bulk.status === 200 && bulk.data.count === 0 && bulk.data.read_only.includes('VAULT Test'), `Bulk delete must leave it: ${JSON.stringify(bulk.data)}`);
+      assert((await apiReq('/api/browse/bulk-delete', { method: 'POST', session: adminSession, body: { paths: ['VAULT Test'] } })).status === 409, 'Folder Explorer cannot delete it');
+      assert((await apiReq('/api/browse/move', { method: 'POST', session: adminSession, body: { source: 'Free Project/free.stl', target: 'VAULT Test' } })).status === 409, 'Nothing moves into it');
+      assert((await apiReq(`/api/models/${vault.id}`, { method: 'PUT', session: adminSession, body: { name: 'VAULT Renamed' } })).status === 409, 'Its folder is not renamed');
+      assert(fs.existsSync(partPath) && (await detail(vault.id)).name === 'VAULT Test', 'The archive must be untouched');
+
+      // A Bambu save of one of its files joins the file's history; the file stays as it is
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '0' } });
+      const saveName = `part_3dl-${part.slicer_token}.3mf`;
+      const versions = async () => (await apiReq(`/api/files/${part.id}/versions`, { session: adminSession })).data;
+      put(`.slicer-saves/${saveName}`, await project());
+      let s = (await saves()).find(x => x.name === saveName);
+      assert(s && s.status === 'imported', `The save must be imported, got ${s && s.status} ${s && s.message}`);
+      assert(fs.readFileSync(partPath, 'utf8') === tri, 'The archive file must not change');
+      assert(!fs.existsSync(lib(`VAULT Test/${pick[0].replace(/\.stl$/i, '.3mf')}`)), 'No 3MF may be added next to it');
+      let v = await versions();
+      assert(v.length === 1 && v[0].summary && v[0].summary.filaments[0].type === 'PLA' && v[0].summary.infill.density === '15%' && v[0].changes === null,
+        `The version must carry its settings: ${JSON.stringify(v[0])}`);
+      assert(v[0].summary.printer === 'Bambu Lab P1S 0.4 nozzle' && v[0].summary.original_faces === null && v[0].summary.faces === 1, 'Printer and faces are read');
+
+      // Another material and infill: a second version that says what changed
+      put(`.slicer-saves/${saveName}`, await project({ filament: 'PETG', infill: '25%' }));
+      await saves();
+      v = await versions();
+      const keys = (v[0].changes || []).map(c => c.key);
+      assert(v.length === 2 && v[0].summary.filaments[0].type === 'PETG' && keys.includes('filament_type') && keys.includes('sparse_infill_density'),
+        `The changes must be listed: ${JSON.stringify(v[0].changes)}`);
+      assert(!keys.includes('version') && !keys.some(k => /_gcode$/.test(k)), 'Noise is left out of the changes');
+      // Turned on the plate: a change too
+      put(`.slicer-saves/${saveName}`, await project({ filament: 'PETG', infill: '25%', turn: '0 1 0 -1 0 0 0 0 1' }));
+      await saves();
+      v = await versions();
+      assert(v.length === 3 && (v[0].changes || []).some(c => c.key === 'item 1: turn'), `A turned part is a change: ${JSON.stringify(v[0].changes)}`);
+      // Set up like the first version: not kept twice, the first one becomes the newest
+      const first = v[2];
+      put(`.slicer-saves/${saveName}`, await project());
+      await saves();
+      v = await versions();
+      assert(v.length === 3 && v[0].settings_key === undefined && v[0].summary.filaments[0].type === 'PLA' && !v.some(x => x.id === first.id), `A save like an earlier version must not be kept twice: ${JSON.stringify(v.map(x => x.id))}`);
+
+      // Opening a version in the slicer: the same content saved again is only the download
+      const link = `/api/files/${part.id}/versions/${v[1].id}/file/part_3dl-${part.slicer_token}.3mf`;
+      const sent = Buffer.from(await (await fetch(`${baseUrl}${link}`, { headers: { Cookie: adminSession.cookie } })).arrayBuffer());
+      put(`.slicer-saves/${saveName}`, sent);
+      s = (await saves()).find(x => x.name === saveName);
+      assert(s.status === 'download' && (await versions()).length === 3, `An unchanged version must be a download, got ${s.status}`);
+      const pic = await fetch(`${baseUrl}/api/files/${part.id}/versions/${v[0].id}/thumbnail`, { headers: { Cookie: adminSession.cookie } });
+      assert(pic.status === 404, 'A project without a plate picture has no thumbnail');
+
+      // Names and pins; restore is refused, pinned versions survive pruning
+      assert((await apiReq(`/api/files/${part.id}/versions/${v[2].id}`, { method: 'PUT', session: adminSession, body: { label: '  PETG  turned ', pinned: true } })).status === 200, 'Naming a version failed');
+      v = await versions();
+      assert(v[2].label === 'PETG turned' && v[2].pinned === true, `Name and pin must be kept: ${JSON.stringify(v[2])}`);
+      assert((await apiReq(`/api/files/${part.id}/versions/${v[0].id}/restore`, { method: 'POST', session: adminSession })).status === 409, 'Restoring into a read-only project is refused');
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { file_versions_keep: '1' } });
+      put(`.slicer-saves/${saveName}`, await project({ filament: 'ABS', infill: '40%' }));
+      await saves();
+      v = await versions();
+      assert(v.length === 2 && v.some(x => x.label === 'PETG turned') && v[0].summary.filaments[0].type === 'ABS', `Pruning must keep the pinned version: ${JSON.stringify(v.map(x => x.label))}`);
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { file_versions_keep: '10', slicer_quiet_minutes: '5' } });
+      // The scanner never indexes the history
+      await scanLibrary();
+      assert((await detail(vault.id)).files.length === pick.length, 'Versions must not be indexed as files');
+
+      // Turning read-only off in Edit sticks, a later scan does not turn it on again
+      assert((await apiReq(`/api/models/${vault.id}`, { method: 'PUT', session: adminSession, body: { is_readonly: false } })).status === 200, 'Turning read-only off failed');
+      await scanLibrary();
+      assert((await byName('VAULT Test')).is_readonly === 0, 'Read-only must stay off');
+      assert((await fsOp('mkdir', { path: '', name: 'New' })).status === 200, 'A writable project accepts changes again');
+      assert((await apiReq(`/api/models/${vault.id}`, { method: 'PUT', session: adminSession, body: { is_readonly: true } })).status === 200, 'Turning read-only on failed');
+      assert((await fsOp('delete', { paths: ['New'] })).status === 409, 'Read-only again');
+
+      // Configurations: models of their own, without files; their parts are the archive's files
+      const url = `/api/models/${vault.id}/kit-configs`;
+      assert((await apiReq(url, { method: 'POST', session: adminSession, body: { name: ' ', config: {} } })).status === 400, 'A configuration needs a name');
+      const saved = await apiReq(url, { method: 'POST', session: adminSession, body: { name: 'Garage  tower', config: { v: 1, width: 'L', depth: 4 } } });
+      assert(saved.status === 201 && saved.data.name === 'Garage tower' && saved.data.config.width === 'L' && saved.data.model_id === vault.id, `Save failed: ${JSON.stringify(saved.data)}`);
+      const cfg = await byName('Garage tower');
+      assert(cfg && cfg.id === saved.data.id && cfg.kit_source_id === vault.id, 'A configuration is listed like any model');
+      const cd = await detail(cfg.id);
+      assert(cd.files.length === 0 && cd.kit_source && cd.kit_source.id === vault.id && cd.kit_source.kit === 'ussa-vault', `The page knows its archive: ${JSON.stringify(cd.kit_source)}`);
+      const renamed = await apiReq(`${url}/${cfg.id}`, { method: 'PUT', session: adminSession, body: { name: 'Desk tower' } });
+      assert(renamed.status === 200 && renamed.data.name === 'Desk tower' && renamed.data.config.depth === 4, 'Renaming keeps the configuration');
+      const edited = await apiReq(`/api/models/${cfg.id}/kit-config`, { method: 'PUT', session: adminSession, body: { config: { v: 1, width: 'M', depth: 4 } } });
+      assert(edited.status === 200 && edited.data.config.width === 'M', 'The configuration page saves its choices');
+      assert((await apiReq(`/api/models/${vault.id}/kit-config`, { method: 'PUT', session: adminSession, body: { config: {} } })).status === 404, 'Only a configuration has choices');
+      assert((await apiReq('/api/shares', { method: 'POST', session: adminSession, body: { model_id: cfg.id } })).status === 400, 'A configuration cannot be shared');
+      const zipRes = await fetch(`${baseUrl}/api/models/${cfg.id}/download`, { headers: { Cookie: adminSession.cookie } });
+      assert(zipRes.status === 200, `The configuration ZIP must download, got ${zipRes.status}`);
+      const zip = new (require('adm-zip'))(Buffer.from(await zipRes.arrayBuffer()));
+      const entries = zip.getEntries().map(e => e.entryName);
+      assert(entries.includes('Desk tower parts list.txt') && entries.every(n => n === 'Desk tower parts list.txt' || pick.includes(n)), `The ZIP holds the parts list and archive files: ${entries.join(', ')}`);
+
+      const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
+      const maker = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
+      assert((await apiReq(url, { session: maker })).data.some(c => c.id === cfg.id), 'Configurations are library models: every user sees them');
+      assert((await apiReq(`${url}/${cfg.id}`, { method: 'PUT', session: maker, body: { name: 'Mine' } })).status === 403, "Another user must not change someone's configuration");
+      assert((await apiReq(`${url}/${cfg.id}`, { method: 'DELETE', session: maker })).status === 403, "Another user must not delete someone's configuration");
+      assert((await apiReq(`${url}/${cfg.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'The owner deletes a configuration');
+      assert(!(await apiReq(url, { session: adminSession })).data.length && !(await byName('Desk tower')), 'A deleted configuration goes to the Trash');
+      const restored = await apiReq('/api/trash/restore', { method: 'POST', session: adminSession, body: { model_ids: [cfg.id] } });
+      assert(restored.status === 200 && (await byName('Desk tower')), 'A configuration comes back from the Trash');
+      await scanLibrary();
+      assert(await byName('Desk tower'), 'A scan must not remove a configuration (it has no folder)');
+    });
+
     await check('Regenerate covers lists viewer-rendered and missing covers, not covers from images', async () => {
       const pending = async () => (await apiReq('/api/covers/pending', { session: adminSession })).data.models || [];
       const find = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
@@ -1737,13 +1993,13 @@ async function runE2ETests() {
       assert((await img('/library-files/Photo%20Project/part.stl')).status === 400, 'Only images are resized');
 
       // A protected model keeps its other images hidden; its cover stays reachable
-      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: true } });
-      await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: true } });
+      await apiReq('/api/settings/protection-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
       const other = model.thumbnail.includes('a-photo') ? '/library-files/Photo%20Project/b-photo.png' : '/library-files/Photo%20Project/a-photo.png';
       assert((await img(other)).status === 404, 'An image of a locked protected model must be 404');
       assert((await img(model.thumbnail)).status === 200, 'The cover of a protected model stays reachable (shown blurred)');
-      await apiReq('/api/settings/adult-password', { method: 'PUT', session: adminSession, body: { password: '' } });
-      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_adult: false } });
+      await apiReq('/api/settings/protection-password', { method: 'PUT', session: adminSession, body: { password: '' } });
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: false } });
     });
 
     await check('ZIP downloads stream from disk: subfolders kept, exact Content-Length, one folder per model in collections', async () => {
@@ -1784,7 +2040,7 @@ async function runE2ETests() {
       await apiReq(`/api/projects/${coll.data.id}`, { method: 'DELETE', session: adminSession });
     });
 
-    await check('Kit configurators: a selection of files downloads as a streamed ZIP with its parts list; saved configurations belong to their user', async () => {
+    await check('Kit configurators: a selection of files downloads as a streamed ZIP with its parts list', async () => {
       const AdmZip = require('adm-zip');
       const model = ((await apiReq('/api/models?search=Zip%20Project', { session: adminSession })).data.models || []).find(m => m.name === 'Zip Project');
       const detail = (await apiReq(`/api/models/${model.id}`, { session: adminSession })).data;
@@ -1811,24 +2067,16 @@ async function runE2ETests() {
       assert((await fetch(`${baseUrl}${prepared.data.url}`)).status === 404, 'The link only works for the user who asked for it');
       assert((await fetch(`${baseUrl}/api/models/${model.id}/download-selection/${'0'.repeat(32)}`, { headers: { Cookie: adminSession.cookie } })).status === 404, 'Unknown tokens are 404');
 
-      // Saved configurations: per user and model
-      const url = `/api/models/${model.id}/kit-configs`;
-      assert((await apiReq(url, { method: 'POST', session: adminSession, body: { kit: 'ussa-vault', name: ' ', config: {} } })).status === 400, 'A configuration needs a name');
-      assert((await apiReq(url, { method: 'POST', session: adminSession, body: { kit: 'No Kit', name: 'x', config: {} } })).status === 400, 'Kit names are checked');
-      const saved = await apiReq(url, { method: 'POST', session: adminSession, body: { kit: 'ussa-vault', name: 'Garage  tower', config: { v: 1, width: 'L', depth: 4 } } });
-      assert(saved.status === 201 && saved.data.name === 'Garage tower' && saved.data.config.width === 'L', `Save failed: ${JSON.stringify(saved.data)}`);
-      const renamed = await apiReq(`${url}/${saved.data.id}`, { method: 'PUT', session: adminSession, body: { name: 'Desk tower' } });
-      assert(renamed.status === 200 && renamed.data.name === 'Desk tower' && renamed.data.config.depth === 4, 'Renaming keeps the configuration');
-      const list = await apiReq(`${url}?kit=ussa-vault`, { session: adminSession });
-      assert(list.data.length === 1 && list.data[0].id === saved.data.id, `Expected one saved configuration, got ${JSON.stringify(list.data)}`);
+    });
 
-      const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
-      const maker = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
-      assert((await apiReq(`${url}?kit=ussa-vault`, { session: maker })).data.length === 0, "Another user must not see someone's configurations");
-      assert((await apiReq(`${url}/${saved.data.id}`, { method: 'PUT', session: maker, body: { name: 'Mine' } })).status === 404, "Another user must not change someone's configuration");
-      assert((await apiReq(`${url}/${saved.data.id}`, { method: 'DELETE', session: maker })).status === 404, "Another user must not delete someone's configuration");
-      assert((await apiReq(`${url}/${saved.data.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'The owner deletes a configuration');
-      assert((await apiReq(url, { session: adminSession })).data.length === 0, 'A deleted configuration is gone');
+    await check('Profile: the default slicer and printer of the top bar are kept, unknown slicers refused', async () => {
+      assert((await apiReq('/api/auth/profile', { method: 'PUT', session: adminSession, body: { preferred_slicer: 'paint' } })).status === 400, 'An unknown slicer is refused');
+      assert((await apiReq('/api/auth/profile', { method: 'PUT', session: adminSession, body: { preferred_slicer: 'orcaslicer', preferred_printer: 'snapmaker-u1' } })).status === 200, 'Saving the defaults failed');
+      const me = (await apiReq('/api/auth/me', { session: adminSession })).data;
+      assert(me.preferred_slicer === 'orcaslicer' && me.preferred_printer === 'snapmaker-u1', `The defaults come back: ${JSON.stringify(me)}`);
+      assert((await apiReq('/api/auth/profile', { method: 'PUT', session: adminSession, body: { preferred_slicer: '', preferred_printer: null } })).status === 200, 'Clearing the defaults failed');
+      const cleared = (await apiReq('/api/auth/me', { session: adminSession })).data;
+      assert(cleared.preferred_slicer === null && cleared.preferred_printer === null, 'Cleared defaults are null');
     });
 
     await check('Printer fit: the three default printers, an edited list, sizes of a model measured in the background', async () => {

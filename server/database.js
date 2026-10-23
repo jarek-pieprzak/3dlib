@@ -276,23 +276,6 @@ async function initDatabase() {
     )
   `);
 
-  // Saved configurations of a kit configurator (routes/kitConfigs.js): per user and model, the
-  // choices as JSON
-  db.run(`
-    CREATE TABLE IF NOT EXISTS kit_configs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      model_id INTEGER NOT NULL,
-      user_id INTEGER,
-      kit TEXT NOT NULL,
-      name TEXT NOT NULL,
-      config TEXT NOT NULL,
-      created_at DATETIME DEFAULT (datetime('now')),
-      updated_at DATETIME DEFAULT (datetime('now')),
-      FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
-    )
-  `);
-  db.run('CREATE INDEX IF NOT EXISTS idx_kit_configs_model ON kit_configs(model_id, user_id)');
-
   // Migration: Ensure user_id columns exist
   try {
     const mCols = all("PRAGMA table_info(models)");
@@ -319,6 +302,8 @@ async function initDatabase() {
     if (!uCols.some(c => c.name === 'password_reset_token')) db.run('ALTER TABLE users ADD COLUMN password_reset_token TEXT');
     if (!uCols.some(c => c.name === 'password_reset_expires')) db.run('ALTER TABLE users ADD COLUMN password_reset_expires DATETIME');
     if (!uCols.some(c => c.name === 'preferred_slicer')) db.run('ALTER TABLE users ADD COLUMN preferred_slicer TEXT');
+    // The printer of the fit check (an id of Settings -> Printers), chosen in the top bar
+    if (!uCols.some(c => c.name === 'preferred_printer')) db.run('ALTER TABLE users ADD COLUMN preferred_printer TEXT');
     
     // Auto-migrate the very first user (id 1) to admin to prevent lockout when roles are enforced
     db.run("UPDATE users SET role = 'admin' WHERE id = 1 AND role != 'admin'");
@@ -326,8 +311,11 @@ async function initDatabase() {
     if (!mCols.some(c => c.name === 'parent_id')) db.run('ALTER TABLE models ADD COLUMN parent_id INTEGER');
     if (!mCols.some(c => c.name === 'source_url')) db.run('ALTER TABLE models ADD COLUMN source_url TEXT');
     if (!mCols.some(c => c.name === 'preview_file_id')) db.run('ALTER TABLE models ADD COLUMN preview_file_id INTEGER');
-    // Password-protected models (the password is set in Settings > Security)
-    if (!mCols.some(c => c.name === 'is_adult')) db.run('ALTER TABLE models ADD COLUMN is_adult INTEGER DEFAULT 0');
+    // Password-protected models (the password is set in Settings > Security). Older databases
+    // call the column is_adult and the password adult_password_hash.
+    if (mCols.some(c => c.name === 'is_adult')) db.run('ALTER TABLE models RENAME COLUMN is_adult TO is_protected');
+    else if (!mCols.some(c => c.name === 'is_protected')) db.run('ALTER TABLE models ADD COLUMN is_protected INTEGER DEFAULT 0');
+    db.run("UPDATE system_settings SET key = 'protection_password_hash' WHERE key = 'adult_password_hash' AND NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'protection_password_hash')");
     // Trash: a deleted model or file is only flagged; server/utils/trash.js purges it later
     if (!mCols.some(c => c.name === 'deleted_at')) db.run('ALTER TABLE models ADD COLUMN deleted_at DATETIME');
     if (!all("PRAGMA table_info(files)").some(c => c.name === 'deleted_at')) db.run('ALTER TABLE files ADD COLUMN deleted_at DATETIME');
@@ -348,6 +336,39 @@ async function initDatabase() {
     if (!get("SELECT value FROM system_settings WHERE key = 'dim_3mf_vertices'")) {
       db.run("UPDATE files SET dim_bytes = NULL WHERE file_type = '3mf'");
       db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('dim_3mf_vertices', 'true')");
+    }
+    // Read-only projects (Edit): the app never changes their files on disk, slicer saves become
+    // versions in the history of the file instead. kit_archive: the kit whose archive the project
+    // is (utils/kits.js makes it read-only when it first recognises it).
+    if (!mCols.some(c => c.name === 'is_readonly')) db.run('ALTER TABLE models ADD COLUMN is_readonly INTEGER DEFAULT 0');
+    if (!mCols.some(c => c.name === 'kit_archive')) db.run('ALTER TABLE models ADD COLUMN kit_archive TEXT');
+    // Configurations of a kit (utils/kits.js): models without files of their own. kit_source_id is
+    // the model of the archive, kit_config the choices as JSON.
+    if (!mCols.some(c => c.name === 'kit_source_id')) db.run('ALTER TABLE models ADD COLUMN kit_source_id INTEGER');
+    if (!mCols.some(c => c.name === 'kit_config')) db.run('ALTER TABLE models ADD COLUMN kit_config TEXT');
+    db.run('CREATE INDEX IF NOT EXISTS idx_models_kit_source ON models(kit_source_id)');
+    // Versions of a file: pinned ones are never pruned; a slicer project keeps what it is set up
+    // with (utils/slicerSettings.js) and what changed from the version before it
+    const vCols = all("PRAGMA table_info(file_versions)");
+    for (const col of ['pinned INTEGER DEFAULT 0', 'label TEXT', 'summary TEXT', 'changes TEXT', 'settings_key TEXT']) {
+      if (!vCols.some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE file_versions ADD COLUMN ${col}`);
+    }
+    // Saved configurations were rows of kit_configs: each one becomes a configuration model
+    if (get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kit_configs'")) {
+      db.run('BEGIN');
+      try {
+        for (const k of all('SELECT * FROM kit_configs ORDER BY id')) {
+          if (!get('SELECT id FROM models WHERE id = ?', [k.model_id])) continue;
+          const owner = k.user_id && get('SELECT id FROM users WHERE id = ?', [k.user_id]) ? k.user_id : null;
+          db.run("INSERT INTO models (name, user_id, kit_source_id, kit_config, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))",
+            [k.name, owner, k.model_id, k.config, k.created_at, k.updated_at]);
+        }
+        db.run('DROP TABLE kit_configs');
+        db.run('COMMIT');
+      } catch (err) {
+        db.run('ROLLBACK');
+        throw err;
+      }
     }
   } catch (e) { console.error('User migration failed:', e); }
 
@@ -405,7 +426,6 @@ async function initDatabase() {
     db.run('DELETE FROM project_models WHERE model_id NOT IN (SELECT id FROM models) OR project_id NOT IN (SELECT id FROM projects)');
     db.run('DELETE FROM print_history WHERE model_id NOT IN (SELECT id FROM models)');
     db.run('DELETE FROM shares WHERE model_id NOT IN (SELECT id FROM models)');
-    db.run('DELETE FROM kit_configs WHERE model_id NOT IN (SELECT id FROM models)');
   } catch (e) { console.error('Migration failed:', e); }
 
   // ─── Seed Data (One-time only on initial setup) ───────────────────────

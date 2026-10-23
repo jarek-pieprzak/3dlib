@@ -9,7 +9,7 @@ const API = {
     const headers = { 'Content-Type': 'application/json', ...options.headers };
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
     // The unlock token of the password-protected model that is open
-    if (typeof App !== 'undefined' && App.adultUnlock && App.adultUnlock.token) headers['X-Adult-Unlock'] = App.adultUnlock.token;
+    if (typeof App !== 'undefined' && App.modelUnlock && App.modelUnlock.token) headers['X-Model-Unlock'] = App.modelUnlock.token;
 
     const res = await fetch(url, {
       credentials: 'same-origin',
@@ -148,6 +148,8 @@ const API = {
   getFileVersions(fileId) { return this.request(`/api/files/${fileId}/versions`); },
   restoreFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}/restore`, { method: 'POST' }); },
   deleteFileVersion(fileId, versionId) { return this.request(`/api/files/${fileId}/versions/${versionId}`, { method: 'DELETE' }); },
+  // A name for a version and whether pruning keeps it: { label, pinned }
+  updateFileVersion(fileId, versionId, data) { return this.request(`/api/files/${fileId}/versions/${versionId}`, { method: 'PUT', body: JSON.stringify(data) }); },
 
   // Printer fit check: build volumes (Settings -> Printers) and the sizes of a model's 3D files
   getPrinterBeds() { return this.request('/api/printer-beds'); },
@@ -160,6 +162,8 @@ const API = {
   createKitConfig(modelId, data) { return this.request(`/api/models/${modelId}/kit-configs`, { method: 'POST', body: JSON.stringify(data) }); },
   updateKitConfig(modelId, configId, data) { return this.request(`/api/models/${modelId}/kit-configs/${configId}`, { method: 'PUT', body: JSON.stringify(data) }); },
   deleteKitConfig(modelId, configId) { return this.request(`/api/models/${modelId}/kit-configs/${configId}`, { method: 'DELETE' }); },
+  // The choices of a configuration model, from its own page
+  saveKitConfig(configId, config) { return this.request(`/api/models/${configId}/kit-config`, { method: 'PUT', body: JSON.stringify({ config }) }); },
 
   // Projects saved by the slicer into .slicer-saves
   getSlicerSaves() { return this.request('/api/slicer-saves'); },
@@ -309,8 +313,8 @@ const API = {
   clearSystemLogs() { return this.request('/api/system/logs', { method: 'DELETE' }); },
   getPublicConfig() { return this.request('/api/system/public-config'); },
   unlockModel(id, password) { return this.request(`/api/models/${id}/unlock`, { method: 'POST', body: JSON.stringify({ password }) }); },
-  lockAdult() { return this.request('/api/models/adult/lock', { method: 'POST', body: '{}' }); },
-  setAdultPassword(password) { return this.request('/api/settings/adult-password', { method: 'PUT', body: JSON.stringify({ password }) }); },
+  lockProtected() { return this.request('/api/models/protected/lock', { method: 'POST', body: '{}' }); },
+  setProtectionPassword(password) { return this.request('/api/settings/protection-password', { method: 'PUT', body: JSON.stringify({ password }) }); },
   getBlockedIps() { return this.request('/api/system/blocked-ips'); },
   unblockIp(ip) { return this.request('/api/system/unblock-ip', { method: 'POST', body: JSON.stringify({ ip }) }); },
   scanDuplicates() { return this.request('/api/system/duplicates'); }

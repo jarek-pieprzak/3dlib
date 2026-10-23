@@ -1124,6 +1124,12 @@ async function runE2ETests() {
       assert((await progress()).done === 2, '"−" takes off the newest print of the part');
       await apiReq(`/api/models/${id}/prints/parts`, { method: 'DELETE', session: adminSession });
       assert((await progress()).done === 0, 'Reset progress takes off every print of a part');
+      // "Download ZIP": the files of the list and the list as text (the selection download)
+      const sel = await apiReq(`/api/models/${id}/download-selection`, { method: 'POST', session: adminSession, body: { file_ids: [lid.id, hinge.id], name: 'Parts List Box parts', text: { name: 'Parts List Box parts list.txt', content: 'To print:\n  1x lid.stl\n' } } });
+      assert(sel.status === 200 && sel.data.url, `Preparing the ZIP failed (${sel.status}): ${JSON.stringify(sel.data)}`);
+      const zipRes = await fetch(`${baseUrl}${sel.data.url}`, { headers: { Cookie: adminSession.cookie } });
+      const names = new (require('adm-zip'))(Buffer.from(await zipRes.arrayBuffer())).getEntries().map(e => e.entryName).sort();
+      assert(zipRes.status === 200 && JSON.stringify(names) === JSON.stringify(['Parts List Box parts list.txt', 'hinge.stl', 'lid.stl']), `The ZIP of the list: ${zipRes.status} ${JSON.stringify(names)}`);
       // An empty list removes it
       const cleared = await save({ files: [], hardware: [], notes: '' });
       assert(cleared.status === 200 && cleared.data.parts_list === null && !(await progress()), 'An empty list must remove the list and its progress');

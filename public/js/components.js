@@ -2546,7 +2546,11 @@ const UI = {
         ${canEdit ? `<button type="button" class="btn btn-ghost btn-xs" onclick="App.partsFill()">Mark all printed</button>
         <button type="button" class="btn btn-ghost btn-xs" onclick="App.partsReset()"${done ? '' : ' disabled'}>Reset progress</button>` : ''}
       </div>` : ''}
-      ${canEdit ? '<div class="parts-toolbar"><button type="button" class="btn btn-secondary btn-xs" onclick="App.partsEdit()">Edit list</button></div>' : ''}
+      <div class="parts-toolbar">
+        <button type="button" class="btn btn-ghost btn-xs" onclick="App.partsDownloadText()">List as text</button>
+        ${total && App.currentUser && App.currentUser.role !== 'viewer' ? '<button type="button" class="btn btn-ghost btn-xs" title="The files of the list and the list" onclick="App.partsDownloadZip()">Download ZIP</button>' : ''}
+        ${canEdit ? '<button type="button" class="btn btn-secondary btn-xs" onclick="App.partsEdit()">Edit list</button>' : ''}
+      </div>
       ${rows ? `<div class="kit-group-title">To print</div>${rows}` : ''}
       ${hardware ? `<div class="kit-group-title">Hardware</div>${hardware}` : ''}
       ${list.notes.trim() ? `<div class="kit-group-title">Notes</div><div class="parts-notes">${esc(list.notes)}</div>` : ''}`;

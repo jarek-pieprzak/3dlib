@@ -36,7 +36,7 @@ My own rules, not the old Kanban idea ("to print / printing / printed / assemble
     Mark all printed, Reset progress; failed prints do not count). Later the printer's MQTT
     status can add these entries by itself.
   - Progress on the model cards, like `kit_progress` of configurations.
-  - Still to do: the list as text, "Download ZIP" of the listed files only (the selection
+  - "List as text" and "Download ZIP" (the files of the list and the list, by the selection
     download of VAULT).
 - **Status from the printer, if it can be done:** Bambu printers (P1S) report the print status
   (started, progress, finished) over MQTT on the local network, with LAN-only / Developer mode

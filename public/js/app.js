@@ -2658,6 +2658,53 @@ const App = {
     this.openModal(`Prints · ${name}`, UI.partPrintsModal(model, file, item ? { label: name, qty: item.qty } : null, this.cache.materials));
   },
 
+  // The list as text: files to print, hardware, notes
+  partsText() {
+    const model = this.currentModel;
+    const list = UI.partsListOf(model);
+    if (!list) return '';
+    const files = new Map((model.files || []).map(f => [f.id, f]));
+    const parts = list.files.filter(p => p.qty > 0 && files.has(p.file_id));
+    const lines = [`${model.name}: parts list`, ''];
+    if (parts.length) lines.push('To print:', ...parts.map(p => `  ${p.qty}x ${files.get(p.file_id).original_name}`), '');
+    if (list.hardware.length) lines.push('Hardware:', ...list.hardware.map(h => `  ${h.qty}x ${h.name}${h.have ? ' (have)' : ''}`), '');
+    if (list.notes.trim()) lines.push('Notes:', list.notes.trim(), '');
+    return lines.join('\n');
+  },
+
+  partsDownloadText() {
+    const text = this.partsText();
+    if (!text) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    a.download = `${this.currentModel.name} parts list.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  },
+
+  // The files of the list (each once) and the list as text, streamed like a configuration's ZIP
+  async partsDownloadZip() {
+    const model = this.currentModel;
+    const live = new Set((model?.files || []).map(f => f.id));
+    const ids = (UI.partsListOf(model)?.files || []).filter(p => p.qty > 0 && live.has(p.file_id)).map(p => p.file_id);
+    if (!ids.length) return;
+    try {
+      const res = await API.prepareSelectionDownload(model.id, {
+        file_ids: ids,
+        name: `${model.name} parts`,
+        text: { name: `${model.name} parts list.txt`, content: this.partsText() }
+      });
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
   // ── Saved configurations: models of their own ──
   // The archive's list opens a configuration's page
   kitOpenSaved(id) {

@@ -46,6 +46,15 @@ function tokenCookieOptions(req) {
   };
 }
 
+// The account of a login token, or null. Role and account come from the database, not from the
+// 30-day token: a user demoted to viewer or deleted loses the rights at once. Other tokens signed
+// with the same secret (model unlock tokens: { unlock }) are no login. Throws for a bad token.
+function userFromToken(token) {
+  const decoded = jwt.verify(token, getJwtSecret());
+  const account = decoded && decoded.id ? get('SELECT id, role FROM users WHERE id = ?', [decoded.id]) : null;
+  return account ? { ...decoded, role: account.role } : null;
+}
+
 function authenticate(req, res, next) {
   let token = req.cookies[TOKEN_COOKIE];
   let isApiToken = false;
@@ -58,9 +67,9 @@ function authenticate(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    const secret = getJwtSecret();
-    const decoded = jwt.verify(token, secret);
-    
+    const decoded = userFromToken(token);
+    if (!decoded) return res.status(401).json({ error: 'Invalid token' });
+
     // CSRF protection for state-changing methods (skip if using API token)
     if (!isApiToken && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
       const csrfToken = req.headers['x-csrf-token'];
@@ -71,9 +80,11 @@ function authenticate(req, res, next) {
     
     req.user = decoded;
 
-    // Viewers cannot modify state
+    // Viewers cannot modify state, except their own profile. The full path: in a router mounted
+    // at /api/auth, req.path is "/profile"
+    const fullPath = req.baseUrl + req.path;
     if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) && req.user.role === 'viewer') {
-      if (!req.path.startsWith('/api/auth/profile') && !req.path.startsWith('/api/auth/logout')) {
+      if (!fullPath.startsWith('/api/auth/profile') && !fullPath.startsWith('/api/auth/logout')) {
         return res.status(403).json({ error: 'Viewer accounts cannot modify data' });
       }
     }
@@ -96,6 +107,7 @@ function requireUploader(req, res, next) {
 
 module.exports = {
   authenticate,
+  userFromToken,
   requireAdmin,
   requireUploader,
   getJwtSecret,

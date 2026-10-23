@@ -5,7 +5,6 @@ const fs = require('fs');
 const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const jwt = require('jsonwebtoken');
 
 // Centralized configuration and logging
 const { PORT, UPLOADS_DIR, LIBRARY_PATH } = require('./config');
@@ -22,7 +21,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // Database & Middleware
 const { initDatabase, get, saveDb } = require('./database');
 const { setUploadsDir } = require('./middleware/upload');
-const { getJwtSecret, TOKEN_COOKIE } = require('./middleware/auth');
+const { TOKEN_COOKIE, userFromToken } = require('./middleware/auth');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { getSettingBool } = require('./utils/modelHelpers');
 
@@ -105,12 +104,14 @@ app.use((req, res, next) => {
     token = req.headers.authorization.split(' ')[1];
   }
   if (token) {
+    // An account that still exists, with its role from the database (not a model unlock token)
     try {
-      req.user = jwt.verify(token, getJwtSecret());
+      req.user = userFromToken(token) || undefined;
     } catch (e) {
-      if (getSettingBool('require_login_to_view')) {
-        return res.status(401).json({ error: 'Private instance - invalid token' });
-      }
+      req.user = undefined;
+    }
+    if (!req.user && getSettingBool('require_login_to_view')) {
+      return res.status(401).json({ error: 'Private instance - invalid token' });
     }
   } else if (getSettingBool('require_login_to_view')) {
     return res.status(401).json({ error: 'Private instance - login required' });

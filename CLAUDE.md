@@ -49,6 +49,10 @@ page and footer credit GyroidVault; keep that.
 
 ## Code map
 
+- Login tokens last 30 days, so `userFromToken` (`server/middleware/auth.js`, used by
+  `authenticate` and the gatekeeper) reads the account and its role from the database on every
+  request: a demoted or deleted user loses the rights at once, and a model unlock token (same
+  secret) is no login.
 - Backend: Node/Express, sql.js (SQLite in memory, saved to disk). `server/index.js` (security
   middleware, gatekeeper, static routes), `server/routes/*.js`, `server/utils/*.js`,
   `server/database.js` (schema + migrations via `ALTER TABLE ... ADD COLUMN` checks). The database

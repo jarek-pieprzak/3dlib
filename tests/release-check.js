@@ -931,8 +931,20 @@ async function runE2ETests() {
       assert(reg3.status === 201 || reg3.status === 200, `Third user register failed (${reg3.status}): ${JSON.stringify(reg3.data)}`);
       const login3 = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'łUCJA_TEST', password: 'Password123!' } });
       assert(login3.status === 200 && login3.data.user?.username === 'Łucja_test', `A Polish user name must log in in any case (${login3.status})`);
+      // Rights come from the database, not from the 30-day token: a demoted user is a viewer at
+      // once, a deleted one is logged out; a viewer may still change their own profile
+      const lucja = { cookie: (login3.setCookie || '').split(';')[0], csrfToken: login3.data.csrfToken };
+      assert((await apiReq('/api/auth/profile', { method: 'PUT', session: viewerSession, body: { preferred_slicer: 'orcaslicer' } })).status === 200,
+        'A viewer must be able to change their own profile');
+      assert((await apiReq(`/api/users/${login3.data.user.id}/role`, { method: 'PUT', session: adminSession, body: { role: 'viewer' } })).status === 200, 'Demoting failed');
+      const asViewer = await apiReq('/api/models', { method: 'POST', session: lucja, body: { name: 'Should not exist' } });
+      assert(asViewer.status === 403, `A demoted user must lose the rights at once (${asViewer.status})`);
+      assert((await apiReq(`/api/users/${login3.data.user.id}`, { method: 'DELETE', session: adminSession })).status === 200, 'Deleting the user failed');
+      const gone = await apiReq('/api/auth/me', { session: lucja });
+      assert(gone.status === 401, `A deleted user's token must stop working (${gone.status})`);
+
       // Logins ignore case, so a name or email taken in another case is taken
-      for (const body of [{ username: 'ŁUCJA_TEST', email: 'other@test.local' }, { username: 'someone_new', email: 'VIEWER@TEST.LOCAL' }]) {
+      for (const body of [{ username: 'VIEWER_TEST', email: 'other@test.local' }, { username: 'someone_new', email: 'VIEWER@TEST.LOCAL' }]) {
         const dup = await apiReq('/api/auth/register', { method: 'POST', body: { ...body, password: 'Password123!' } });
         assert(dup.status === 400, `Registering ${body.username} / ${body.email} must fail as taken (${dup.status})`);
       }

@@ -59,7 +59,9 @@ page and footer credit GyroidVault; keep that.
   before "apple"). Searches: `fold(column) LIKE fold(?)` (case and accents ignored, "lozysko"
   finds "Łożysko"); logins: `ulower()`; name order: `ORDER BY sortkey(name)`; in JS
   `compareNames` (Polish alphabet, numbers by value). The browser has `UI.foldText` and
-  `UI.compareNames`. The test server runs with `LC_ALL=C`, like the image.
+  `UI.compareNames`. The test server runs with `LC_ALL=C`, like the image. Names that differ only
+  in case are one name: tags (`tagIdFor` in `modelHelpers.js` for every tag given by name),
+  categories, materials, user names and emails, model names and folders (409 / "taken").
 - Download headers with a file name: `contentDisposition()` (`server/utils/modelHelpers.js`).
   Node refuses a header with "Ł" or "ś" (500); `res.download` / `res.attachment` are fine.
 - Frontend: vanilla JS, no build step. `public/js/api.js` (API client), `public/js/components.js`

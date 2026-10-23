@@ -163,6 +163,18 @@ function getZipEntryBuffer(entry) {
 }
 
 /**
+ * The id of the tag with this name, created when missing. Case is ignored, also of Polish letters
+ * (ulower, utils/names.js): "pla" is the tag "PLA", not a second one (tags.name is unique only by
+ * its bytes).
+ */
+function tagIdFor(name) {
+  const clean = String(name || '').trim();
+  if (!clean) return null;
+  const row = get('SELECT id FROM tags WHERE ulower(name) = ulower(?) ORDER BY id LIMIT 1', [clean]);
+  return row ? row.id : run('INSERT INTO tags (name) VALUES (?)', [clean]).lastId;
+}
+
+/**
  * Content-Disposition header for any file name. Node refuses a header with letters past U+00FF
  * ("Łożysko.3mf": 500), so the name goes as UTF-8 in filename* (RFC 6266) and plain ASCII in
  * filename for older clients.
@@ -217,6 +229,7 @@ function zipEntriesForFiles(files, folder = '') {
 module.exports = {
   getZipEntryBuffer,
   contentDisposition,
+  tagIdFor,
   zipEntriesForFiles,
   getFileUrl,
   getThumbUrl,

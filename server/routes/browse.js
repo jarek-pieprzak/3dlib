@@ -6,7 +6,7 @@ const path = require('path');
 const { get, all, run } = require('../database');
 const { LIBRARY_PATH } = require('../config');
 const { authenticate } = require('../middleware/auth');
-const { getThumbUrl } = require('../utils/modelHelpers');
+const { getThumbUrl, tagIdFor } = require('../utils/modelHelpers');
 const { fold, compareNames } = require('../utils/names');
 const trash = require('../utils/trash');
 const { assertPathWritable, FsError } = require('../utils/projectFiles');
@@ -210,9 +210,7 @@ router.post('/bulk-tag', authenticate, (req, res) => {
         if (typeof t === 'string' && t.startsWith('NEW:')) {
           const tagName = t.substring(4).trim();
           if (tagName) {
-            run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [tagName]);
-            const row = get('SELECT id FROM tags WHERE name = ?', [tagName]);
-            if (row) finalTagIds.push(row.id);
+            finalTagIds.push(tagIdFor(tagName));
           }
         } else {
           finalTagIds.push(Number(t));

@@ -368,10 +368,23 @@ const uploadSlicerHandler = [authenticate, upload.single('file'), (req, res) => 
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/^[.\s]+|[.\s]+$/g, '') || `model_${Date.now()}`;
     const filename = name + ext;
     const userId = req.user.id;
-    const libPath = validatePathConfinement(LIBRARY_PATH, name);
+    let libPath = validatePathConfinement(LIBRARY_PATH, name);
     if (!libPath || libPath === path.resolve(LIBRARY_PATH)) {
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Invalid file name' });
+    }
+    // A second upload of "Benchy.gcode" joins the model of the folder "Benchy" (case ignored, as a
+    // share may ignore it): a second model of one folder broke the unique library_path (500)
+    const existing = get('SELECT * FROM models WHERE ulower(library_path) = ulower(?)', [libPath]);
+    if (existing) {
+      const refuse = existing.deleted_at ? [409, 'A model of this name is in the Trash']
+        : existing.is_readonly ? [409, 'The model of this name is read-only']
+        : !canEditModel(req.user, existing) ? [403, 'The model of this name belongs to someone else'] : null;
+      if (refuse) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(refuse[0]).json({ error: refuse[1] });
+      }
+      libPath = existing.library_path;
     }
     if (!fs.existsSync(libPath)) fs.mkdirSync(libPath, { recursive: true });
 
@@ -403,15 +416,15 @@ const uploadSlicerHandler = [authenticate, upload.single('file'), (req, res) => 
       thumbnail = extractF3dThumbnail(finalDest, UPLOADS_DIR);
     }
 
-    // Create new model
-    const r = run('INSERT INTO models (name, user_id, library_path, thumbnail) VALUES (?, ?, ?, ?)',
-      [name, userId, libPath, thumbnail]);
-    const modelId = r.lastId;
+    // A new model, or the one of this folder (it keeps its cover and preview)
+    const modelId = existing ? existing.id
+      : run('INSERT INTO models (name, user_id, library_path, thumbnail) VALUES (?, ?, ?, ?)', [name, userId, libPath, thumbnail]).lastId;
+    if (existing && thumbnail && !existing.thumbnail) run('UPDATE models SET thumbnail=? WHERE id=?', [thumbnail, modelId]);
 
     const rFile = run('INSERT INTO files (model_id, filename, original_name, file_size, file_type, metadata, library_path, thumbnail) VALUES (?,?,?,?,?,?,?,?)',
-      [modelId, path.basename(finalDest), filename, size, fileType, metadata, finalDest, thumbnail]);
-    
-    if (fileType === 'stl' || fileType === '3mf') {
+      [modelId, path.basename(finalDest), path.basename(finalDest), size, fileType, metadata, finalDest, thumbnail]);
+
+    if ((fileType === 'stl' || fileType === '3mf') && !(existing && existing.preview_file_id)) {
       run('UPDATE models SET preview_file_id=? WHERE id=?', [rFile.lastId, modelId]);
     }
       

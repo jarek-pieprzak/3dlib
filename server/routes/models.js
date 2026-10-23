@@ -8,7 +8,7 @@ const { LIBRARY_PATH, UPLOADS_DIR } = require('../config');
 const { authenticate, requireUploader } = require('../middleware/auth');
 const { upload, getFileType } = require('../middleware/upload');
 const { validatePathConfinement, safeUrl } = require('../middleware/security');
-const { getFileUrl, getThumbUrl, getZipEntryBuffer, zipEntriesForFiles, getSettingBool, canEditModel } = require('../utils/modelHelpers');
+const { getFileUrl, getThumbUrl, getZipEntryBuffer, zipEntriesForFiles, getSettingBool, canEditModel, tagIdFor } = require('../utils/modelHelpers');
 const { sendZip, entryName } = require('../utils/zipStream');
 const downloadSelections = require('../utils/downloadSelections');
 const kits = require('../utils/kits');
@@ -488,13 +488,14 @@ router.post('/', authenticate, requireUploader, (req, res) => {
       source_url = safeUrl(source_url);
     }
 
-    // Check if model with this name or library_path already exists
-    const existingModel = get('SELECT id, name, library_path FROM models WHERE name = ? OR library_path = ?', [trimmedName, libPath]);
+    // Check if model with this name or library_path already exists. Case is ignored: on a share
+    // that ignores it, "benchy" would be the folder of "Benchy"
+    const existingModel = get('SELECT id, name, library_path FROM models WHERE ulower(name) = ulower(?) OR ulower(library_path) = ulower(?)', [trimmedName, libPath]);
     if (existingModel) {
       const isAvailable = (candidate) => {
         const safe = candidate.replace(/[<>:"/\\|?*]/g, '').trim();
         const p = create_subfolder !== false && create_subfolder !== 'false' ? path.join(basePath, safe) : basePath;
-        return !get('SELECT id FROM models WHERE name = ? OR library_path = ?', [candidate, p]);
+        return !get('SELECT id FROM models WHERE ulower(name) = ulower(?) OR ulower(library_path) = ulower(?)', [candidate, p]);
       };
 
       const suggestions = [];
@@ -575,8 +576,7 @@ router.post('/', authenticate, requireUploader, (req, res) => {
         if (typeof t === 'string') {
           const cleanTag = t.startsWith('NEW:') ? t.substring(4).trim() : t.trim();
           if (!cleanTag) continue;
-          run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [cleanTag]);
-          tagId = get('SELECT id FROM tags WHERE name=?', [cleanTag]).id;
+          tagId = tagIdFor(cleanTag);
         }
         run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [r.lastId, tagId]); 
       }
@@ -631,8 +631,7 @@ router.put('/:id', authenticate, (req, res) => {
           if (typeof t === 'string') {
           const cleanTag = t.startsWith('NEW:') ? t.substring(4).trim() : t.trim();
           if (!cleanTag) continue;
-          run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [cleanTag]);
-          tagId = get('SELECT id FROM tags WHERE name=?', [cleanTag]).id;
+          tagId = tagIdFor(cleanTag);
         }
           run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [id, tagId]);
         }
@@ -705,11 +704,8 @@ router.post('/bulk-update', authenticate, (req, res) => {
           if (typeof t === 'number') {
             run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [id, t]);
           } else {
-            run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [t]);
-            const tagRow = get('SELECT id FROM tags WHERE name=?', [t]);
-            if (tagRow) {
-              run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [id, tagRow.id]);
-            }
+            const tagId = tagIdFor(t);
+            if (tagId) run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [id, tagId]);
           }
         }
       }
@@ -717,8 +713,8 @@ router.post('/bulk-update', authenticate, (req, res) => {
       if (remove_tags && Array.isArray(remove_tags)) {
         for (const t of remove_tags) {
           if (!t) continue;
-          const tagRow = get('SELECT id FROM tags WHERE name=?', [t]);
-          if (tagRow) {
+          // Every tag of that name, whatever its case
+          for (const tagRow of all('SELECT id FROM tags WHERE ulower(name) = ulower(?)', [String(t).trim()])) {
             run('DELETE FROM model_tags WHERE model_id=? AND tag_id=?', [id, tagRow.id]);
           }
         }
@@ -732,9 +728,7 @@ router.post('/bulk-update', authenticate, (req, res) => {
             if (typeof t === 'string') {
               const cleanTag = t.startsWith('NEW:') ? t.substring(4).trim() : t.trim();
               if (!cleanTag) continue;
-              run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [cleanTag]);
-              const tagRow = get('SELECT id FROM tags WHERE name=?', [cleanTag]);
-              tagId = tagRow ? tagRow.id : null;
+              tagId = tagIdFor(cleanTag);
             }
             if (tagId) {
               run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [id, tagId]);

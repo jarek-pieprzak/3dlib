@@ -33,6 +33,10 @@ router.post('/register', authLimiter, async (req, res) => {
       role = 'admin';
     }
     
+    // Logins ignore case (ulower), so "Admin" next to "admin" would be two accounts behind one login
+    if (get('SELECT id FROM users WHERE ulower(username) = ulower(?) OR ulower(email) = ulower(?)', [username, email])) {
+      return res.status(400).json({ error: 'Username or Email taken' });
+    }
     const hash = await bcrypt.hash(password, 10);
     const r = run('INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)', [username, email, hash, role]);
     
@@ -128,6 +132,11 @@ router.put('/profile', authenticate, async (req, res) => {
       updates.push('password_hash=?'); params.push(hash);
     }
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+    // Another account with this name or email, whatever its case (logins ignore case)
+    const clash = [username && ['ulower(username) = ulower(?)', username], email && ['ulower(email) = ulower(?)', email]].filter(Boolean);
+    if (clash.length && get(`SELECT id FROM users WHERE id != ? AND (${clash.map(c => c[0]).join(' OR ')})`, [req.user.id, ...clash.map(c => c[1])])) {
+      return res.status(400).json({ error: 'Username or Email taken' });
+    }
     params.push(req.user.id);
     run(`UPDATE users SET ${updates.join(',')} WHERE id=?`, params);
     res.json({ success: true });

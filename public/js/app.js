@@ -4531,7 +4531,16 @@ const App = {
     if (!input || !container) return;
     const val = input.value.trim();
     if (!val) return;
-    
+    // A tag already in the list (case ignored, as on the server) is ticked, not added twice
+    const same = [...container.querySelectorAll('input[name="tags"]')]
+      .find(cb => (cb.nextElementSibling?.textContent || '').trim().toLowerCase() === val.toLowerCase());
+    if (same) {
+      same.checked = true;
+      input.value = '';
+      input.focus();
+      return;
+    }
+
     const label = document.createElement('label');
     label.className = 'tag-pill-checkbox';
     // Use a prefix to identify it as a new tag string rather than an ID

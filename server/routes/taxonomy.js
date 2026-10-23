@@ -21,6 +21,8 @@ router.post('/categories', authenticate, (req, res) => {
   try {
     const { name, color } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
+    // "pla" is the category "PLA": case is ignored, also of Polish letters (utils/names.js)
+    if (get('SELECT id FROM categories WHERE ulower(name) = ulower(?)', [name.trim()])) return res.status(409).json({ error: 'Already exists' });
     const r = run('INSERT INTO categories (name,color) VALUES (?,?)', [name.trim(), color || '#8b5cf6']);
     res.status(201).json(get('SELECT * FROM categories WHERE id=?', [r.lastId]));
   } catch (e) {
@@ -32,6 +34,7 @@ router.put('/categories/:id', authenticate, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
     const { name, color } = req.body;
+    if (name && get('SELECT id FROM categories WHERE ulower(name) = ulower(?) AND id != ?', [String(name).trim(), Number(req.params.id)])) return res.status(409).json({ error: 'Already exists' });
     run('UPDATE categories SET name=COALESCE(?,name),color=COALESCE(?,color) WHERE id=?', [name, color, Number(req.params.id)]);
     res.json(get('SELECT * FROM categories WHERE id=?', [Number(req.params.id)]));
   } catch (e) {
@@ -63,6 +66,7 @@ router.post('/tags', authenticate, (req, res) => {
   try {
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
+    if (get('SELECT id FROM tags WHERE ulower(name) = ulower(?)', [name.trim()])) return res.status(409).json({ error: 'Already exists' });
     const r = run('INSERT INTO tags (name) VALUES (?)', [name.trim()]);
     res.status(201).json(get('SELECT * FROM tags WHERE id=?', [r.lastId]));
   } catch (e) {
@@ -94,6 +98,7 @@ router.post('/materials', authenticate, (req, res) => {
   try {
     const { name } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
+    if (get('SELECT id FROM materials WHERE ulower(name) = ulower(?)', [name.trim()])) return res.status(409).json({ error: 'Already exists' });
     const r = run('INSERT INTO materials (name,is_preset) VALUES (?,0)', [name.trim()]);
     res.status(201).json(get('SELECT * FROM materials WHERE id=?', [r.lastId]));
   } catch (e) {

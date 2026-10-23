@@ -931,6 +931,11 @@ async function runE2ETests() {
       assert(reg3.status === 201 || reg3.status === 200, `Third user register failed (${reg3.status}): ${JSON.stringify(reg3.data)}`);
       const login3 = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'łUCJA_TEST', password: 'Password123!' } });
       assert(login3.status === 200 && login3.data.user?.username === 'Łucja_test', `A Polish user name must log in in any case (${login3.status})`);
+      // Logins ignore case, so a name or email taken in another case is taken
+      for (const body of [{ username: 'ŁUCJA_TEST', email: 'other@test.local' }, { username: 'someone_new', email: 'VIEWER@TEST.LOCAL' }]) {
+        const dup = await apiReq('/api/auth/register', { method: 'POST', body: { ...body, password: 'Password123!' } });
+        assert(dup.status === 400, `Registering ${body.username} / ${body.email} must fail as taken (${dup.status})`);
+      }
     });
 
     await check('Security: /uploads and /library-files never serve files outside their folder (database, other files)', async () => {
@@ -1036,6 +1041,47 @@ async function runE2ETests() {
       const up = await apiReq(`/api/models/${pdfOnly.data.id}/files`, { method: 'POST', session: adminSession, body: form });
       assert(up.status === 200 || up.status === 201, `PDF upload failed (${up.status}): ${JSON.stringify(up.data)}`);
       Object.assign(keptModels, { empty: empty.data.id, pdfOnly: pdfOnly.data.id });
+    });
+
+    await check('Names that differ only in case are one name: tags, categories, materials, models', async () => {
+      const make = async (name, tags) => (await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name, tags } })).data.id;
+      const a = await make('Case Tag A', ['NEW:Szuflada']);
+      const b = await make('Case Tag B', ['NEW:szuflada', 'NEW:ŁOŻYSKA']);
+      const tagsNamed = async (n) => ((await apiReq('/api/tags', { session: adminSession })).data || []).filter(t => t.name.toLowerCase() === n);
+      assert((await tagsNamed('szuflada')).length === 1, `"szuflada" must reuse the tag "Szuflada": ${JSON.stringify(await tagsNamed('szuflada'))}`);
+      const tagIds = async (id) => ((await apiReq(`/api/models/${id}`, { session: adminSession })).data.tags || []).map(t => t.id);
+      assert((await tagIds(a))[0] === (await tagIds(b))[0], 'Both models must have the same tag');
+      // Bulk add and remove ignore case too, also of Polish letters
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [a], add_tags: ['łożyska'] } });
+      assert((await tagsNamed('łożyska')).length === 1 && (await tagIds(a)).length === 2, `Bulk "łożyska" must reuse "ŁOŻYSKA": ${JSON.stringify(await tagsNamed('łożyska'))}`);
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [a], remove_tags: ['SZUFLADA'] } });
+      assert((await tagIds(a)).length === 1, 'Bulk remove of "SZUFLADA" must take off "Szuflada"');
+      // Settings refuse a second spelling
+      assert((await apiReq('/api/tags', { method: 'POST', session: adminSession, body: { name: 'SZUFLADA' } })).status === 409, 'A tag in another case already exists');
+      assert((await apiReq('/api/categories', { method: 'POST', session: adminSession, body: { name: 'functional' } })).status === 409, 'The category "Functional" already exists');
+      assert((await apiReq('/api/materials', { method: 'POST', session: adminSession, body: { name: 'pla' } })).status === 409, 'The material "PLA" already exists');
+      const cats = (await apiReq('/api/categories', { session: adminSession })).data;
+      const other = cats.find(c => c.name !== 'Functional');
+      assert((await apiReq(`/api/categories/${other.id}`, { method: 'PUT', session: adminSession, body: { name: 'FUNCTIONAL' } })).status === 409, 'Renaming a category to another one\'s name must fail');
+      // A model name taken in another case gets the "next version" suggestions
+      const taken = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'case tag a' } });
+      assert(taken.status === 409 && taken.data.suggested_name, `"case tag a" is taken by "Case Tag A" (${taken.status})`);
+      for (const id of [a, b]) await apiReq(`/api/models/${id}`, { method: 'DELETE', session: adminSession });
+    });
+
+    await check('A slicer upload of a name that exists goes to that model (case ignored), not to a second model', async () => {
+      const send = async (name) => {
+        const form = new FormData();
+        form.append('file', new Blob(['G28\nG1 Z10\n'], { type: 'text/x-gcode' }), name);
+        return apiReq('/api/upload-slicer', { method: 'POST', session: adminSession, body: form });
+      };
+      const first = await send('Slicer Upload.gcode');
+      const again = await send('Slicer Upload.gcode');
+      const lower = await send('slicer upload.gcode');
+      assert(first.status === 201 && again.status === 201 && lower.status === 201, `Uploads answered ${first.status}, ${again.status}, ${lower.status}: ${JSON.stringify(again.data)}`);
+      assert(again.data.model_id === first.data.model_id && lower.data.model_id === first.data.model_id, 'All three uploads must go to one model');
+      const names = (await apiReq(`/api/models/${first.data.model_id}`, { session: adminSession })).data.files.map(f => f.original_name);
+      assert(names.length === 3 && new Set(names).size === 3, `Three files of their own names in one model: ${JSON.stringify(names)}`);
     });
 
     await check('Sorting by name follows the Polish alphabet and ignores case ("benchy" before "Zebra", "Łożysko" among the l\'s)', async () => {

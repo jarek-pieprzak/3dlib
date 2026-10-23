@@ -76,7 +76,8 @@ router.post('/login', loginLimiter, async (req, res) => {
     if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
 
     const identifier = String(username).trim();
-    const user = get('SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)', [identifier, identifier]);
+    // ulower(): LOWER() knows only A-Z, so "łucja" would not log in as "Łucja"
+    const user = get('SELECT * FROM users WHERE ulower(username) = ulower(?) OR ulower(email) = ulower(?)', [identifier, identifier]);
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }

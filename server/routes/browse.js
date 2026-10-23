@@ -7,6 +7,7 @@ const { get, all, run } = require('../database');
 const { LIBRARY_PATH } = require('../config');
 const { authenticate } = require('../middleware/auth');
 const { getThumbUrl } = require('../utils/modelHelpers');
+const { fold, compareNames } = require('../utils/names');
 const trash = require('../utils/trash');
 const { assertPathWritable, FsError } = require('../utils/projectFiles');
 
@@ -405,8 +406,8 @@ router.get('/', authenticate, (req, res) => {
     }
     
     // Sort folders alphabetically, files by name
-    folders.sort((a, b) => a.name.localeCompare(b.name));
-    files.sort((a, b) => a.name.localeCompare(b.name));
+    folders.sort((a, b) => compareNames(a.name, b.name));
+    files.sort((a, b) => compareNames(a.name, b.name));
     
     // Figure out parent path for the breadcrumb "go up" button
     const parts = reqPath.split('/').filter(Boolean);
@@ -439,7 +440,7 @@ router.get('/tree', authenticate, (req, res) => {
 
       return entries
         .filter(e => e.isDirectory() && !e.name.startsWith('.') && !deletedModels.has(path.resolve(dirPath, e.name)))
-        .sort((a, b) => a.name.localeCompare(b.name))
+        .sort((a, b) => compareNames(a.name, b.name))
         .map(entry => {
           const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
           const childFull = path.join(dirPath, entry.name);
@@ -461,7 +462,7 @@ router.get('/tree', authenticate, (req, res) => {
 // ─── GET /api/browse/search ──────────────────────────────────────────────────
 router.get('/search', authenticate, (req, res) => {
   try {
-    const q = (req.query.q || '').toLowerCase();
+    const q = fold(String(req.query.q || '')); // case and Polish letters ignored (utils/names.js)
     if (!q) return res.json({ folders: [], files: [] });
     
     const dbThumbs = all('SELECT library_path, thumbnail FROM files WHERE thumbnail IS NOT NULL AND deleted_at IS NULL');
@@ -502,7 +503,7 @@ router.get('/search', authenticate, (req, res) => {
         if (item.isDirectory() ? inTrash.folder(childFull) : inTrash.file(childFull)) continue;
 
         if (item.isDirectory()) {
-          if (item.name.toLowerCase().includes(q) || matchingModelPaths.has(childFull)) {
+          if (fold(item.name).includes(q) || matchingModelPaths.has(childFull)) {
             let itemCount = 0;
             try { itemCount = fs.readdirSync(childFull).filter(f => !f.startsWith('.')).length; } catch(e){}
             let folderThumbs = [];
@@ -531,7 +532,7 @@ router.get('/search', authenticate, (req, res) => {
           }
           walk(childFull, childRel);
         } else {
-          if (item.name.toLowerCase().includes(q)) {
+          if (fold(item.name).includes(q)) {
             const ext = path.extname(item.name).toLowerCase();
             if (supportedExts.includes(ext) || imageExts.includes(ext)) {
               let fileType = 'other';

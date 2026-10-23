@@ -53,9 +53,13 @@ page and footer credit GyroidVault; keep that.
   middleware, gatekeeper, static routes), `server/routes/*.js`, `server/utils/*.js`,
   `server/database.js` (schema + migrations via `ALTER TABLE ... ADD COLUMN` checks). The database
   file is `<data>/3dlib.db`. sql.js reopens the database on every save (`db.export()`), dropping
-  pragmas and SQL functions; `prepareConnection` sets them again. Text searches use
-  `fold(column) LIKE ?` with a lower-cased term (SQLite folds only A-Z, not "Ł"); name order is
-  `ORDER BY sortkey(name)` (Polish alphabet, case ignored; plain ORDER BY puts "a" after "Z").
+  pragmas and SQL functions; `prepareConnection` sets them again.
+- Names with Polish letters (`server/utils/names.js`): SQLite's LIKE, LOWER() and ORDER BY know
+  only A-Z, and `localeCompare()` without a locale follows the server's (POSIX in Docker: "Zebra"
+  before "apple"). Searches: `fold(column) LIKE fold(?)` (case and accents ignored, "lozysko"
+  finds "Łożysko"); logins: `ulower()`; name order: `ORDER BY sortkey(name)`; in JS
+  `compareNames` (Polish alphabet, numbers by value). The browser has `UI.foldText` and
+  `UI.compareNames`. The test server runs with `LC_ALL=C`, like the image.
 - Download headers with a file name: `contentDisposition()` (`server/utils/modelHelpers.js`).
   Node refuses a header with "Ł" or "ś" (500); `res.download` / `res.attachment` are fine.
 - Frontend: vanilla JS, no build step. `public/js/api.js` (API client), `public/js/components.js`

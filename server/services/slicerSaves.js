@@ -19,6 +19,7 @@ const { get, all, run, saveDb } = require('../database');
 const { LIBRARY_PATH } = require('../config');
 const { tokenFromName, fileByToken, newToken } = require('../utils/slicerToken');
 const { hashFileStream } = require('../utils/modelHelpers');
+const { fold } = require('../utils/names');
 const { getFileType } = require('../utils/library');
 const projectFiles = require('../utils/projectFiles');
 const fileVersions = require('../utils/fileVersions');
@@ -64,11 +65,12 @@ function matchSave(name) {
     const f = fileByToken(token);
     return activeFile(f && f.id);
   }
-  const stem = cleanName(name).replace(/\.[^.]+$/, '').toLowerCase();
+  // fold(): "Lozysko zab.3mf" (the ASCII name of a slicer link) is "Łożysko ząb.3mf"
+  const stem = fold(cleanName(name).replace(/\.[^.]+$/, ''));
   const rows = all(`SELECT f.id, f.filename FROM files f JOIN models m ON m.id = f.model_id
     WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL AND f.library_path IS NOT NULL AND f.library_path NOT LIKE '%::%'
-      AND LOWER(f.filename) LIKE ?`, [`${stem}.%`])
-    .filter(f => f.filename.replace(/\.[^.]+$/, '').toLowerCase() === stem);
+      AND fold(f.filename) LIKE ?`, [`${stem}.%`])
+    .filter(f => fold(f.filename.replace(/\.[^.]+$/, '')) === stem);
   return rows.length === 1 ? activeFile(rows[0].id) : null;
 }
 

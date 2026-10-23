@@ -3,6 +3,16 @@ const UI = {
   // The 3D file types the server measures for the printer fit check (server/utils/meshSize.js)
   MEASURABLE: ['stl', 'obj', '3mf', 'step'],
 
+  // Names in order: Polish alphabet, case ignored, numbers by value ("Part 2" before "Part 10");
+  // the server orders the same way (server/utils/names.js)
+  compareNames: new Intl.Collator('pl', { numeric: true, sensitivity: 'base' }).compare,
+
+  // Search form of a text, as the server's fold(): lower case, accents dropped, "ł" as "l"
+  // ("lozysko" finds "Łożysko")
+  foldText(s) {
+    return String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l');
+  },
+
   // HTML entity escaping helper
   escapeHtml(str) {
     if (str === null || str === undefined) return '';
@@ -94,11 +104,10 @@ const UI = {
     }
 
     const countOf = (node) => node.files.length + [...node.folders.values()].reduce((n, child) => n + countOf(child), 0);
-    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
     const render = (node) => {
       const filesHtml = node.files.map(({ f, base }) => renderFile(f, base)).join('');
       const foldersHtml = [...node.folders.entries()]
-        .sort((a, b) => collator.compare(a[0], b[0]))
+        .sort((a, b) => this.compareNames(a[0], b[0]))
         .map(([name, child]) => {
           const count = countOf(child);
           const actions = opts.folderActions ? opts.folderActions(child.path) : '';
@@ -124,7 +133,7 @@ const UI = {
   // would reach the server raw and fail (400): ASCII letters, digits, "_", "-" and "." only.
   slicerFileName(f, ext) {
     const base = String(f.original_name || f.filename || '').split('/').pop().replace(/\.[^.]+$/, '');
-    const stem = base.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[łŁ]/g, m => (m === 'ł' ? 'l' : 'L'))
+    const stem = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[łŁ]/g, m => (m === 'ł' ? 'l' : 'L'))
       .replace(/[^A-Za-z0-9.-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 100) || 'model';
     return `${stem}${f.slicer_token ? `_3dl-${f.slicer_token}` : ''}.${ext}`;
   },
@@ -2982,7 +2991,7 @@ const UI = {
         <div><h1 class="page-title">Collections</h1><p class="page-subtitle">Group models into collections</p></div>
         ${App.currentUser?.role !== 'viewer' ? '<button class="btn btn-primary" onclick="App.showCreateProject()">+ New Collection</button>' : ''}
       </div>
-      <div class="model-grid">
+      <div class="model-grid" id="collections-grid">
         ${list || '<div class="empty-state" style="grid-column: 1/-1">No collections yet</div>'}
       </div>`;
   },

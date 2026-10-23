@@ -215,7 +215,7 @@ router.post('/settings/smtp/test', authenticate, async (req, res) => {
 router.get('/users', authenticate, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
-    res.json(all('SELECT id, username, email, role FROM users ORDER BY username ASC'));
+    res.json(all('SELECT id, username, email, role FROM users ORDER BY sortkey(username)'));
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to fetch users' });

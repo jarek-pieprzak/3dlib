@@ -17,7 +17,7 @@ router.get('/pending', authenticate, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
     const locked = Boolean(protection.passwordHash());
-    const models = all('SELECT id, name, thumbnail, preview_file_id, is_protected FROM models WHERE deleted_at IS NULL ORDER BY name');
+    const models = all('SELECT id, name, thumbnail, preview_file_id, is_protected FROM models WHERE deleted_at IS NULL ORDER BY sortkey(name)');
     const files = all(`SELECT f.id, f.model_id, f.filename, f.library_path, f.file_type, f.is_archive_entry
       FROM files f JOIN models m ON m.id = f.model_id
       WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL AND f.file_type IN ('stl', '3mf')

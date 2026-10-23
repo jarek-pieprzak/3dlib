@@ -626,7 +626,7 @@ const App = {
 
       const sortMode = document.getElementById('filter-sort')?.value || 'name';
       if (sortMode === 'name') {
-        data.files.sort((a,b) => a.name.localeCompare(b.name));
+        data.files.sort((a,b) => UI.compareNames(a.name, b.name));
       } else if (sortMode === 'updated' || sortMode === 'created') {
         data.files.sort((a,b) => (b.mtime || 0) - (a.mtime || 0));
       }
@@ -678,7 +678,7 @@ const App = {
         // Filter based on toolbar settings
         const sortMode = document.getElementById('filter-sort')?.value || 'name';
         if (sortMode === 'name') {
-          data.files.sort((a,b) => a.name.localeCompare(b.name));
+          data.files.sort((a,b) => UI.compareNames(a.name, b.name));
         } else if (sortMode === 'updated' || sortMode === 'created') {
           data.files.sort((a,b) => (b.mtime || 0) - (a.mtime || 0));
         }
@@ -1662,6 +1662,7 @@ const App = {
     try {
       this.cachedProjects = await API.getProjects();
       this.el.innerHTML = UI.projectsPage(this.cachedProjects, this.collectionsSortBy, this.collectionsSearchQuery);
+      this.updateCollectionsGrid();
       this.renderSidebarCollections();
     } catch (e) { this.toast('Failed to load collections', 'error'); }
   },
@@ -1676,19 +1677,22 @@ const App = {
     this.updateCollectionsGrid();
   },
 
+  // The search (top bar) and sort of the collections page, applied to its grid
   updateCollectionsGrid() {
-    const grid = document.getElementById('collections-grid');
+    let grid = document.getElementById('collections-grid');
     if (!grid) {
-      this.el.innerHTML = UI.projectsPage(this.cachedProjects, this.collectionsSortBy, this.collectionsSearchQuery);
-      return;
+      this.el.innerHTML = UI.projectsPage(this.cachedProjects || [], this.collectionsSortBy, this.collectionsSearchQuery);
+      grid = document.getElementById('collections-grid');
     }
+    // No collections at all: the page keeps its own empty state
+    if (!grid || !(this.cachedProjects || []).length) return;
     let filtered = (this.cachedProjects || []).slice();
     if (this.collectionsSearchQuery?.trim()) {
-      const q = this.collectionsSearchQuery.toLowerCase().trim();
-      filtered = filtered.filter(p => (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
+      const q = UI.foldText(this.collectionsSearchQuery.trim());
+      filtered = filtered.filter(p => UI.foldText(p.name).includes(q) || UI.foldText(p.description).includes(q));
     }
     if (this.collectionsSortBy === 'name') {
-      filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      filtered.sort((a, b) => UI.compareNames(a.name || '', b.name || ''));
     } else if (this.collectionsSortBy === 'models') {
       filtered.sort((a, b) => (b.model_count || 0) - (a.model_count || 0));
     } else {
@@ -1721,11 +1725,13 @@ const App = {
       this.selectedCollectionIds.push(numId);
     }
     this.el.innerHTML = UI.projectsPage(this.cachedProjects, this.collectionsSortBy, this.collectionsSearchQuery);
+    this.updateCollectionsGrid();
   },
 
   clearCollectionSelection() {
     this.selectedCollectionIds = [];
     this.el.innerHTML = UI.projectsPage(this.cachedProjects, this.collectionsSortBy, this.collectionsSearchQuery);
+    this.updateCollectionsGrid();
   },
 
   async bulkDeleteCollections() {
@@ -1816,10 +1822,10 @@ const App = {
   },
 
   filterModelPickerList(query) {
-    const q = (query || '').toLowerCase().trim();
+    const q = UI.foldText((query || '').trim());
     const items = document.querySelectorAll('#model-picker-list .collection-model-picker-item');
     items.forEach(item => {
-      const text = item.textContent.toLowerCase();
+      const text = UI.foldText(item.textContent);
       item.style.display = text.includes(q) ? 'flex' : 'none';
     });
   },
@@ -2026,10 +2032,10 @@ const App = {
   },
 
   filterCollectionList(query) {
-    const q = (query || '').toLowerCase().trim();
+    const q = UI.foldText((query || '').trim());
     const items = document.querySelectorAll('.collection-checkbox-item');
     items.forEach(item => {
-      const text = item.textContent.toLowerCase();
+      const text = UI.foldText(item.textContent);
       item.style.display = text.includes(q) ? 'flex' : 'none';
     });
   },

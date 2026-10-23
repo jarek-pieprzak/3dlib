@@ -247,6 +247,26 @@ async function runStaticAndUiChecks() {
     assert(code.includes('<code>*f*</code>') && code.includes('<pre><code># size<br>- 2*3*4</code></pre>'), `Code must stay as written: ${code}`);
   });
 
+  await check('Names in the browser: Polish order with numbers by value, searches ignore case and Polish letters', () => {
+    const sorted = ['Zebra', 'Część 10', 'benchy', 'Łożysko', 'Część 2', 'Lampa'].sort(UI.compareNames);
+    assert(sorted.join(', ') === 'benchy, Część 2, Część 10, Lampa, Łożysko, Zebra', `UI.compareNames order: ${sorted.join(', ')}`);
+    assert(UI.foldText('ŁOŻYSKO Część') === 'lozysko czesc' && UI.foldText(null) === '', `UI.foldText: ${UI.foldText('ŁOŻYSKO Część')}`);
+    const { fold } = require(path.join(ROOT_DIR, 'server/utils/names'));
+    for (const s of ['Łożysko ząb', 'ŻÓŁĆ', 'Ćma Śruba Ńń', 'Café']) assert(fold(s) === UI.foldText(s), `Server fold and UI.foldText differ for "${s}"`);
+
+    // The top bar search filters the collections page (its grid was not found before)
+    assert(UI.projectsPage(mockProjects).includes('id="collections-grid"'), 'The collections page needs its grid id');
+    const grid = { innerHTML: '' };
+    const getById = sandbox.document.getElementById;
+    sandbox.document.getElementById = (id) => (id === 'collections-grid' ? grid : getById(id));
+    App.cachedProjects = [{ ...mockProjects[0], id: 7, name: 'Półki ścienne' }, { ...mockProjects[0], id: 8, name: 'Other shelf' }];
+    App.collectionsSearchQuery = 'polki SCIENNE';
+    App.updateCollectionsGrid();
+    sandbox.document.getElementById = getById;
+    App.collectionsSearchQuery = '';
+    assert(grid.innerHTML.includes('Półki ścienne') && !grid.innerHTML.includes('Other shelf'), 'Searching "polki SCIENNE" must keep only "Półki ścienne"');
+  });
+
   await check('Names with quotes and HTML stay data in inline handlers (Folder Explorer, breadcrumbs, settings lists)', () => {
     const evil = `a'b"c<b>x</b>\\d');alert(1);('`;
     const decode = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -747,7 +767,10 @@ async function runE2ETests() {
       PORT: String(testPort),
       DATA_DIR: tmpDataDir,
       LIBRARY_PATH: tmpLibDir,
-      NODE_ENV: 'test'
+      NODE_ENV: 'test',
+      // No locale, like the Docker image: name order must not depend on it
+      LANG: 'C',
+      LC_ALL: 'C'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -859,6 +882,12 @@ async function runE2ETests() {
       assert(login2.data.user?.role === 'viewer', `Expected role="viewer", got "${login2.data.user?.role}"`);
       viewerSession.cookie = (login2.setCookie || '').split(';')[0];
       viewerSession.csrfToken = login2.data.csrfToken;
+
+      // Logins ignore case, also of Polish letters ("łUCJA_TEST" is "Łucja_test")
+      const reg3 = await apiReq('/api/auth/register', { method: 'POST', body: { username: 'Łucja_test', email: 'lucja@test.local', password: 'Password123!' } });
+      assert(reg3.status === 201 || reg3.status === 200, `Third user register failed (${reg3.status}): ${JSON.stringify(reg3.data)}`);
+      const login3 = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'łUCJA_TEST', password: 'Password123!' } });
+      assert(login3.status === 200 && login3.data.user?.username === 'Łucja_test', `A Polish user name must log in in any case (${login3.status})`);
     });
 
     await check('Security: /uploads and /library-files never serve files outside their folder (database, other files)', async () => {
@@ -941,18 +970,20 @@ async function runE2ETests() {
       assert(await fetchName(`/api/files/${screw.id}/3mf/Sruba.3mf`) === 'Śruba.3mf', 'The Bambu 3MF of an STL inside a ZIP must keep its name');
       assert(await fetchName(`/api/files/${screw.id}/stream`) === 'Śruba.stl', 'A file inside a ZIP must stream with its name');
 
-      // SQLite's LIKE folds A-Z only: "PÓŁ" must still find "Półki", also after a save (sql.js
-      // drops SQL functions on export)
+      // SQLite's LIKE folds A-Z only: "PÓŁ" and "polk" must still find "Półki", also after a save
+      // (sql.js drops SQL functions on export)
       await new Promise(r => setTimeout(r, 1100));
-      const found = await apiReq(`/api/models?search=${encodeURIComponent('PÓŁ')}`, { session: adminSession });
-      assert((found.data.models || []).some(m => m.id === createRes.data.id), `Search "PÓŁ" must find "Półki": ${JSON.stringify((found.data.models || []).map(m => m.name))}`);
+      for (const term of ['PÓŁ', 'polk']) {
+        const found = await apiReq(`/api/models?search=${encodeURIComponent(term)}`, { session: adminSession });
+        assert((found.data.models || []).some(m => m.id === createRes.data.id), `Search "${term}" must find "Półki": ${JSON.stringify((found.data.models || []).map(m => m.name))}`);
+      }
 
       const del = await apiReq(`/api/models/${createRes.data.id}`, { method: 'DELETE', session: adminSession });
       assert(del.status === 200, `Model delete failed (${del.status})`);
     });
 
     await check('Sorting by name follows the Polish alphabet and ignores case ("benchy" before "Zebra", "Łożysko" among the l\'s)', async () => {
-      const names = ['Sortuj Zębatka', 'Sortuj benchy', 'Sortuj Łożysko', 'Sortuj Lampa', 'Sortuj zebra', 'Sortuj Ćma', 'Sortuj Cyrk', 'Sortuj Żaba'];
+      const names = ['Sortuj Zębatka', 'Sortuj benchy', 'Sortuj Łożysko', 'Sortuj Lampa', 'Sortuj zebra', 'Sortuj Ćma', 'Sortuj Cyrk', 'Sortuj Żaba', 'Sortuj Część 10', 'Sortuj Część 2'];
       const ids = [];
       for (const name of names) {
         const r = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name } });
@@ -961,9 +992,27 @@ async function runE2ETests() {
       }
       const list = await apiReq('/api/models?search=Sortuj&sort=name&order=asc&limit=48', { session: adminSession });
       const got = (list.data.models || []).map(m => m.name.replace('Sortuj ', ''));
-      const want = ['benchy', 'Cyrk', 'Ćma', 'Lampa', 'Łożysko', 'zebra', 'Zębatka', 'Żaba'];
+      const want = ['benchy', 'Cyrk', 'Część 2', 'Część 10', 'Ćma', 'Lampa', 'Łożysko', 'zebra', 'Zębatka', 'Żaba'];
       assert(JSON.stringify(got) === JSON.stringify(want), `Expected ${want.join(', ')}; got ${got.join(', ')}`);
       for (const id of ids) await apiReq(`/api/models/${id}`, { method: 'DELETE', session: adminSession });
+
+      // Folder Explorer sorts in JS: the same order without a server locale (LC_ALL=C here)
+      const dir = path.join(tmpLibDir, 'Sortuj FE');
+      for (const n of ['Zebra', 'benchy', 'Łożysko', 'Część 10', 'Część 2']) {
+        fs.mkdirSync(path.join(dir, n), { recursive: true });
+        fs.writeFileSync(path.join(dir, `${n}.stl`), 'solid x\nendsolid x\n');
+      }
+      const order = ['benchy', 'Część 2', 'Część 10', 'Łożysko', 'Zebra'];
+      const browse = await apiReq(`/api/browse?path=${encodeURIComponent('Sortuj FE')}`, { session: adminSession });
+      const folders = (browse.data.folders || []).map(f => f.name);
+      const files = (browse.data.files || []).map(f => f.name.replace(/\.stl$/, ''));
+      assert(JSON.stringify(folders) === JSON.stringify(order), `Folder Explorer folders: expected ${order.join(', ')}; got ${folders.join(', ')}`);
+      assert(JSON.stringify(files) === JSON.stringify(order), `Folder Explorer files: expected ${order.join(', ')}; got ${files.join(', ')}`);
+      // Its search ignores case and Polish letters too
+      const hits = await apiReq(`/api/browse/search?q=${encodeURIComponent('LOZYSKO')}`, { session: adminSession });
+      assert((hits.data.folders || []).some(f => f.name === 'Łożysko') && (hits.data.files || []).some(f => f.name === 'Łożysko.stl'),
+        `Folder Explorer search "LOZYSKO" must find "Łożysko": ${JSON.stringify(hits.data)}`);
+      fs.rmSync(dir, { recursive: true, force: true });
     });
 
     let matrixModelId = null;
@@ -1767,6 +1816,7 @@ async function runE2ETests() {
 
       put('Gear Box/gear.3mf', mesh(10));
       put('Loose Xmas.stl', stl);
+      put('Półka/Łożysko ząb.3mf', mesh(50));
       await scanLibrary();
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '0' } });
       const gearModel = await byName('Gear Box');
@@ -1815,6 +1865,13 @@ async function runE2ETests() {
       const xd = await detail(xmasModel.id);
       const new3mf = xd.files.find(f => f.original_name === 'Loose Xmas.3mf');
       assert(new3mf && xd.preview_file_id === new3mf.id && xd.files.some(f => f.original_name === 'Loose Xmas.stl'), 'The 3MF must become the main file and the STL stay');
+
+      // A save without a token goes to the one file of its name, also with Polish letters: the
+      // ASCII name of a slicer link ("Lozysko_zab.3mf") is "Łożysko ząb.3mf"
+      put('.slicer-saves/Lozysko_zab.3mf', mesh(60));
+      s = (await saves()).find(x => x.name === 'Lozysko_zab.3mf');
+      assert(s && s.status === 'imported' && same(fs.readFileSync(lib('Półka/Łożysko ząb.3mf')), mesh(60)),
+        `A save named like a file with Polish letters must replace it, got ${s && s.status} ${(s && s.message) || ''}`);
 
       // A save that matches nothing waits to be assigned
       put('.slicer-saves/Mystery_part.3mf', mesh(40));

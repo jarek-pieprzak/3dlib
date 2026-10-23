@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { DATA_DIR, DB_PATH, UPLOADS_DIR } = require('./config');
+const { fold, sortKey } = require('./utils/names');
 
 // Ensure directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -18,21 +19,11 @@ let isSaving = false;
 // they are set again after every export
 function prepareConnection() {
   db.run('PRAGMA foreign_keys = ON');
-  // fold(text): lower case of every letter. SQLite's LIKE and LOWER() know only A-Z, so a search
-  // for "łożysko" would miss "Łożysko M8"
-  db.create_function('fold', s => (s == null ? null : String(s).toLowerCase()));
-  // sortkey(text): ORDER BY like a Polish dictionary. The default order is by bytes: "benchy"
-  // after "Zebra", "Łożysko" after "Zębatka"
+  // SQLite's LIKE, LOWER() and ORDER BY know only A-Z (utils/names.js):
+  // fold(name) LIKE fold(?) searches, ulower() compares logins, ORDER BY sortkey(name)
+  db.create_function('fold', fold);
+  db.create_function('ulower', s => (s == null ? null : String(s).toLowerCase()));
   db.create_function('sortkey', sortKey);
-}
-
-// Case ignored, other accents dropped, a Polish letter right after its base letter
-// ("a" < "ą" < "b", "z" < "ź" < "ż"): U+FFFF sorts after every letter
-const PL_LETTERS = { ą: 'a', ć: 'c', ę: 'e', ł: 'l', ń: 'n', ó: 'o', ś: 's', ź: 'z', ż: 'z' };
-function sortKey(s) {
-  if (s == null) return null;
-  return Array.from(String(s).toLowerCase(), c => (PL_LETTERS[c] ? PL_LETTERS[c] + (c === 'ż' ? '￿￿' : '￿') : c))
-    .join('').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
 function saveDb(sync = false) {

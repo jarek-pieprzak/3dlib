@@ -65,13 +65,14 @@ router.get('/', (req, res) => {
     }
 
     if (search) {
-      const s = `%${String(search).toLowerCase()}%`;
+      // fold(): case and Polish letters ignored, "lozysko" finds "Łożysko" (utils/names.js)
+      const s = `%${search}%`;
       conds.push(`(
-        fold(m.name) LIKE ?
-        OR fold(m.description) LIKE ?
-        OR m.category_id IN (SELECT id FROM categories WHERE fold(name) LIKE ?)
-        OR m.id IN (SELECT mt.model_id FROM model_tags mt JOIN tags t ON mt.tag_id = t.id WHERE fold(t.name) LIKE ?)
-        OR m.id IN (SELECT pm.model_id FROM project_models pm JOIN projects p ON pm.project_id = p.id WHERE fold(p.name) LIKE ?)
+        fold(m.name) LIKE fold(?)
+        OR fold(m.description) LIKE fold(?)
+        OR m.category_id IN (SELECT id FROM categories WHERE fold(name) LIKE fold(?))
+        OR m.id IN (SELECT mt.model_id FROM model_tags mt JOIN tags t ON mt.tag_id = t.id WHERE fold(t.name) LIKE fold(?))
+        OR m.id IN (SELECT pm.model_id FROM project_models pm JOIN projects p ON pm.project_id = p.id WHERE fold(p.name) LIKE fold(?))
       )`);
       params.push(s, s, s, s, s);
     }
@@ -380,7 +381,7 @@ router.get('/:id/download-selection/:token', (req, res) => {
     if (denied) return res.status(denied.status).json({ error: denied.error });
 
     const ids = selection.fileIds;
-    const files = all(`SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')}) ORDER BY original_name COLLATE NOCASE`, [id, ...ids]);
+    const files = all(`SELECT * FROM files WHERE model_id=? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')}) ORDER BY sortkey(original_name)`, [id, ...ids]);
     const entries = zipEntriesForFiles(files);
     if (selection.text) {
       const buf = Buffer.from(selection.text.content, 'utf8');

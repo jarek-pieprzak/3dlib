@@ -83,7 +83,7 @@ router.delete('/tags/:id', authenticate, (req, res) => {
 // ─── MATERIALS ──────────────────────────────────────────────────────────────
 router.get('/materials', (req, res) => {
   try {
-    res.json(all('SELECT mat.*,(SELECT COUNT(*) FROM print_history WHERE material_id=mat.id) as usage_count FROM materials mat ORDER BY mat.is_preset DESC,mat.name'));
+    res.json(all('SELECT mat.*,(SELECT COUNT(*) FROM print_history WHERE material_id=mat.id) as usage_count FROM materials mat ORDER BY mat.is_preset DESC,sortkey(mat.name)'));
   } catch (e) {
     res.status(500).json({ error: 'Failed' });
   }

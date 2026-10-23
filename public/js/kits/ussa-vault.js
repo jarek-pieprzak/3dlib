@@ -18,6 +18,8 @@
  * Pure functions, no DOM: window.VaultKit in the browser, globalThis.VaultKit in the tests.
  */
 globalThis.VaultKit = (function () {
+  // One order in the browser and on the server, whatever their locale (UI.compareNames)
+  const compareNames = new Intl.Collator('pl', { numeric: true, sensitivity: 'base' }).compare;
   const WIDTHS = ['S', 'M', 'L', 'XL'];
   const DEPTHS = [3, 4, 5, 6, 7];
   const HEIGHTS = ['1F', '2F', '4F'];
@@ -298,7 +300,7 @@ globalThis.VaultKit = (function () {
       // The instruction PDFs in the archive root go along with the download
       if (!String(f.original_name || '').includes('/') && /\.pdf$/i.test(f.original_name || '')) docs.push(f);
     }
-    docs.sort((a, b) => String(a.original_name).localeCompare(String(b.original_name)));
+    docs.sort((a, b) => compareNames(String(a.original_name), String(b.original_name)));
     return { byKey, byPath, unknown, docs, count: Object.keys(byKey).length };
   }
 
@@ -784,7 +786,7 @@ globalThis.VaultKit = (function () {
       notes.push('Quantities marked as estimates are not stated in the manual: check them before printing.');
     }
 
-    const list = [...parts.values()].sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group) || a.label.localeCompare(b.label));
+    const list = [...parts.values()].sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group) || compareNames(a.label, b.label));
     const docs = cfg.docs ? cat.docs.slice() : [];
     const printed = list.filter(p => p.qty > 0);
     const size = (f) => Number(f.file_size) || 0;

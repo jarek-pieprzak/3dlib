@@ -2298,7 +2298,13 @@ const App = {
   kitState() {
     const kit = this.kit;
     const dirty = kit.mode === 'edit' && JSON.stringify(kit.config.cfg) !== JSON.stringify(kit.cfg);
-    return { ...kit, loggedIn: Boolean(this.currentUser), dirty };
+    // A saved configuration: the successful prints of each part
+    let printed = null;
+    if (kit.config && this.currentModel) {
+      printed = {};
+      for (const p of this.currentModel.prints || []) if (p.file_id && p.successful) printed[p.file_id] = (printed[p.file_id] || 0) + 1;
+    }
+    return { ...kit, loggedIn: Boolean(this.currentUser), dirty, printed };
   },
 
   // The builder and the list scroll on their own: keep where they were when they are redrawn
@@ -2462,6 +2468,68 @@ const App = {
     } catch (e) {
       this.toast(e.message, 'error');
     }
+  },
+
+  // ── Print progress of a saved configuration (print history entries with the part's file) ──
+  // The material of a quick print: the last one used for this configuration
+  kitLastMaterial() {
+    const last = (this.currentModel.prints || []).find(p => p.material_id);
+    return last ? last.material_id : null;
+  },
+
+  // The prints of the page come again from the server (the history is the source)
+  async kitReloadPrints() {
+    const kit = this.kit;
+    if (!kit || !kit.config) return;
+    const fresh = await API.getModel(kit.config.id);
+    if (!this.currentModel || this.currentModel.id !== kit.config.id) return;
+    this.currentModel.prints = fresh.prints || [];
+    this.currentModel.kit_progress = fresh.kit_progress;
+    this.kitRenderParts();
+    const button = document.querySelector(`.detail-actions [onclick="App.showPrintHistory(${kit.config.id})"]`);
+    if (button && button.lastChild) button.lastChild.textContent = ` Print History${this.currentModel.prints.length ? ` (${this.currentModel.prints.length})` : ''}`;
+  },
+
+  // +1: a successful print of the part; -1: the newest one goes
+  async kitPrinted(fileId, delta) {
+    const kit = this.kit;
+    if (!kit || !kit.config) return;
+    try {
+      if (delta > 0) await API.addPrint(kit.config.id, { file_id: Number(fileId), successful: true, material_id: this.kitLastMaterial() });
+      else await API.undoPartPrint(kit.config.id, Number(fileId));
+      await this.kitReloadPrints();
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  async kitFillPrints() {
+    const kit = this.kit;
+    if (!kit || !kit.config || !confirm('Mark every part of this configuration as printed?')) return;
+    try {
+      const res = await API.fillPrints(kit.config.id, this.kitLastMaterial());
+      await this.kitReloadPrints();
+      this.toast(`${res.added} print${res.added === 1 ? '' : 's'} logged`);
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  async kitResetPrints() {
+    const kit = this.kit;
+    if (!kit || !kit.config || !confirm('Delete every print of the parts of this configuration from its history?')) return;
+    try {
+      await API.resetPartPrints(kit.config.id);
+      await this.kitReloadPrints();
+      this.toast('Progress reset');
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  // The prints of one part: their list and a print with details (material, failed, notes)
+  async kitPartPrints(fileId) {
+    const kit = this.kit;
+    const model = this.currentModel;
+    const file = model && (model.files || []).find(f => f.id === Number(fileId));
+    if (!kit || !file) return;
+    await this.loadCache();
+    const part = kit.bom.parts.find(p => p.file.id === file.id);
+    this.openModal(`Prints · ${part ? part.label : file.original_name.split('/').pop()}`, UI.partPrintsModal(model, file, part, this.cache.materials));
   },
 
   // ── Saved configurations: models of their own ──
@@ -4762,6 +4830,7 @@ const App = {
         successful: e.target.querySelector('[name="successful"]').checked,
         notes: form.get('notes'),
         printed_at: form.get('printed_at'),
+        file_id: form.get('file_id') ? Number(form.get('file_id')) : null,
       });
       this.toast('Print logged');
       this.closeModal();

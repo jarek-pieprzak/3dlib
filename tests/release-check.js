@@ -314,6 +314,15 @@ async function runStaticAndUiChecks() {
     const firstPart = bom.parts.find(p => p.qty > 0);
     const vf = { ...firstPart.file, model_id: 1, version_count: 2 };
     assert(UI.kitParts({ ...viewState, bom: { ...bom, parts: [{ ...firstPart, file: vf }] } }).includes(`App.openSlicerChooser(1, ${vf.id})`), 'A part with saved slicer projects opens the chooser');
+    // A saved configuration tracks its prints: a counter per part and a bar
+    const printedState = { ...viewState, printed: { [firstPart.file.id]: firstPart.qty } };
+    const tracked = UI.kitParts(printedState);
+    assert(tracked.includes(`App.kitPrinted(${firstPart.file.id}, 1)`) && tracked.includes(`App.kitPartPrints(${firstPart.file.id})`) && tracked.includes('kit-progress is-done') && tracked.includes('kit-print-bar'), 'Counters per part and the progress bar');
+    assert(tracked.includes('App.kitFillPrints()') && tracked.includes('App.kitResetPrints()') && !UI.kitParts({ ...viewState, printed: {} }).includes('App.kitResetPrints()'), 'Mark all printed, and Reset progress once something is printed');
+    assert(!UI.kitParts({ ...printedState, canEdit: false }).includes('App.kitPrinted('), 'Without edit rights the counters only show');
+    const partModal = UI.partPrintsModal({ id: 50, user_id: 1, prints: [{ id: 9, file_id: firstPart.file.id, successful: 1, material_name: 'PLA', printed_at: '2026-10-22 10:00:00' }] }, firstPart.file, firstPart, [{ id: 1, name: 'PLA' }]);
+    assert(partModal.includes('1 of') && partModal.includes(`name="file_id" value="${firstPart.file.id}"`), 'The part modal lists its prints and logs one with details');
+    assert(UI.modelCard({ ...mockModel, kit_source_id: 1, kit_progress: { done: 3, total: 18 } }).includes('3/18 printed'), 'The card shows the progress');
     const configPage = UI.modelDetail({ ...vault, id: 50, name: 'Garage', kit_source_id: 1, kit_source: { id: 1, name: '<b>VAULT</b>' } }, false, { kitConfig: true });
     assert(configPage.includes('id="kit-builder"') && configPage.includes('Configuration</span>') && configPage.includes('&lt;b&gt;VAULT&lt;/b&gt;') && !configPage.includes('<b>VAULT</b>'), 'The configuration page names its archive, escaped');
     assert(!configPage.includes('App.showShareModal(50)') && !configPage.includes('detail-views'), 'A configuration cannot be shared and has no view switch');
@@ -717,6 +726,16 @@ async function runE2ETests() {
     }
     throw new Error(`Server did not start within 20s. Logs:\n${serverLogs}`);
   };
+
+  // One session of maker_user for the checks that need a second account: logins are limited to
+  // 5 per 15 minutes from one address (server/middleware/rateLimit.js loginLimiter)
+  let makerSessionCache = null;
+  async function makerSession() {
+    if (makerSessionCache) return makerSessionCache;
+    const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
+    makerSessionCache = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
+    return makerSessionCache;
+  }
 
   async function apiReq(endpoint, { method = 'GET', body = null, session = null, includeCsrf = true, headers = {} } = {}) {
     const reqHeaders = { ...headers };
@@ -1910,8 +1929,7 @@ async function runE2ETests() {
       const entries = zip.getEntries().map(e => e.entryName);
       assert(entries.includes('Desk tower parts list.txt') && entries.every(n => n === 'Desk tower parts list.txt' || pick.includes(n)), `The ZIP holds the parts list and archive files: ${entries.join(', ')}`);
 
-      const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
-      const maker = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
+      const maker = await makerSession();
       assert((await apiReq(url, { session: maker })).data.some(c => c.id === cfg.id), 'Configurations are library models: every user sees them');
       assert((await apiReq(`${url}/${cfg.id}`, { method: 'PUT', session: maker, body: { name: 'Mine' } })).status === 403, "Another user must not change someone's configuration");
       assert((await apiReq(`${url}/${cfg.id}`, { method: 'DELETE', session: maker })).status === 403, "Another user must not delete someone's configuration");
@@ -1921,6 +1939,54 @@ async function runE2ETests() {
       assert(restored.status === 200 && (await byName('Desk tower')), 'A configuration comes back from the Trash');
       await scanLibrary();
       assert(await byName('Desk tower'), 'A scan must not remove a configuration (it has no folder)');
+    });
+
+    await check('Configurations track the prints of their parts: a counter per part, mark all, undo, reset', async () => {
+      require(path.join(ROOT_DIR, 'public/js/kits/ussa-vault.js'));
+      const K = globalThis.VaultKit;
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const vault = await byName('VAULT Test');
+      const created = await apiReq(`/api/models/${vault.id}/kit-configs`, { method: 'POST', session: adminSession, body: { name: 'Progress tower', config: K.defaultConfig() } });
+      assert(created.status === 201, `Saving the configuration failed: ${JSON.stringify(created.data)}`);
+      const id = created.data.id;
+      const page = async () => (await apiReq(`/api/models/${id}`, { session: adminSession })).data;
+      let cfg = await page();
+      const total = cfg.kit_progress && cfg.kit_progress.total;
+      assert(total > 1 && cfg.kit_progress.done === 0, `A new configuration has nothing printed: ${JSON.stringify(cfg.kit_progress)}`);
+      const vd = (await apiReq(`/api/models/${vault.id}`, { session: adminSession })).data;
+      const cat = K.buildCatalog(vd.files);
+      const part = K.computeBom(cat, K.defaultConfig()).parts.find(x => x.qty > 1);
+      const foreign = (await page.call(null)) && (await byName('Free Project'));
+      const foreignFile = (await apiReq(`/api/models/${foreign.id}`, { session: adminSession })).data.files[0];
+
+      // One print of a part, a failed one (does not count), a file of another model (refused)
+      assert((await apiReq(`/api/models/${id}/prints`, { method: 'POST', session: adminSession, body: { file_id: part.file.id } })).status === 201, 'Logging a print of a part failed');
+      assert((await apiReq(`/api/models/${id}/prints`, { method: 'POST', session: adminSession, body: { file_id: part.file.id, successful: false } })).status === 201, 'Logging a failed print failed');
+      assert((await apiReq(`/api/models/${id}/prints`, { method: 'POST', session: adminSession, body: { file_id: foreignFile.id } })).status === 400, 'A file of another model is refused');
+      assert((await apiReq(`/api/models/${id}/prints`, { method: 'POST', session: adminSession, body: { notes: 'whole tower' } })).status === 201, 'A print of the whole configuration still works');
+      cfg = await page();
+      assert(cfg.kit_progress.done === 1 && cfg.prints.some(x => x.file_id === part.file.id), `One successful print counts: ${JSON.stringify(cfg.kit_progress)}`);
+
+      // Mark all printed: every part gets what it still needs, nothing more
+      const filled = await apiReq(`/api/models/${id}/prints/fill`, { method: 'POST', session: adminSession, body: {} });
+      assert(filled.status === 200 && filled.data.added === total - 1 && filled.data.progress.done === total, `Mark all printed: ${JSON.stringify(filled.data)}`);
+      assert((await apiReq(`/api/models/${id}/prints/fill`, { method: 'POST', session: adminSession, body: {} })).data.added === 0, 'Nothing is added twice');
+      const listed = await byName('Progress tower');
+      assert(listed.kit_progress && listed.kit_progress.done === total && listed.kit_progress.total === total, `The list shows the progress: ${JSON.stringify(listed.kit_progress)}`);
+
+      // Undo one print of a part, then reset: the print of the whole tower stays
+      const undo = await apiReq(`/api/models/${id}/prints/parts?file_id=${part.file.id}`, { method: 'DELETE', session: adminSession });
+      assert(undo.status === 200 && undo.data.removed === 1 && undo.data.progress.done === total - 1, `Undo: ${JSON.stringify(undo.data)}`);
+      const maker = await makerSession();
+      assert((await apiReq(`/api/models/${id}/prints/parts`, { method: 'DELETE', session: maker })).status === 403, 'Only the owner resets the progress');
+      const reset = await apiReq(`/api/models/${id}/prints/parts`, { method: 'DELETE', session: adminSession });
+      assert(reset.status === 200 && reset.data.progress.done === 0, `Reset: ${JSON.stringify(reset.data)}`);
+      cfg = await page();
+      assert(cfg.prints.length === 1 && cfg.prints[0].notes === 'whole tower', 'Reset keeps the prints of the whole configuration');
+
+      // A changed configuration needs other parts: the progress follows
+      assert((await apiReq(`/api/models/${id}/kit-config`, { method: 'PUT', session: adminSession, body: { config: { ...K.defaultConfig(), width: 'S', depth: 3 } } })).status === 200, 'Editing failed');
+      assert((await page()).kit_progress.total !== total, 'The needs follow the configuration');
     });
 
     await check('Regenerate covers lists viewer-rendered and missing covers, not covers from images', async () => {
@@ -2084,8 +2150,7 @@ async function runE2ETests() {
       assert(beds.status === 200 && beds.data.map(b => b.id).join() === 'bambu-p1s,snapmaker-u1,creality-sparkx-i8', `Default printers: ${JSON.stringify(beds.data)}`);
       assert(beds.data[2].x === 260 && beds.data[2].z === 255, 'SparkX i8: 260 × 260 × 255 mm');
       assert((await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [{ name: 'Tiny', x: 5, y: 5, z: 5 }] })).status === 400, 'A build volume under 10 mm is refused');
-      const login = await apiReq('/api/auth/login', { method: 'POST', body: { username: 'maker_user', password: 'UserPass123!' } });
-      const maker = { cookie: (login.setCookie || '').split(';')[0], csrfToken: login.data.csrfToken };
+      const maker = await makerSession();
       assert((await apiReq('/api/printer-beds', { method: 'PUT', session: maker, body: beds.data })).status === 403, 'Only an admin changes the printers');
       const saved = await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [...beds.data, { name: 'Voron 2.4 350', x: 350, y: 350, z: 340, margin: 2 }] });
       assert(saved.status === 200 && saved.data.length === 4 && saved.data[3].id === 'voron-2-4-350', `Saved printers: ${JSON.stringify(saved.data)}`);

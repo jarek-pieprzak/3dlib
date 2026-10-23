@@ -346,6 +346,12 @@ async function initDatabase() {
     // the model of the archive, kit_config the choices as JSON.
     if (!mCols.some(c => c.name === 'kit_source_id')) db.run('ALTER TABLE models ADD COLUMN kit_source_id INTEGER');
     if (!mCols.some(c => c.name === 'kit_config')) db.run('ALTER TABLE models ADD COLUMN kit_config TEXT');
+    // The prints a configuration needs per file of its archive ({ file id: count }, utils/kits.js),
+    // kept so lists can show its progress without computing the parts list
+    if (!mCols.some(c => c.name === 'kit_needs')) db.run('ALTER TABLE models ADD COLUMN kit_needs TEXT');
+    // Print history: the file a print was of (the parts of a configuration)
+    if (!all('PRAGMA table_info(print_history)').some(c => c.name === 'file_id')) db.run('ALTER TABLE print_history ADD COLUMN file_id INTEGER');
+    db.run('CREATE INDEX IF NOT EXISTS idx_print_history_model_file ON print_history(model_id, file_id)');
     db.run('CREATE INDEX IF NOT EXISTS idx_models_kit_source ON models(kit_source_id)');
     // Versions of a file: pinned ones are never pruned; a slicer project keeps what it is set up
     // with (utils/slicerSettings.js) and what changed from the version before it

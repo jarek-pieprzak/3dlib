@@ -3,7 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 
-const { get, all, run } = require('../database');
+const { get, all, run, saveDb } = require('../database');
 const { LIBRARY_PATH, UPLOADS_DIR } = require('../config');
 const { authenticate, requireUploader } = require('../middleware/auth');
 const { upload, getFileType } = require('../middleware/upload');
@@ -160,6 +160,8 @@ router.get('/', (req, res) => {
 
     // How the model's 3D files fit my printers (the badge on its card)
     const fitByModel = printFit.modelFits(modelIds);
+    // Configurations: how many of the prints they need are done
+    const progressByModel = kits.progressOf(rawModels);
     const models = rawModels.map(m => {
       const preview = m.preview_file_id != null ? previewFileById[m.preview_file_id] : null;
       const stlFallback = stlByModel[m.id];
@@ -191,6 +193,7 @@ router.get('/', (req, res) => {
         tags: tagsByModel[m.id] || [],
         projects: projectsByModel[m.id] || [],
         has_printed: print_count > 0,
+        ...(progressByModel[m.id] ? { kit_progress: progressByModel[m.id] } : {}),
       };
     });
 
@@ -257,6 +260,10 @@ router.get('/:id', (req, res) => {
     model.projects = all('SELECT p.id, p.name, p.visibility FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=?', [model.id]);
     model.has_printed = model.prints.length > 0;
     if (kits.isConfiguration(model)) {
+      // The parts needed follow the archive (a rescan may have changed its files)
+      model.kit_needs = JSON.stringify(kits.refreshNeeds(model));
+      saveDb();
+      model.kit_progress = kits.progressOf([model])[model.id];
       const src = get('SELECT id, name, is_protected, deleted_at, kit_archive FROM models WHERE id = ?', [model.kit_source_id]);
       model.kit_source = src ? { id: src.id, name: src.name, is_protected: src.is_protected, deleted_at: src.deleted_at, kit: src.kit_archive || kits.KIT } : null;
     }
@@ -946,18 +953,71 @@ router.put('/:id/projects', authenticate, (req, res) => {
   }
 });
 
-// ─── POST /api/models/:id/prints ──────────────────────────────────────────────
+// The file a print of a model may be of: one of its files, or for a configuration one of its
+// archive's files; null when `fileId` is none of them
+function printableFile(model, fileId) {
+  const owner = kits.isConfiguration(model) ? model.kit_source_id : model.id;
+  return get('SELECT id, original_name FROM files WHERE id = ? AND model_id = ? AND deleted_at IS NULL', [Number(fileId), owner]);
+}
+
+// ─── POST /api/models/:id/prints { material_id, successful, notes, printed_at, file_id } ─
+// file_id: the part printed (the progress of a configuration)
 router.post('/:id/prints', authenticate, (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!get('SELECT id FROM models WHERE id=?', [id])) return res.status(404).json({ error: 'Model not found' });
-    const { material_id, successful = true, notes = '', printed_at } = req.body;
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [id]);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+    const { material_id, successful = true, notes = '', printed_at, file_id } = req.body;
+    if (file_id && !printableFile(model, file_id)) return res.status(400).json({ error: 'This file is not part of the model' });
     const date = printed_at || new Date().toISOString();
-    const r = run('INSERT INTO print_history (model_id,material_id,successful,notes,printed_at) VALUES (?,?,?,?,?)',
-      [id, material_id||null, successful?1:0, notes, date]);
+    const r = run('INSERT INTO print_history (model_id,material_id,successful,notes,printed_at,user_id,file_id) VALUES (?,?,?,?,?,?,?)',
+      [id, material_id||null, successful?1:0, notes, date, req.user.id, file_id ? Number(file_id) : null]);
     run("UPDATE models SET updated_at=datetime('now') WHERE id=?", [id]);
     res.status(201).json(get('SELECT ph.*,mat.name as material_name FROM print_history ph LEFT JOIN materials mat ON ph.material_id=mat.id WHERE ph.id=?', [r.lastId]));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to add print' }); }
+});
+
+// ─── POST /api/models/:id/prints/fill { material_id } ────────────────────────
+// "Mark all printed": every part of a configuration gets the successful prints it still needs
+router.post('/:id/prints/fill', authenticate, (req, res) => {
+  try {
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
+    if (!model || !kits.isConfiguration(model)) return res.status(404).json({ error: 'Configuration not found' });
+    if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
+    const done = Object.fromEntries(all('SELECT file_id, COUNT(*) AS n FROM print_history WHERE model_id = ? AND successful = 1 AND file_id IS NOT NULL GROUP BY file_id', [model.id]).map(r => [r.file_id, r.n]));
+    const material = req.body.material_id ? Number(req.body.material_id) : null;
+    const date = new Date().toISOString();
+    let added = 0;
+    for (const [fileId, n] of Object.entries(kits.needsOf(model))) {
+      for (let i = done[fileId] || 0; i < n; i++) {
+        run('INSERT INTO print_history (model_id,material_id,successful,notes,printed_at,user_id,file_id) VALUES (?,?,1,?,?,?,?)', [model.id, material, '', date, req.user.id, Number(fileId)], true);
+        added++;
+      }
+    }
+    run("UPDATE models SET updated_at=datetime('now') WHERE id=?", [model.id], true);
+    saveDb();
+    res.json({ success: true, added, progress: kits.progressOf([model])[model.id] });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to mark the parts printed' }); }
+});
+
+// ─── DELETE /api/models/:id/prints/parts?file_id= ────────────────────────────
+// With file_id: "−", the newest successful print of that part. Without: "Reset progress", every
+// print of a part (prints of the whole model stay).
+router.delete('/:id/prints/parts', authenticate, (req, res) => {
+  try {
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+    if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
+    let removed = 0;
+    if (req.query.file_id) {
+      const last = get('SELECT id FROM print_history WHERE model_id = ? AND file_id = ? AND successful = 1 ORDER BY printed_at DESC, id DESC LIMIT 1', [model.id, Number(req.query.file_id)]);
+      if (last) { run('DELETE FROM print_history WHERE id = ?', [last.id], true); removed = 1; }
+    } else {
+      removed = run('DELETE FROM print_history WHERE model_id = ? AND file_id IS NOT NULL', [model.id], true).changes;
+    }
+    saveDb();
+    res.json({ success: true, removed, progress: kits.isConfiguration(model) ? kits.progressOf([model])[model.id] : null });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to undo the print' }); }
 });
 
 module.exports = router;

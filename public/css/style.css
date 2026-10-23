@@ -1636,6 +1636,23 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
   .detail-page .kit-layout.is-locked .kit-preview-panel{min-height:0}
 }
 .kit-qty.is-static{display:inline-block;background:transparent;border-color:transparent;font-weight:600}
+/* Print progress of a saved configuration: a counter per part, a bar for all of them */
+.kit-progress{display:inline-flex;align-items:center;flex:none;width:96px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--bg-input)}
+.kit-progress.is-done{border-color:color-mix(in srgb, var(--success) 55%, transparent);background:color-mix(in srgb, var(--success) 12%, transparent)}
+.kit-step{flex:none;width:24px;height:24px;padding:0;font-size:.9rem;line-height:1;color:var(--text-muted);background:transparent;border:none;cursor:pointer}
+.kit-step:hover:not(:disabled){color:var(--text-primary);background:var(--bg-tertiary)}
+.kit-step.is-add{color:var(--accent-cyan)}
+.kit-step:disabled{opacity:.3;cursor:default}
+.kit-count{flex:1 1 auto;min-width:0;height:24px;padding:0 2px;font-size:.75rem;font-weight:700;color:var(--text-primary);white-space:nowrap;background:transparent;border:none;cursor:pointer}
+.kit-progress.is-done .kit-count{color:var(--success)}
+.kit-part.is-printed .kit-part-label{color:var(--success)}
+.kit-print-progress{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:8px 16px;border-bottom:1px solid var(--border)}
+.kit-print-bar{flex:1 1 160px;height:6px;overflow:hidden;background:var(--bg-tertiary);border-radius:999px}
+.kit-print-bar>span{display:block;height:100%;background:var(--accent-cyan);border-radius:999px;transition:width .3s}
+.kit-print-progress.is-done .kit-print-bar>span{background:var(--success)}
+.kit-print-text{font-size:.75rem;font-weight:600;color:var(--text-secondary)}
+.kit-print-progress.is-done .kit-print-text{color:var(--success)}
+.print-part{font-size:.72rem;color:var(--text-secondary)}
 .kit-part .slicer-split .dropdown-content{right:0}
 .kit-docs-note{padding:4px 16px}
 .kit-problem{padding:24px;color:var(--text-secondary)}

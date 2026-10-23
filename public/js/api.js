@@ -273,6 +273,10 @@ const API = {
     return this.request(`/api/models/${modelId}/prints`, { method: 'POST', body: JSON.stringify(data) });
   },
   deletePrint(id) { return this.request(`/api/prints/${id}`, { method: 'DELETE' }); },
+  // Print progress of a configuration: one print of a part less, every part printed, all reset
+  undoPartPrint(modelId, fileId) { return this.request(`/api/models/${modelId}/prints/parts?file_id=${Number(fileId)}`, { method: 'DELETE' }); },
+  fillPrints(modelId, materialId) { return this.request(`/api/models/${modelId}/prints/fill`, { method: 'POST', body: JSON.stringify({ material_id: materialId || null }) }); },
+  resetPartPrints(modelId) { return this.request(`/api/models/${modelId}/prints/parts`, { method: 'DELETE' }); },
 
   // Categories, Tags, Materials
   getCategories() { return this.request('/api/categories'); },

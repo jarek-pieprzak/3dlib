@@ -68,6 +68,7 @@ router.post('/:id/kit-configs', authenticate, (req, res) => {
     const c = kits.readConfig(req.body.config);
     if (c.error) return res.status(400).json({ error: c.error });
     const { lastId } = run('INSERT INTO models (name, user_id, kit_source_id, kit_config) VALUES (?, ?, ?, ?)', [n.name, req.user.id, archive.id, c.text], true);
+    kits.refreshNeeds(get('SELECT * FROM models WHERE id=?', [lastId]));
     saveDb();
     res.status(201).json(toJson(req, get('SELECT * FROM models WHERE id=?', [lastId])));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the configuration' }); }
@@ -93,6 +94,7 @@ router.put('/:id/kit-configs/:configId', authenticate, (req, res) => {
       config = c.text;
     }
     run("UPDATE models SET name=?, kit_config=?, updated_at=datetime('now') WHERE id=?", [name, config, m.id], true);
+    if (config !== m.kit_config) kits.refreshNeeds(get('SELECT * FROM models WHERE id=?', [m.id]));
     saveDb();
     res.json(toJson(req, get('SELECT * FROM models WHERE id=?', [m.id])));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the configuration' }); }
@@ -122,6 +124,7 @@ router.put('/:id/kit-config', authenticate, (req, res) => {
     const c = kits.readConfig(req.body.config);
     if (c.error) return res.status(400).json({ error: c.error });
     run("UPDATE models SET kit_config=?, updated_at=datetime('now') WHERE id=?", [c.text, m.id], true);
+    kits.refreshNeeds(get('SELECT * FROM models WHERE id=?', [m.id]));
     saveDb();
     res.json({ success: true, config: kits.configOf(get('SELECT * FROM models WHERE id=?', [m.id])) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the configuration' }); }

@@ -846,7 +846,7 @@ const UI = {
         ${(protectedBadge || kitBadge || types) ? `<div class="model-card-body-badges">${protectedBadge}${kitBadge}${types}</div>` : ''}
       </div>
       <div class="model-card-footer">
-        <span style="font-size:.75rem;color:var(--text-muted)">${m.kit_source_id ? 'Configuration' : `${m.file_count || 0} files`}</span>
+        <span style="font-size:.75rem;color:var(--text-muted)">${m.kit_source_id ? (m.kit_progress && m.kit_progress.total ? `${m.kit_progress.done >= m.kit_progress.total ? '✓ ' : ''}${m.kit_progress.done}/${m.kit_progress.total} printed` : 'Configuration') : `${m.file_count || 0} files`}</span>
         <span style="font-size:.75rem;color:var(--text-muted)">${this.formatDate(m.updated_at)}</span>
       </div>
     </div>`;
@@ -1958,6 +1958,22 @@ const UI = {
     const esc = (s) => this.escapeHtml(s);
     const t = bom.totals;
     const locked = kit.mode === 'view';
+    // A saved configuration tracks its prints: kit.printed { file id: successful prints }
+    const track = locked && Boolean(kit.printed);
+    const printedOf = (p) => Math.min(p.qty, (kit.printed || {})[p.file.id] || 0);
+    const needed = bom.parts.filter(p => p.qty > 0);
+    const progress = { done: needed.reduce((n, p) => n + printedOf(p), 0), total: needed.reduce((n, p) => n + p.qty, 0) };
+    const pct = progress.total ? Math.round(progress.done / progress.total * 100) : 0;
+    const counter = (p) => {
+      const n = (kit.printed || {})[p.file.id] || 0;
+      const id = Number(p.file.id);
+      return `
+          <div class="kit-progress${n >= p.qty ? ' is-done' : ''}" onclick="event.stopPropagation()">
+            ${kit.canEdit ? `<button type="button" class="kit-step" title="Undo the last print" aria-label="One print less" onclick="App.kitPrinted(${id}, -1)"${n ? '' : ' disabled'}>−</button>` : ''}
+            <button type="button" class="kit-count" title="Prints of this part: history, a print with details" onclick="App.kitPartPrints(${id})">${n >= p.qty ? '✓ ' : ''}${n}/${p.qty}</button>
+            ${kit.canEdit ? `<button type="button" class="kit-step is-add" title="Printed one" aria-label="One print more" onclick="App.kitPrinted(${id}, 1)">+</button>` : ''}
+          </div>`;
+    };
     // The star opens the preferred slicer, the arrow the others; a file with saved slicer
     // projects (a read-only archive) opens the chooser from the star
     const slicer = (f) => (this.MEASURABLE.includes(f.file_type) ? this.slicerButton(this.slicerLinks(f, f.model_id),
@@ -1974,8 +1990,8 @@ const UI = {
       const path = String(p.file.original_name || '');
       const extra = p.group === 'Extra files';
       rows.push(`
-        <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" title="${esc(path)}">
-          ${locked ? `<span class="kit-qty is-static" title="Prints">${p.qty}</span>` : `<input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">`}
+        <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${track && p.qty > 0 && printedOf(p) >= p.qty ? ' is-printed' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" title="${esc(path)}">
+          ${track && p.qty > 0 ? counter(p) : locked ? `<span class="kit-qty is-static" title="Prints">${p.qty}</span>` : `<input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">`}
           <div class="kit-part-main">
             <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}</div>
             <div class="kit-part-path">${esc(path)}</div>
@@ -2004,10 +2020,18 @@ const UI = {
         <div class="kit-parts-actions">
           <button type="button" class="btn btn-secondary btn-sm" onclick="App.kitCopyList()">Copy list</button>
           ${!kit.loggedIn ? '' : locked
-            ? `<a class="btn btn-primary btn-sm" href="/api/models/${Number(kit.modelId)}/download" download${t.files ? '' : ' hidden'}>Download ZIP</a>`
+            ? (t.files ? `<a class="btn btn-primary btn-sm" href="/api/models/${Number(kit.modelId)}/download" download>Download ZIP</a>` : '')
             : `<button type="button" class="btn btn-primary btn-sm" onclick="App.kitDownload()"${t.files ? '' : ' disabled'}>Download ZIP</button>`}
         </div>
       </div>
+      ${track && progress.total ? `
+      <div class="kit-print-progress${progress.done >= progress.total ? ' is-done' : ''}">
+        <div class="kit-print-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}"><span style="width:${pct}%"></span></div>
+        <span class="kit-print-text">${progress.done >= progress.total ? '✓ All printed' : `${progress.done} of ${progress.total} prints done`} · ${pct}%</span>
+        ${kit.canEdit ? `
+        ${progress.done < progress.total ? '<button type="button" class="btn btn-ghost btn-xs" onclick="App.kitFillPrints()">Mark all printed</button>' : ''}
+        ${progress.done ? '<button type="button" class="btn btn-ghost btn-xs" onclick="App.kitResetPrints()">Reset progress</button>' : ''}` : ''}
+      </div>` : ''}
       <div class="fit-bar" data-fit-bar="parts"></div>
       <div class="kit-parts-body">
         ${notes ? `<ul class="kit-notes">${notes}</ul>` : ''}
@@ -2043,13 +2067,40 @@ const UI = {
   },
 
   // ── Print History (modal opened from the model header) ──
+  // The prints of one part of a configuration: newest first, and a print with details
+  partPrintsModal(model, file, part, materials = []) {
+    const prints = (model.prints || []).filter(p => p.file_id === file.id);
+    const done = prints.filter(p => p.successful).length;
+    const canEdit = App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id);
+    const rows = prints.map(p => `
+      <div class="print-item">
+        <div class="print-status ${p.successful ? 'success' : 'failed'}"></div>
+        <div class="print-info">
+          <div class="print-material">${this.escapeHtml(p.material_name || 'Unknown material')} ${p.successful ? '' : '<span style="color:var(--error);font-size:.75rem"> — Failed</span>'}</div>
+          <div class="print-date">${this.formatDate(p.printed_at)}</div>
+          ${p.notes ? `<div class="print-notes">${this.escapeHtml(p.notes)}</div>` : ''}
+        </div>
+        ${canEdit ? `<button class="btn btn-ghost" style="padding:6px;color:var(--error)" onclick="App.deletePrint(${p.id},${model.id})" title="Delete"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>` : ''}
+      </div>`).join('');
+    return `
+      <div class="print-history-modal">
+        <div class="kit-muted" style="margin-bottom:10px">${this.escapeHtml(file.original_name)} · ${done} of ${part ? part.qty : '?'} printed</div>
+        <div class="print-history-list">${rows || '<div style="color:var(--text-muted);font-size:.875rem;text-align:center;padding:12px 0">No prints of this part yet</div>'}</div>
+        ${canEdit ? `<div class="kit-group-title" style="padding:14px 0 6px">Log a print</div>${this.printForm(model.id, materials, { fileId: file.id })}` : ''}
+      </div>`;
+  },
+
   printHistoryModal(model) {
     const canEdit = App.currentUser?.role === 'admin' || (App.currentUser?.role !== 'viewer' && model.user_id === App.currentUser?.id);
+    // A configuration's prints of single parts: the part's file name
+    const names = new Map((model.files || []).map(f => [f.id, String(f.original_name || '').split('/').pop()]));
+    const partName = (id) => names.get(id) || '';
     const printsHtml = (model.prints || []).map(p => `
       <div class="print-item">
         <div class="print-status ${p.successful ? 'success' : 'failed'}"></div>
         <div class="print-info">
           <div class="print-material">${this.escapeHtml(p.material_name || 'Unknown material')} ${p.successful ? '' : '<span style="color:var(--error);font-size:.75rem"> — Failed</span>'}</div>
+          ${p.file_id && partName(p.file_id) ? `<div class="print-part">${this.escapeHtml(partName(p.file_id))}</div>` : ''}
           <div class="print-date">${this.formatDate(p.printed_at)}</div>
           ${p.notes ? `<div class="print-notes">${this.escapeHtml(p.notes)}</div>` : ''}
         </div>
@@ -2172,13 +2223,15 @@ const UI = {
   },
 
   // ── Log Print Form ──
-  printForm(modelId, materials = []) {
+  // opts.fileId: a print of one part of a configuration
+  printForm(modelId, materials = [], opts = {}) {
     const matOptions = materials.map(m =>
       `<option value="${m.id}">${m.name}${m.is_preset ? '' : ' (custom)'}</option>`
     ).join('');
 
     return `
       <form id="print-form" onsubmit="App.handlePrintSubmit(event,${modelId})">
+        ${opts.fileId ? `<input type="hidden" name="file_id" value="${Number(opts.fileId)}">` : ''}
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Material</label>

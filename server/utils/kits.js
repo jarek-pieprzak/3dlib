@@ -63,6 +63,49 @@ function partsOf(model) {
   return { source, files, cat, bom: VaultKit.computeBom(cat, configOf(model)) };
 }
 
+// The prints a configuration needs: { file id: count } of its parts (none when the archive is
+// gone), stored in models.kit_needs for the lists
+function refreshNeeds(model) {
+  const parts = partsOf(model);
+  const needs = {};
+  if (parts) for (const p of parts.bom.parts) if (p.qty > 0) needs[p.file.id] = (needs[p.file.id] || 0) + p.qty;
+  run('UPDATE models SET kit_needs = ? WHERE id = ?', [JSON.stringify(needs), model.id], true);
+  return needs;
+}
+
+function needsOf(model) {
+  if (model.kit_needs) {
+    try { return JSON.parse(model.kit_needs) || {}; } catch (e) { /* computed again */ }
+  }
+  const needs = refreshNeeds(model);
+  saveDb();
+  return needs;
+}
+
+// Progress of configurations: { model id: { done, total } }. done counts the successful prints
+// of each part up to what it needs.
+function progressOf(models) {
+  const configs = (models || []).filter(isConfiguration);
+  const out = {};
+  if (!configs.length) return out;
+  const printed = {};
+  for (const r of all(`SELECT model_id, file_id, COUNT(*) AS n FROM print_history
+    WHERE successful = 1 AND file_id IS NOT NULL AND model_id IN (${configs.map(() => '?').join(',')}) GROUP BY model_id, file_id`, configs.map(m => m.id))) {
+    printed[`${r.model_id}:${r.file_id}`] = r.n;
+  }
+  for (const m of configs) {
+    const needs = needsOf(m);
+    let done = 0;
+    let total = 0;
+    for (const [fileId, n] of Object.entries(needs)) {
+      total += n;
+      done += Math.min(n, printed[`${m.id}:${fileId}`] || 0);
+    }
+    out[m.id] = { done, total };
+  }
+  return out;
+}
+
 // What the ZIP of a configuration holds: the files to print (each once), the instruction PDFs
 // when the configuration asks for them, and the parts list
 function zipSelection(model) {
@@ -78,4 +121,4 @@ function zipSelection(model) {
   };
 }
 
-module.exports = { KIT, VaultKit, refreshArchives, isConfiguration, configOf, readConfig, partsOf, zipSelection };
+module.exports = { KIT, VaultKit, refreshArchives, isConfiguration, configOf, readConfig, partsOf, zipSelection, refreshNeeds, needsOf, progressOf };

@@ -119,6 +119,13 @@ page and footer credit GyroidVault; keep that.
     (Open in slicer per file, the configuration ZIP) and the preview; "Edit configuration" in the
     header brings the builder (`?edit=1&c=`), Save / Cancel go back. Its cover is the 3D tower
     (`App.kitRenderCover`, `VaultKit3D` `snapshotParts`).
+  - Print progress of a configuration: print history entries with the part's file
+    (`print_history.file_id`, a file of the archive). The locked parts list has a counter per
+    part (− / n/qty / +, a click on the count opens that part's prints and a form with
+    details), a bar "done of total" with Mark all printed (`POST .../prints/fill`) and Reset
+    progress (`DELETE .../prints/parts`, `?file_id=` undoes one). Failed prints do not count.
+    `models.kit_needs` ({ file id: count }, `kits.refreshNeeds` on save and page load) lets the
+    model list show `kit_progress` on the cards.
   - Open in slicer for a file with versions in a read-only project opens the chooser
     (`UI.slicerChooser`, `App.openSlicerChooser`): the original or a version, a table of their
     settings and changes, name / pin / delete per version.

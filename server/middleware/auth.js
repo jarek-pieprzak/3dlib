@@ -48,11 +48,14 @@ function tokenCookieOptions(req) {
 
 // The account of a login token, or null. Role and account come from the database, not from the
 // 30-day token: a user demoted to viewer or deleted loses the rights at once. Other tokens signed
-// with the same secret (model unlock tokens: { unlock }) are no login. Throws for a bad token.
+// with the same secret (model unlock tokens: { unlock }) are no login. A login (it has a csrfToken;
+// API keys have none) made before the last password change is over. Throws for a bad token.
 function userFromToken(token) {
   const decoded = jwt.verify(token, getJwtSecret());
-  const account = decoded && decoded.id ? get('SELECT id, role FROM users WHERE id = ?', [decoded.id]) : null;
-  return account ? { ...decoded, role: account.role } : null;
+  const account = decoded && decoded.id ? get('SELECT id, role, token_version FROM users WHERE id = ?', [decoded.id]) : null;
+  if (!account) return null;
+  if (decoded.csrfToken && (decoded.tv || 0) !== (account.token_version || 0)) return null;
+  return { ...decoded, role: account.role };
 }
 
 function authenticate(req, res, next) {

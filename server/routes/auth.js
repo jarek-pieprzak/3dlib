@@ -87,7 +87,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
     
     const csrfToken = crypto.randomBytes(32).toString('hex');
-    const token = jwt.sign({ id: user.id, role: user.role, csrfToken }, getJwtSecret(), { expiresIn: '30d' });
+    const token = jwt.sign({ id: user.id, role: user.role, csrfToken, tv: user.token_version || 0 }, getJwtSecret(), { expiresIn: '30d' });
     
     res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
     
@@ -130,6 +130,8 @@ router.put('/profile', authenticate, async (req, res) => {
       }
       const hash = await bcrypt.hash(password, 10);
       updates.push('password_hash=?'); params.push(hash);
+      // Every other session is logged out (userFromToken); this one gets a new token below
+      updates.push('token_version=COALESCE(token_version, 0) + 1');
     }
     if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
     // Another account with this name or email, whatever its case (logins ignore case)
@@ -139,6 +141,12 @@ router.put('/profile', authenticate, async (req, res) => {
     }
     params.push(req.user.id);
     run(`UPDATE users SET ${updates.join(',')} WHERE id=?`, params);
+    // The session that changed the password stays logged in, with the same CSRF token
+    if (password && req.user.csrfToken) {
+      const { token_version } = get('SELECT token_version FROM users WHERE id=?', [req.user.id]);
+      const token = jwt.sign({ id: req.user.id, role: req.user.role, csrfToken: req.user.csrfToken, tv: token_version }, getJwtSecret(), { expiresIn: '30d' });
+      res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
+    }
     res.json({ success: true });
   } catch (e) { 
     if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'Username or Email taken' });
@@ -185,7 +193,8 @@ router.post('/reset-password', authLimiter, async (req, res) => {
     if (!user) return res.status(400).json({ error: 'Token invalid or expired' });
     
     const hash = await bcrypt.hash(password, 10);
-    run("UPDATE users SET password_hash=?, password_reset_token=NULL, password_reset_expires=NULL WHERE id=?", [hash, user.id]);
+    // A reset logs out every session of the account (userFromToken)
+    run("UPDATE users SET password_hash=?, password_reset_token=NULL, password_reset_expires=NULL, token_version=COALESCE(token_version, 0) + 1 WHERE id=?", [hash, user.id]);
     res.json({ message: 'Password reset successful' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to reset password' }); }
 });

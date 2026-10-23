@@ -936,6 +936,14 @@ async function runE2ETests() {
       const lucja = { cookie: (login3.setCookie || '').split(';')[0], csrfToken: login3.data.csrfToken };
       assert((await apiReq('/api/auth/profile', { method: 'PUT', session: viewerSession, body: { preferred_slicer: 'orcaslicer' } })).status === 200,
         'A viewer must be able to change their own profile');
+      // A new password logs out every other session; the one that changed it gets a new cookie
+      const oldViewerCookie = viewerSession.cookie;
+      const pw = await apiReq('/api/auth/profile', { method: 'PUT', session: viewerSession, body: { password: 'Password456!' } });
+      assert(pw.status === 200 && pw.setCookie, `Changing the password failed (${pw.status})`);
+      viewerSession.cookie = pw.setCookie.split(';')[0];
+      assert((await apiReq('/api/auth/me', { session: { cookie: oldViewerCookie } })).status === 401, 'A session from before the new password must be logged out');
+      assert((await apiReq('/api/auth/me', { session: viewerSession })).status === 200, 'The session that changed the password must stay logged in');
+
       assert((await apiReq(`/api/users/${login3.data.user.id}/role`, { method: 'PUT', session: adminSession, body: { role: 'viewer' } })).status === 200, 'Demoting failed');
       const asViewer = await apiReq('/api/models', { method: 'POST', session: lucja, body: { name: 'Should not exist' } });
       assert(asViewer.status === 403, `A demoted user must lose the rights at once (${asViewer.status})`);

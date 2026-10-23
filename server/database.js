@@ -316,6 +316,8 @@ async function initDatabase() {
     if (!uCols.some(c => c.name === 'preferred_slicer')) db.run('ALTER TABLE users ADD COLUMN preferred_slicer TEXT');
     // The printer of the fit check (an id of Settings -> Printers), chosen in the top bar
     if (!uCols.some(c => c.name === 'preferred_printer')) db.run('ALTER TABLE users ADD COLUMN preferred_printer TEXT');
+    // Login tokens carry it as "tv": a new password raises it and logs out every other session
+    if (!uCols.some(c => c.name === 'token_version')) db.run('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0');
     
     // Auto-migrate the very first user (id 1) to admin to prevent lockout when roles are enforced
     db.run("UPDATE users SET role = 'admin' WHERE id = 1 AND role != 'admin'");

@@ -267,8 +267,13 @@ router.get('/:id', (req, res) => {
       model.kit_progress = kits.progressOf([model])[model.id];
       const src = get('SELECT id, name, is_protected, deleted_at, kit_archive FROM models WHERE id = ?', [model.kit_source_id]);
       model.kit_source = src ? { id: src.id, name: src.name, is_protected: src.is_protected, deleted_at: src.deleted_at, kit: src.kit_archive || kits.KIT } : null;
+    } else if (kits.partsListOf(model)) {
+      // The parts list counts the files still there (one may have gone to the Trash)
+      model.kit_needs = JSON.stringify(kits.refreshNeeds(model));
+      saveDb();
+      model.kit_progress = kits.progressOf([model])[model.id];
     }
-    
+
     // Versions
     const rootId = model.parent_id || model.id;
     model.versions = all(`
@@ -973,11 +978,12 @@ router.post('/:id/prints', authenticate, (req, res) => {
 });
 
 // ─── POST /api/models/:id/prints/fill { material_id } ────────────────────────
-// "Mark all printed": every part of a configuration gets the successful prints it still needs
+// "Mark all printed": every part of a configuration or parts list gets the successful prints it
+// still needs
 router.post('/:id/prints/fill', authenticate, (req, res) => {
   try {
     const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
-    if (!model || !kits.isConfiguration(model)) return res.status(404).json({ error: 'Configuration not found' });
+    if (!model || !kits.hasParts(model)) return res.status(404).json({ error: 'No parts list' });
     if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
     const done = Object.fromEntries(all('SELECT file_id, COUNT(*) AS n FROM print_history WHERE model_id = ? AND successful = 1 AND file_id IS NOT NULL GROUP BY file_id', [model.id]).map(r => [r.file_id, r.n]));
     const material = req.body.material_id ? Number(req.body.material_id) : null;
@@ -1011,8 +1017,41 @@ router.delete('/:id/prints/parts', authenticate, (req, res) => {
       removed = run('DELETE FROM print_history WHERE model_id = ? AND file_id IS NOT NULL', [model.id], true).changes;
     }
     saveDb();
-    res.json({ success: true, removed, progress: kits.isConfiguration(model) ? kits.progressOf([model])[model.id] : null });
+    res.json({ success: true, removed, progress: kits.hasParts(model) ? kits.progressOf([model])[model.id] : null });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to undo the print' }); }
+});
+
+// ─── PUT /api/models/:id/parts-list { files, hardware, notes } ──────────────
+// The parts list of a project, made by hand: files of the project with how many to print,
+// hardware (name, how many, "have it") and notes. It lives in the database, so read-only
+// projects have one too. An empty list removes it.
+router.put('/:id/parts-list', authenticate, (req, res) => {
+  try {
+    const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
+    if (!model) return res.status(404).json({ error: 'Model not found' });
+    if (kits.isConfiguration(model)) return res.status(409).json({ error: 'A configuration has the parts list of its kit' });
+    if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
+    const own = new Set(all('SELECT id FROM files WHERE model_id = ?', [model.id]).map(f => f.id));
+    const count = (v) => Math.min(9999, Math.max(0, Math.floor(Number(v) || 0)));
+    const body = req.body || {};
+    const files = [];
+    for (const f of Array.isArray(body.files) ? body.files : []) {
+      const id = Number(f && f.file_id);
+      if (!own.has(id)) return res.status(400).json({ error: 'A file of another model' });
+      if (!files.some(x => x.file_id === id)) files.push({ file_id: id, qty: count(f.qty) });
+    }
+    const hardware = (Array.isArray(body.hardware) ? body.hardware : [])
+      .map(h => ({ name: String((h && h.name) || '').trim().slice(0, 120), qty: count(h && h.qty), have: Boolean(h && h.have) }))
+      .filter(h => h.name);
+    const notes = String(body.notes || '').slice(0, 5000);
+    const empty = !files.length && !hardware.length && !notes.trim();
+    run("UPDATE models SET parts_list = ?, kit_needs = NULL, updated_at = datetime('now') WHERE id = ?",
+      [empty ? null : JSON.stringify({ files, hardware, notes }), model.id], true);
+    const fresh = get('SELECT * FROM models WHERE id = ?', [model.id]);
+    if (!empty) kits.refreshNeeds(fresh);
+    saveDb();
+    res.json({ parts_list: kits.partsListOf(fresh), progress: empty ? null : kits.progressOf([fresh])[model.id] });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the parts list' }); }
 });
 
 module.exports = router;

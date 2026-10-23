@@ -63,12 +63,33 @@ function partsOf(model) {
   return { source, files, cat, bom: VaultKit.computeBom(cat, configOf(model)) };
 }
 
-// The prints a configuration needs: { file id: count } of its parts (none when the archive is
-// gone), stored in models.kit_needs for the lists
+// The parts list of a project made by hand (models.parts_list), or null
+function partsListOf(model) {
+  if (!model || !model.parts_list) return null;
+  try {
+    const list = JSON.parse(model.parts_list);
+    return { files: list.files || [], hardware: list.hardware || [], notes: list.notes || '' };
+  } catch (e) { return null; }
+}
+
+// A model whose parts are counted: a configuration of a kit, or a project with a parts list
+function hasParts(model) {
+  return isConfiguration(model) || Boolean(partsListOf(model));
+}
+
+// The prints a configuration or a parts list needs: { file id: count } (none when the archive is
+// gone; files of a list that are gone or in the Trash do not count), stored in models.kit_needs
+// for the lists
 function refreshNeeds(model) {
-  const parts = partsOf(model);
   const needs = {};
-  if (parts) for (const p of parts.bom.parts) if (p.qty > 0) needs[p.file.id] = (needs[p.file.id] || 0) + p.qty;
+  const list = !isConfiguration(model) && partsListOf(model);
+  if (list) {
+    const live = new Set(all('SELECT id FROM files WHERE model_id = ? AND deleted_at IS NULL', [model.id]).map(f => f.id));
+    for (const f of list.files) if (f.qty > 0 && live.has(f.file_id)) needs[f.file_id] = (needs[f.file_id] || 0) + f.qty;
+  } else {
+    const parts = partsOf(model);
+    if (parts) for (const p of parts.bom.parts) if (p.qty > 0) needs[p.file.id] = (needs[p.file.id] || 0) + p.qty;
+  }
   run('UPDATE models SET kit_needs = ? WHERE id = ?', [JSON.stringify(needs), model.id], true);
   return needs;
 }
@@ -82,10 +103,10 @@ function needsOf(model) {
   return needs;
 }
 
-// Progress of configurations: { model id: { done, total } }. done counts the successful prints
+// Progress of configurations and parts lists: { model id: { done, total } }. done counts the successful prints
 // of each part up to what it needs.
 function progressOf(models) {
-  const configs = (models || []).filter(isConfiguration);
+  const configs = (models || []).filter(hasParts);
   const out = {};
   if (!configs.length) return out;
   const printed = {};
@@ -121,4 +142,4 @@ function zipSelection(model) {
   };
 }
 
-module.exports = { KIT, VaultKit, refreshArchives, isConfiguration, configOf, readConfig, partsOf, zipSelection, refreshNeeds, needsOf, progressOf };
+module.exports = { KIT, VaultKit, refreshArchives, isConfiguration, configOf, readConfig, partsOf, partsListOf, hasParts, zipSelection, refreshNeeds, needsOf, progressOf };

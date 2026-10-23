@@ -843,6 +843,9 @@ const UI = {
     const protectedBadge = m.is_protected ? '<span class="badge badge-protected" title="Password protected"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Protected</span>' : '';
     // A saved configuration of a kit: no files of its own, its parts are the archive's
     const kitBadge = m.kit_source_id ? '<span class="badge badge-kit" title="A saved configuration of a kit">Configuration</span>' : '';
+    // Prints of a configuration or of a parts list
+    const p = m.kit_progress;
+    const progress = p && p.total ? `${p.done >= p.total ? '✓ ' : ''}${p.done}/${p.total} printed` : '';
     return `<div class="model-card ${isSelected ? 'selected' : ''}${m.is_protected ? ' is-protected' : ''}" onclick="App.handleModelCardClick(event, ${m.id})" data-model-id="${m.id}">
       ${checkboxHtml}
       <div class="model-card-thumb">${thumb}<div class="model-card-badges">${protectedBadge}${kitBadge}${types}</div></div>
@@ -855,7 +858,7 @@ const UI = {
         ${(protectedBadge || kitBadge || types) ? `<div class="model-card-body-badges">${protectedBadge}${kitBadge}${types}</div>` : ''}
       </div>
       <div class="model-card-footer">
-        <span style="font-size:.75rem;color:var(--text-muted)">${m.kit_source_id ? (m.kit_progress && m.kit_progress.total ? `${m.kit_progress.done >= m.kit_progress.total ? '✓ ' : ''}${m.kit_progress.done}/${m.kit_progress.total} printed` : 'Configuration') : `${m.file_count || 0} files`}</span>
+        <span style="font-size:.75rem;color:var(--text-muted)">${progress || (m.kit_source_id ? 'Configuration' : `${m.file_count || 0} files`)}</span>
         <span style="font-size:.75rem;color:var(--text-muted)">${this.formatDate(m.updated_at)}</span>
       </div>
     </div>`;
@@ -1151,6 +1154,9 @@ const UI = {
     // A read-only project (the VAULT archive): its files are never changed, renamed or deleted
     const readOnly = Number(model.is_readonly) === 1;
     const canChange = canEdit && !readOnly;
+    // The Parts tab: what to print and the hardware (a list in the database, read-only projects too)
+    const partsShown = !inTrash && !isConfig && (canEdit || Boolean(this.partsListOf(model)));
+    const partsLabel = model.kit_progress && model.kit_progress.total ? ` (${model.kit_progress.done}/${model.kit_progress.total})` : '';
     // Files of a project in the library can be renamed / moved on disk ('folder' projects also
     // have folders); uploads outside the library and entries inside archives can only be deleted
     const layout = model.layout || 'none';
@@ -1538,7 +1544,7 @@ const UI = {
           <div class="glass-panel detail-files-panel">
             <div class="panel-header" style="border-bottom:1px solid var(--border-color);padding:0">
               <div style="display:flex;width:100%;align-items:center;">
-                <div style="display:flex;gap:20px;padding:16px 16px 0 16px;flex:1">
+                <div class="files-tabs" style="display:flex;gap:20px;padding:16px 16px 0 16px;flex:1">
                   <div onclick="App.switchFilesTab(event, 'files')" style="font-size:0.95rem;font-weight:600;line-height:1.4;padding-bottom:12px;cursor:pointer;border-bottom:2px solid var(--accent-cyan);color:var(--text);display:inline-flex;align-items:center;gap:6px">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
                     Files (${model.files?.length || 0})
@@ -1550,6 +1556,10 @@ const UI = {
                   ${trashHtml ? `<div onclick="App.switchFilesTab(event, 'trash')" title="Deleted files of this model" style="font-size:0.95rem;font-weight:600;line-height:1.4;padding-bottom:12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     Trash (${trashFiles.length})
+                  </div>` : ''}
+                  ${partsShown ? `<div onclick="App.switchFilesTab(event, 'parts')" title="What to print and how many, the hardware" style="font-size:0.95rem;font-weight:600;line-height:1.4;padding-bottom:12px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    <span class="parts-tab-label">Parts${partsLabel}</span>
                   </div>` : ''}
                 </div>
                 <div style="padding:12px 16px;display:flex;gap:8px;align-items:center">
@@ -1572,6 +1582,7 @@ const UI = {
                 <div class="trash-tab-note">${inTrash ? 'Files deleted on their own before the model went to the Trash.' : 'Deleted files stay on disk until they are deleted for good. Click a file to preview it.'}</div>
                 ${trashHtml}
               </div>` : ''}
+              ${partsShown ? `<div id="tab-content-parts" style="display:none">${this.partsTab(model, canEdit)}</div>` : ''}
             </div>
           </div>
 
@@ -2475,6 +2486,115 @@ const UI = {
         ${buttons}
       </div>
     `;
+  },
+
+  // ── Parts list of a project (models.parts_list), made by hand ──
+  partsListOf(model) {
+    if (!model || !model.parts_list) return null;
+    try {
+      const list = typeof model.parts_list === 'string' ? JSON.parse(model.parts_list) : model.parts_list;
+      return { files: list.files || [], hardware: list.hardware || [], notes: list.notes || '' };
+    } catch (e) { return null; }
+  },
+
+  // The Parts tab: the files to print with a counter each (successful prints with the file, as
+  // for configurations), the hardware with a "have it" tick, notes
+  partsTab(model, canEdit) {
+    const esc = (s) => this.escapeHtml(s);
+    const list = this.partsListOf(model);
+    if (!list) {
+      return `<div class="empty-state" style="padding:30px"><div class="empty-state-text">No parts list yet</div>
+        <div class="empty-state-sub">What to print and how many, and the hardware to buy</div>
+        ${canEdit ? `<div class="parts-toolbar" style="justify-content:center">
+          <button type="button" class="btn btn-primary btn-sm" onclick="App.partsAddAll3d()">Add all 3D files, 1 each</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="App.partsEdit()">Edit list</button></div>` : ''}</div>`;
+    }
+    const files = new Map((model.files || []).map(f => [f.id, f]));
+    const printed = {};
+    for (const p of model.prints || []) if (p.successful && p.file_id) printed[p.file_id] = (printed[p.file_id] || 0) + 1;
+    const parts = list.files.filter(p => p.qty > 0 && files.has(p.file_id));
+    const done = parts.reduce((n, p) => n + Math.min(p.qty, printed[p.file_id] || 0), 0);
+    const total = parts.reduce((n, p) => n + p.qty, 0);
+    const rows = parts.map(p => {
+      const f = files.get(p.file_id);
+      const n = printed[p.file_id] || 0;
+      const id = Number(p.file_id);
+      const name = String(f.original_name || f.filename || '');
+      return `
+        <div class="kit-part${n >= p.qty ? ' is-printed' : ''}" title="${esc(name)}">
+          <div class="kit-progress${n >= p.qty ? ' is-done' : ''}">
+            ${canEdit ? `<button type="button" class="kit-step" title="Undo the last print" aria-label="One print less" onclick="App.partsPrinted(${id}, -1)"${n ? '' : ' disabled'}>−</button>` : ''}
+            <button type="button" class="kit-count" title="Prints of this part: history, a print with details" onclick="App.partsPrints(${id})">${n >= p.qty ? '✓ ' : ''}${n}/${p.qty}</button>
+            ${canEdit ? `<button type="button" class="kit-step is-add" title="Printed one" aria-label="One print more" onclick="App.partsPrinted(${id}, 1)">+</button>` : ''}
+          </div>
+          <div class="kit-part-main">
+            <div class="kit-part-label">${esc(name.split('/').pop())}</div>
+            ${name.includes('/') ? `<div class="kit-part-path">${esc(name)}</div>` : ''}
+          </div>
+          <span class="kit-part-size">${this.formatSize(f.file_size)}</span>
+        </div>`;
+    }).join('');
+    const hardware = list.hardware.map((h, i) => `
+        <label class="parts-hw${h.have ? ' is-have' : ''}">
+          <input type="checkbox"${h.have ? ' checked' : ''}${canEdit ? '' : ' disabled'} onchange="App.partsHave(${i}, this.checked)" aria-label="Have it">
+          <span class="parts-hw-qty">${Number(h.qty) || 0}×</span><span>${esc(h.name)}</span>
+        </label>`).join('');
+    return `
+      ${total ? `<div class="kit-print-progress${done >= total ? ' is-done' : ''}">
+        <div class="kit-print-bar"><span style="width:${Math.round(done / total * 100)}%"></span></div>
+        <span class="kit-print-text">${done >= total ? '✓ ' : ''}${done} of ${total} printed</span>
+        ${canEdit ? `<button type="button" class="btn btn-ghost btn-xs" onclick="App.partsFill()">Mark all printed</button>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="App.partsReset()"${done ? '' : ' disabled'}>Reset progress</button>` : ''}
+      </div>` : ''}
+      ${canEdit ? '<div class="parts-toolbar"><button type="button" class="btn btn-secondary btn-xs" onclick="App.partsEdit()">Edit list</button></div>' : ''}
+      ${rows ? `<div class="kit-group-title">To print</div>${rows}` : ''}
+      ${hardware ? `<div class="kit-group-title">Hardware</div>${hardware}` : ''}
+      ${list.notes.trim() ? `<div class="kit-group-title">Notes</div><div class="parts-notes">${esc(list.notes)}</div>` : ''}`;
+  },
+
+  // Editing the parts list: every file of the project with how many to print (0: not on the
+  // list), hardware rows, notes
+  partsEditor(model) {
+    const esc = (s) => this.escapeHtml(s);
+    const list = this.partsListOf(model) || { files: [], hardware: [], notes: '' };
+    const qty = new Map(list.files.map(p => [p.file_id, p.qty]));
+    const files = (model.files || []).slice().sort((a, b) => this.compareNames(a.original_name || '', b.original_name || ''));
+    const rows = files.map(f => {
+      const name = String(f.original_name || f.filename || '');
+      return `
+        <div class="kit-part" data-file-id="${Number(f.id)}">
+          <input type="number" class="kit-qty" min="0" max="9999" value="${Number(qty.get(f.id)) || 0}" aria-label="How many to print">
+          <div class="kit-part-main">
+            <div class="kit-part-label">${esc(name.split('/').pop())}</div>
+            ${name.includes('/') ? `<div class="kit-part-path">${esc(name)}</div>` : ''}
+          </div>
+          <span class="kit-part-size">${this.formatSize(f.file_size)}</span>
+        </div>`;
+    }).join('');
+    return `
+      <div class="parts-editor">
+        <div class="parts-toolbar">
+          <span class="kit-print-text" style="margin-right:auto">How many of each file to print (0: not on the list)</span>
+          <button type="button" class="btn btn-secondary btn-xs" onclick="App.partsCancel()">Cancel</button>
+          <button type="button" class="btn btn-primary btn-xs" onclick="App.partsSave()">Save</button>
+        </div>
+        <div class="kit-group-title">Files</div>
+        ${rows || '<div class="parts-notes">No files</div>'}
+        <div class="kit-group-title">Hardware</div>
+        <div id="parts-hw-rows">${list.hardware.map(h => this.partsHardwareRow(h)).join('')}</div>
+        <div class="parts-toolbar" style="justify-content:flex-start"><button type="button" class="btn btn-ghost btn-xs" onclick="App.partsAddHardware()">+ Add hardware</button></div>
+        <div class="kit-group-title">Notes</div>
+        <div style="padding:0 16px 16px"><textarea class="form-textarea" id="parts-notes" rows="3" maxlength="5000" placeholder="Print settings, order of assembly...">${esc(list.notes)}</textarea></div>
+      </div>`;
+  },
+
+  partsHardwareRow(h = { name: '', qty: 1, have: false }) {
+    return `
+      <div class="parts-hw-edit" data-have="${h.have ? 1 : 0}">
+        <input type="number" class="kit-qty" min="0" max="9999" value="${Number(h.qty) || 0}" aria-label="How many">
+        <input type="text" class="form-input" maxlength="120" value="${this.escapeHtml(h.name)}" placeholder="e.g. Screw M3×8" aria-label="Hardware">
+        <button type="button" class="kit-icon-btn is-danger" title="Remove" onclick="this.closest('.parts-hw-edit').remove()">×</button>
+      </div>`;
   },
 
   // ── Settings panels ──

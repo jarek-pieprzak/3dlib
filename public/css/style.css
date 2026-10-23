@@ -1881,3 +1881,14 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-doc-name{flex:1 1 auto;min-width:0;padding:0;overflow:hidden;font-size:.8rem;text-align:left;text-overflow:ellipsis;white-space:nowrap;color:var(--accent-cyan);background:none;border:none;cursor:pointer}
 .kit-doc-name:hover{text-decoration:underline}
 .kit-parts-body>.kit-check-wrap{padding:6px 16px 0}
+/* Parts list of a project (the Parts tab of the model page, UI.partsTab / partsEditor) */
+.parts-toolbar{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:8px 16px}
+.parts-hw{display:flex;align-items:center;gap:10px;padding:5px 16px;font-size:.82rem;color:var(--text-primary);cursor:pointer}
+.parts-hw.is-have{color:var(--success)}
+.parts-hw-qty{flex:none;min-width:40px;font-weight:700;text-align:right}
+.parts-notes{padding:4px 16px 16px;font-size:.82rem;white-space:pre-wrap;color:var(--text-secondary)}
+.parts-hw-edit{display:flex;align-items:center;gap:8px;padding:4px 16px}
+.parts-hw-edit .form-input{flex:1 1 auto;min-width:0;padding:5px 8px;font-size:.82rem}
+/* Tabs of the file panel (Files, Documentation, Trash, Parts): whole tabs wrap, never their labels */
+.files-tabs{flex-wrap:wrap;row-gap:0;column-gap:18px !important}
+.files-tabs>div{white-space:nowrap}

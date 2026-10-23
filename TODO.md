@@ -23,7 +23,7 @@ planned yet; each one gets discussed before work starts.
 
 My own rules, not the old Kanban idea ("to print / printing / printed / assembled").
 
-- **Parts list per project (agreed 2026-10-23, next to build).** The USSA VAULT configurator
+- **Parts list per project (built 2026-10-23; see CLAUDE.md).** The USSA VAULT configurator
   has one; other models often come without instructions, so this list is made by hand.
   - A "Parts" tab on the model page next to Files / Documentation, for any project, read-only
     ones too (the list lives in the database, not in the files). It shows the list with
@@ -36,8 +36,8 @@ My own rules, not the old Kanban idea ("to print / printing / printed / assemble
     Mark all printed, Reset progress; failed prints do not count). Later the printer's MQTT
     status can add these entries by itself.
   - Progress on the model cards, like `kit_progress` of configurations.
-  - Later: the list as text, "Download ZIP" of the listed files only (the selection download
-    of VAULT).
+  - Still to do: the list as text, "Download ZIP" of the listed files only (the selection
+    download of VAULT).
 - **Status from the printer, if it can be done:** Bambu printers (P1S) report the print status
   (started, progress, finished) over MQTT on the local network, with LAN-only / Developer mode
   and the access code. That could mark files as printed by itself; without it, marking stays

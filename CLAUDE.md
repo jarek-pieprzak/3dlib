@@ -107,6 +107,14 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
+- Parts list of any project (the "Parts" tab of the model page; `UI.partsTab` / `partsEditor`,
+  `App.parts*`): files of the project with how many to print, hardware (name, how many, "have
+  it"), notes, in `models.parts_list` (JSON; `PUT /api/models/:id/parts-list`, an empty list
+  removes it; read-only projects too, a configuration has its kit's list). Progress works like
+  the VAULT configurations: `kits.hasParts` / `refreshNeeds` turn the list into `kit_needs`, so
+  the counters, "Mark all printed" (`prints/fill`), "−" and Reset (`prints/parts`) and
+  `kit_progress` on the cards are the same code.
+
 - Renamed to 3DLib, version 1.0.0. Logo `public/img/logo.svg` (an isometric cube printed in
   layers); `favicon.png`, `favicon.ico` and `icon.png` in `public/` are rendered from it with sharp.
   No upstream update check, "What's new" window, website or Ko-fi links;

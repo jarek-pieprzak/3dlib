@@ -269,8 +269,12 @@ async function runStaticAndUiChecks() {
       projectForm: UI.projectForm({ ...named[0], description: X }),
       toolbar: UI.toolbar(named, named, named, 'all'),
       browseFileCard: UI.browseFileCard({ name: 'a.gcode', type: 'gcode', ext: 'gcode', size: 1, url: '/x', folderPath: 'f', metadata: { printTime: X, filamentType: X, tempNozzle: X } }),
-      settingsPanel: UI.settingsPanel('Categories', named, 'categories')
+      settingsPanel: UI.settingsPanel('Categories', named, 'categories'),
+      partsTab: UI.partsTab({ ...evilModel, prints: [], parts_list: JSON.stringify({ files: [{ file_id: evilModel.files[0].id, qty: 2 }], hardware: [{ name: X, qty: 3, have: true }], notes: X }) }, true),
+      partsEditor: UI.partsEditor({ ...evilModel, parts_list: JSON.stringify({ files: [], hardware: [{ name: X, qty: 1 }], notes: X }) }),
+      modelDetailWithParts: UI.modelDetail({ ...evilModel, parts_list: JSON.stringify({ files: [], hardware: [{ name: X, qty: 1 }], notes: '' }) }, true)
     };
+    assert(renders.modelDetailWithParts.includes('id="tab-content-parts"') && renders.partsTab.includes('0/2'), 'The model page has a Parts tab with counters');
     for (const [label, html] of Object.entries(renders)) assert(!html.includes('<x-evil'), `UI.${label} writes a name as HTML`);
   });
 
@@ -1087,6 +1091,43 @@ async function runE2ETests() {
       const taken = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'case tag a' } });
       assert(taken.status === 409 && taken.data.suggested_name, `"case tag a" is taken by "Case Tag A" (${taken.status})`);
       for (const id of [a, b]) await apiReq(`/api/models/${id}`, { method: 'DELETE', session: adminSession });
+    });
+
+    await check('Parts list of a project: files with counts, hardware, notes; progress from the print history, on the cards too', async () => {
+      const created = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'Parts List Box' } });
+      const id = created.data.id;
+      const form = new FormData();
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      form.append('files', new Blob([stl], { type: 'model/stl' }), 'lid.stl');
+      form.append('files', new Blob([stl], { type: 'model/stl' }), 'hinge.stl');
+      assert([200, 201].includes((await apiReq(`/api/models/${id}/files`, { method: 'POST', session: adminSession, body: form })).status), 'Upload failed');
+      const files = (await apiReq(`/api/models/${id}`, { session: adminSession })).data.files;
+      const lid = files.find(f => f.original_name === 'lid.stl'), hinge = files.find(f => f.original_name === 'hinge.stl');
+      const save = (body, session = adminSession) => apiReq(`/api/models/${id}/parts-list`, { method: 'PUT', session, body });
+      const saved = await save({ files: [{ file_id: lid.id, qty: 1 }, { file_id: hinge.id, qty: 2 }], hardware: [{ name: 'Magnet 6×2', qty: 4, have: false }, { name: '  ' }], notes: 'PETG' });
+      assert(saved.status === 200 && saved.data.progress.total === 3 && saved.data.progress.done === 0, `Saving the list: ${saved.status} ${JSON.stringify(saved.data)}`);
+      assert(saved.data.parts_list.hardware.length === 1, 'A hardware row without a name is dropped');
+      // Validation and rights
+      const other = (await apiReq(`/api/models/${keptModels.pdfOnly}`, { session: adminSession })).data.files[0];
+      assert((await save({ files: [{ file_id: other.id, qty: 1 }] })).status === 400, 'A file of another model must be refused');
+      assert((await save({ files: [] }, viewerSession)).status === 403, 'A viewer cannot change a parts list');
+      // Progress from the print history: +1, mark all printed, -1, reset
+      const progress = async () => (await apiReq(`/api/models/${id}`, { session: adminSession })).data.kit_progress;
+      await apiReq(`/api/models/${id}/prints`, { method: 'POST', session: adminSession, body: { file_id: hinge.id, successful: true } });
+      await apiReq(`/api/models/${id}/prints`, { method: 'POST', session: adminSession, body: { file_id: hinge.id, successful: false } });
+      assert((await progress()).done === 1, `One successful print of the hinge (a failed one does not count): ${JSON.stringify(await progress())}`);
+      const fill = await apiReq(`/api/models/${id}/prints/fill`, { method: 'POST', session: adminSession, body: {} });
+      assert(fill.status === 200 && fill.data.added === 2 && fill.data.progress.done === 3, `Mark all printed: ${JSON.stringify(fill.data)}`);
+      const listed = ((await apiReq('/api/models?search=Parts%20List%20Box', { session: adminSession })).data.models || [])[0];
+      assert(listed && listed.kit_progress && listed.kit_progress.done === 3 && listed.kit_progress.total === 3, `The model list carries the progress: ${JSON.stringify(listed && listed.kit_progress)}`);
+      await apiReq(`/api/models/${id}/prints/parts?file_id=${lid.id}`, { method: 'DELETE', session: adminSession });
+      assert((await progress()).done === 2, '"−" takes off the newest print of the part');
+      await apiReq(`/api/models/${id}/prints/parts`, { method: 'DELETE', session: adminSession });
+      assert((await progress()).done === 0, 'Reset progress takes off every print of a part');
+      // An empty list removes it
+      const cleared = await save({ files: [], hardware: [], notes: '' });
+      assert(cleared.status === 200 && cleared.data.parts_list === null && !(await progress()), 'An empty list must remove the list and its progress');
+      await apiReq(`/api/models/${id}`, { method: 'DELETE', session: adminSession });
     });
 
     await check('A slicer upload of a name that exists goes to that model (case ignored), not to a second model', async () => {

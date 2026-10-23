@@ -277,6 +277,7 @@ const API = {
   undoPartPrint(modelId, fileId) { return this.request(`/api/models/${modelId}/prints/parts?file_id=${Number(fileId)}`, { method: 'DELETE' }); },
   fillPrints(modelId, materialId) { return this.request(`/api/models/${modelId}/prints/fill`, { method: 'POST', body: JSON.stringify({ material_id: materialId || null }) }); },
   resetPartPrints(modelId) { return this.request(`/api/models/${modelId}/prints/parts`, { method: 'DELETE' }); },
+  saveModelPartsList(modelId, list) { return this.request(`/api/models/${modelId}/parts-list`, { method: 'PUT', body: JSON.stringify(list) }); },
 
   // Categories, Tags, Materials
   getCategories() { return this.request('/api/categories'); },

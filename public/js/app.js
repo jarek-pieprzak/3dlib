@@ -2538,6 +2538,126 @@ const App = {
     this.openModal(`Prints · ${part ? part.label : file.original_name.split('/').pop()}`, UI.partPrintsModal(model, file, part, this.cache.materials));
   },
 
+  // ── Parts list of a project (the Parts tab of the model page) ──
+  partsCanEdit() {
+    const m = this.currentModel;
+    const u = this.currentUser;
+    return Boolean(m && !m.deleted_at && u && (u.role === 'admin' || (u.role !== 'viewer' && m.user_id === u.id)));
+  },
+
+  partsRender() {
+    const el = document.getElementById('tab-content-parts');
+    if (el && this.currentModel) el.innerHTML = UI.partsTab(this.currentModel, this.partsCanEdit());
+    const p = this.currentModel && this.currentModel.kit_progress;
+    const label = document.querySelector('.parts-tab-label');
+    if (label) label.textContent = `Parts${p && p.total ? ` (${p.done}/${p.total})` : ''}`;
+  },
+
+  partsEdit() {
+    const el = document.getElementById('tab-content-parts');
+    if (el && this.currentModel) el.innerHTML = UI.partsEditor(this.currentModel);
+  },
+
+  partsCancel() { this.partsRender(); },
+
+  partsAddHardware() {
+    const rows = document.getElementById('parts-hw-rows');
+    if (rows) rows.insertAdjacentHTML('beforeend', UI.partsHardwareRow());
+    rows?.lastElementChild?.querySelector('input[type="text"]')?.focus();
+  },
+
+  async partsSave() {
+    const el = document.getElementById('tab-content-parts');
+    if (!el) return;
+    const files = [...el.querySelectorAll('.parts-editor .kit-part[data-file-id]')]
+      .map(r => ({ file_id: Number(r.dataset.fileId), qty: Number(r.querySelector('input').value) || 0 }))
+      .filter(p => p.qty > 0);
+    const hardware = [...el.querySelectorAll('.parts-hw-edit')].map(r => {
+      const [qty, name] = r.querySelectorAll('input');
+      return { name: name.value.trim(), qty: Number(qty.value) || 0, have: r.dataset.have === '1' };
+    }).filter(h => h.name);
+    await this.partsStore({ files, hardware, notes: document.getElementById('parts-notes')?.value || '' });
+  },
+
+  async partsStore(list) {
+    const model = this.currentModel;
+    if (!model) return;
+    try {
+      const res = await API.saveModelPartsList(model.id, list);
+      model.parts_list = res.parts_list ? JSON.stringify(res.parts_list) : null;
+      model.kit_progress = res.progress;
+      this.partsRender();
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  // A list to start with: every 3D file once
+  partsAddAll3d() {
+    const files = (this.currentModel?.files || []).filter(f => UI.MEASURABLE.includes(f.file_type));
+    if (!files.length) return this.partsEdit();
+    this.partsStore({ files: files.map(f => ({ file_id: f.id, qty: 1 })), hardware: [], notes: '' });
+  },
+
+  partsHave(index, have) {
+    const list = UI.partsListOf(this.currentModel);
+    if (!list || !list.hardware[index]) return;
+    list.hardware[index].have = Boolean(have);
+    this.partsStore(list);
+  },
+
+  // The prints come again from the server (the history is the source)
+  async partsReload() {
+    const model = this.currentModel;
+    if (!model) return;
+    const fresh = await API.getModel(model.id);
+    if (!this.currentModel || this.currentModel.id !== fresh.id) return;
+    Object.assign(this.currentModel, { prints: fresh.prints || [], kit_progress: fresh.kit_progress, parts_list: fresh.parts_list });
+    this.partsRender();
+    const button = document.querySelector(`.detail-actions [onclick="App.showPrintHistory(${model.id})"]`);
+    if (button && button.lastChild) button.lastChild.textContent = ` Print History${this.currentModel.prints.length ? ` (${this.currentModel.prints.length})` : ''}`;
+  },
+
+  // +1: a successful print of the part; -1: the newest one goes
+  async partsPrinted(fileId, delta) {
+    const model = this.currentModel;
+    if (!model) return;
+    try {
+      if (delta > 0) await API.addPrint(model.id, { file_id: Number(fileId), successful: true, material_id: this.kitLastMaterial() });
+      else await API.undoPartPrint(model.id, Number(fileId));
+      await this.partsReload();
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  async partsFill() {
+    const model = this.currentModel;
+    if (!model || !confirm('Mark every part of the list as printed?')) return;
+    try {
+      const res = await API.fillPrints(model.id, this.kitLastMaterial());
+      await this.partsReload();
+      this.toast(`${res.added} print${res.added === 1 ? '' : 's'} logged`);
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  async partsReset() {
+    const model = this.currentModel;
+    if (!model || !confirm('Delete every print of the parts of this list from the history?')) return;
+    try {
+      await API.resetPartPrints(model.id);
+      await this.partsReload();
+      this.toast('Progress reset');
+    } catch (e) { this.toast(e.message, 'error'); }
+  },
+
+  // The prints of one part: their list and a print with details
+  async partsPrints(fileId) {
+    const model = this.currentModel;
+    const file = model && (model.files || []).find(f => f.id === Number(fileId));
+    if (!file) return;
+    await this.loadCache();
+    const item = (UI.partsListOf(model)?.files || []).find(p => p.file_id === file.id);
+    const name = String(file.original_name || '').split('/').pop();
+    this.openModal(`Prints · ${name}`, UI.partPrintsModal(model, file, item ? { label: name, qty: item.qty } : null, this.cache.materials));
+  },
+
   // ── Saved configurations: models of their own ──
   // The archive's list opens a configuration's page
   kitOpenSaved(id) {
@@ -3979,7 +4099,7 @@ const App = {
       tabEl.style.color = 'var(--text)';
     }
     let shown = null;
-    for (const name of ['files', 'docs', 'trash']) {
+    for (const name of ['files', 'docs', 'trash', 'parts']) {
       const content = container.querySelector(`#tab-content-${name}`);
       if (!content) continue;
       content.style.display = name === tab ? 'block' : 'none';

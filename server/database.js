@@ -363,6 +363,9 @@ async function initDatabase() {
     // The prints a configuration needs per file of its archive ({ file id: count }, utils/kits.js),
     // kept so lists can show its progress without computing the parts list
     if (!mCols.some(c => c.name === 'kit_needs')) db.run('ALTER TABLE models ADD COLUMN kit_needs TEXT');
+    // The parts list of a project, made by hand (utils/kits.js partsListOf): JSON
+    // { files: [{ file_id, qty }], hardware: [{ name, qty, have }], notes }
+    if (!mCols.some(c => c.name === 'parts_list')) db.run('ALTER TABLE models ADD COLUMN parts_list TEXT');
     // Print history: the file a print was of (the parts of a configuration)
     if (!all('PRAGMA table_info(print_history)').some(c => c.name === 'file_id')) db.run('ALTER TABLE print_history ADD COLUMN file_id INTEGER');
     db.run('CREATE INDEX IF NOT EXISTS idx_print_history_model_file ON print_history(model_id, file_id)');

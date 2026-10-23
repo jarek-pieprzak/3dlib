@@ -23,10 +23,21 @@ planned yet; each one gets discussed before work starts.
 
 My own rules, not the old Kanban idea ("to print / printing / printed / assembled").
 
-- **What to print first:** a parts list per project. The USSA VAULT configurator has one; other
-  models often come without instructions, so the list would be made by hand (files to print,
-  how many, and hardware: screws, magnets, bearings).
-- **Printed or not:** mark which files of the list are already printed.
+- **Parts list per project (agreed 2026-10-23, next to build).** The USSA VAULT configurator
+  has one; other models often come without instructions, so this list is made by hand.
+  - A "Parts" tab on the model page next to Files / Documentation, for any project, read-only
+    ones too (the list lives in the database, not in the files). It shows the list with
+    progress; "Edit list" switches to editing, Save / Cancel go back (like "Edit
+    configuration" of VAULT). "Add all 3D files, 1 each" to start.
+  - Rows: files of the project with how many to print; hardware with a name, how many and a
+    "have it" tick (screws, magnets, bearings); notes.
+  - Printed or not: from the print history with the part's file, like the VAULT configurations
+    (− / n of qty / + per part, a click on the count shows its prints, "done of total" bar,
+    Mark all printed, Reset progress; failed prints do not count). Later the printer's MQTT
+    status can add these entries by itself.
+  - Progress on the model cards, like `kit_progress` of configurations.
+  - Later: the list as text, "Download ZIP" of the listed files only (the selection download
+    of VAULT).
 - **Status from the printer, if it can be done:** Bambu printers (P1S) report the print status
   (started, progress, finished) over MQTT on the local network, with LAN-only / Developer mode
   and the access code. That could mark files as printed by itself; without it, marking stays

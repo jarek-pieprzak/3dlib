@@ -785,9 +785,9 @@ const UI = {
     let metaChips = '';
     if (file.metadata) {
       const chips = [];
-      if (file.metadata.printTime) chips.push(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${file.metadata.printTime}`);
-      if (file.metadata.filamentType) chips.push(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>${file.metadata.filamentType}`);
-      if (file.metadata.tempNozzle) chips.push(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>${file.metadata.tempNozzle}°C`);
+      if (file.metadata.printTime) chips.push(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${this.escapeHtml(file.metadata.printTime)}`);
+      if (file.metadata.filamentType) chips.push(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>${this.escapeHtml(file.metadata.filamentType)}`);
+      if (file.metadata.tempNozzle) chips.push(`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>${this.escapeHtml(file.metadata.tempNozzle)}°C`);
       if (chips.length) {
         metaChips = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${chips.map(c => `<span style="font-size:0.65rem;background:var(--bg-input);padding:1px 5px;border-radius:4px;color:var(--text-secondary);border:1px solid var(--border)">${c}</span>`).join('')}</div>`;
       }
@@ -817,10 +817,10 @@ const UI = {
     let thumb;
     if (m.thumbnail) {
       const thumbUrl = m.thumbnail.startsWith('/') ? m.thumbnail : `/uploads/${m.thumbnail}`;
-      thumb = `<img src="${this.imgSrc(thumbUrl, 480)}" alt="${m.name}" loading="lazy" decoding="async">`;
+      thumb = `<img src="${this.imgSrc(thumbUrl, 480)}" alt="${this.escapeHtml(m.name)}" loading="lazy" decoding="async">`;
     } else if (m.stl_file) {
       const stlUrl = m.stl_file.startsWith('/') ? m.stl_file : `/uploads/${m.stl_file}`;
-      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${stlUrl}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
+      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${this.escapeHtml(stlUrl)}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else {
       thumb = `<div class="model-card-placeholder" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     }
@@ -831,7 +831,7 @@ const UI = {
       ? '<span class="badge badge-printed">✓ Printed</span>'
       : '<span class="badge badge-not-printed">Not printed</span>';
     const cat = m.category_name
-      ? `<span class="badge badge-category" style="background:${m.category_color}20;color:${m.category_color};border:1px solid ${m.category_color}33;cursor:pointer" onclick="event.stopPropagation();App.navigate('/models?category=${m.category_id}')" title="Filter by category: ${this.escapeHtml(m.category_name)}">${m.category_name}</span>`
+      ? `<span class="badge badge-category" style="background:${this.escapeHtml(m.category_color)}20;color:${this.escapeHtml(m.category_color)};border:1px solid ${this.escapeHtml(m.category_color)}33;cursor:pointer" onclick="event.stopPropagation();App.navigate('/models?category=${m.category_id}')" title="Filter by category: ${this.escapeHtml(m.category_name)}">${this.escapeHtml(m.category_name)}</span>`
       : '';
     const canManage = App.currentUser && App.currentUser.role !== 'viewer';
     const canEdit = App.currentUser?.role === 'admin' || (canManage && m.user_id === App.currentUser?.id);
@@ -848,7 +848,7 @@ const UI = {
       <div class="model-card-thumb">${thumb}<div class="model-card-badges">${protectedBadge}${kitBadge}${types}</div></div>
       <div class="model-card-body">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div class="model-card-name" style="flex:1">${m.name}</div>
+          <div class="model-card-name" style="flex:1">${this.escapeHtml(m.name)}</div>
           ${plusBtn}
         </div>
         <div class="model-card-meta">${cat} ${printed} ${this.fitBadge(m)}</div>
@@ -950,7 +950,7 @@ const UI = {
           <button type="button" class="btn btn-secondary btn-sm" onclick="App.closeModal()">Close</button>
         </div>`;
     }
-    const options = categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    const options = categories.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
     return `
       <form onsubmit="App.handleBulkMove(event)">
         <div style="margin-bottom:16px;color:var(--text-secondary);font-size:0.9rem">
@@ -979,7 +979,7 @@ const UI = {
           <button type="button" class="btn btn-secondary btn-sm" onclick="App.closeModal()">Close</button>
         </div>`;
     }
-    const options = categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    const options = categories.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
     return `
       <form onsubmit="App.handleBulkBrowseCategorySubmit(event)">
         <div style="margin-bottom:16px;color:var(--text-secondary);font-size:0.9rem">
@@ -1000,7 +1000,7 @@ const UI = {
   },
 
   bulkCollectionForm(projects = []) {
-    const options = projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    const options = projects.map(p => `<option value="${p.id}">${this.escapeHtml(p.name)}</option>`).join('');
     return `
       <form onsubmit="App.handleBulkAddToCollectionSubmit(event)">
         <div class="form-group">
@@ -1084,8 +1084,8 @@ const UI = {
   bulkBrowseTagForm(tags = []) {
     const tagCheckboxes = tags.map(t =>
       `<label class="tag-pill-checkbox">
-        <input type="checkbox" name="tags" value="${t.name}">
-        <span class="tag-pill">${t.name}</span>
+        <input type="checkbox" name="tags" value="${this.escapeHtml(t.name)}">
+        <span class="tag-pill">${this.escapeHtml(t.name)}</span>
       </label>`
     ).join('');
 
@@ -1110,8 +1110,8 @@ const UI = {
   bulkTagForm(tags = []) {
     const tagCheckboxes = tags.map(t =>
       `<label class="tag-pill-checkbox">
-        <input type="checkbox" name="tags" value="${t.name}">
-        <span class="tag-pill">${t.name}</span>
+        <input type="checkbox" name="tags" value="${this.escapeHtml(t.name)}">
+        <span class="tag-pill">${this.escapeHtml(t.name)}</span>
       </label>`
     ).join('');
 
@@ -1156,7 +1156,7 @@ const UI = {
     const layout = model.layout || 'none';
     const onDisk = (f) => layout !== 'none' && Boolean(f.library_path) && !f.is_archive_entry && !String(f.library_path).includes('::');
     const cat = model.category_name
-      ? `<span class="badge badge-category" style="background:${model.category_color}20;color:${model.category_color};border:1px solid ${model.category_color}33">${model.category_name}</span>`
+      ? `<span class="badge badge-category" style="background:${this.escapeHtml(model.category_color)}20;color:${this.escapeHtml(model.category_color)};border:1px solid ${this.escapeHtml(model.category_color)}33">${this.escapeHtml(model.category_name)}</span>`
       : '';
     const tags = (model.tags || []).map(t => `<span class="badge badge-tag" style="cursor:pointer" onclick="App.navigate('/models?tag=${t.id}')" title="Filter by tag: ${this.escapeHtml(t.name)}">${this.escapeHtml(t.name)}</span>`).join('');
     const printed = model.has_printed
@@ -1180,7 +1180,7 @@ const UI = {
           <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">3D Studio</span></div>
         </div>
         <div class="panel-body no-pad">
-          <div class="viewer-container" id="stl-viewer-${model.id}" data-stl-url="${this.escapeHtml(stlFile.url || '/uploads/'+stlFile.filename)}" data-fallback-thumbnail="${model.thumbnail_url || ''}">
+          <div class="viewer-container" id="stl-viewer-${model.id}" data-stl-url="${this.escapeHtml(stlFile.url || '/uploads/'+stlFile.filename)}" data-fallback-thumbnail="${this.escapeHtml(model.thumbnail_url || '')}">
             <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted)">Loading 3D preview...</div>
           </div>
           <div class="detail-viewer-hint" style="padding:12px 16px;font-size:.7rem;color:var(--text-muted);border-top:1px solid var(--border);background:rgba(0,0,0,0.1)">
@@ -1195,7 +1195,7 @@ const UI = {
           <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>Model Preview</div>
         </div>
         <div class="panel-body no-pad detail-thumb-body" style="height:400px;background:var(--bg-dark);display:flex;align-items:center;justify-content:center">
-          <img src="${model.thumbnail_url}" style="max-width:100%;max-height:100%;object-fit:contain">
+          <img src="${this.escapeHtml(model.thumbnail_url)}" style="max-width:100%;max-height:100%;object-fit:contain">
         </div>
       </div>`;
     } else {
@@ -1224,10 +1224,12 @@ const UI = {
           </div>
           <div class="panel-body no-pad">
             ${gcodeFiles.map(f => {
-              const meta = typeof f.metadata === 'string' ? JSON.parse(f.metadata) : f.metadata || {};
+              // Values from the file's own text: escaped once for the whole panel
+              const raw = typeof f.metadata === 'string' ? JSON.parse(f.metadata) : f.metadata || {};
+              const meta = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, typeof v === 'string' ? this.escapeHtml(v) : v]));
               return `
               <div style="padding:16px; border-bottom:1px solid var(--border)">
-                <div style="font-weight:600; margin-bottom:10px; word-break:break-all; font-size: 0.9rem;">${f.original_name || f.filename}</div>
+                <div style="font-weight:600; margin-bottom:10px; word-break:break-all; font-size: 0.9rem;">${this.escapeHtml(f.original_name || f.filename)}</div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:0.85rem;">
                   <div style="background:var(--bg-input); padding:8px; border-radius:var(--radius-sm)">
                     <div style="color:var(--text-muted); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.05em">Est. Time</div>
@@ -1366,7 +1368,7 @@ const UI = {
                 <span>·</span>
                 <span style="display:inline-flex;align-items:center;gap:3px">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;opacity:0.8"><circle cx="12" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/></svg>
-                  ${f.uploader_name || 'System'}
+                  ${this.escapeHtml(f.uploader_name || 'System')}
                 </span>
               </div>
             </div>
@@ -1443,7 +1445,7 @@ const UI = {
       <div class="breadcrumbs">
         <a href="#/models">Library</a>
         <span>/</span>
-        ${model.category_id ? `<a href="#/models?category=${model.category_id}">${model.category_name}</a><span>/</span>` : ''}
+        ${model.category_id ? `<a href="#/models?category=${model.category_id}">${this.escapeHtml(model.category_name)}</a><span>/</span>` : ''}
         ${isConfig && model.kit_source ? `<a href="#/models/${Number(model.kit_source.id)}">${this.escapeHtml(model.kit_source.name)}</a><span>/</span>` : ''}
         <span class="current">${this.escapeHtml(model.name)}</span>
       </div>
@@ -2184,12 +2186,12 @@ const UI = {
     const isEdit = !!model;
     const selTags = model?.tags?.map(t => t.id) || [];
     const catOptions = categories.map(c =>
-      `<option value="${c.id}" ${model?.category_id == c.id ? 'selected' : ''}>${c.name}</option>`
+      `<option value="${c.id}" ${model?.category_id == c.id ? 'selected' : ''}>${this.escapeHtml(c.name)}</option>`
     ).join('');
     const tagCheckboxes = tags.map(t =>
       `<label class="tag-pill-checkbox">
         <input type="checkbox" name="tags" value="${t.id}" ${selTags.includes(t.id) ? 'checked' : ''}>
-        <span class="tag-pill">${t.name}</span>
+        <span class="tag-pill">${this.escapeHtml(t.name)}</span>
       </label>`
     ).join('');
 
@@ -2197,7 +2199,7 @@ const UI = {
       <form id="model-form" onsubmit="App.handleModelSubmit(event,${model?.id || 'null'})">
         <div class="form-group">
           <label class="form-label">Name *</label>
-          <input class="form-input" name="name" required value="${model?.name || ''}" placeholder="e.g. Phone Stand v2" id="model-name-input">
+          <input class="form-input" name="name" required value="${this.escapeHtml(model?.name || '')}" placeholder="e.g. Phone Stand v2" id="model-name-input">
         </div>
         <div class="form-group">
           <label class="form-label">Category</label>
@@ -2207,7 +2209,7 @@ const UI = {
         </div>
         <div class="form-group">
           <label class="form-label">Source URL (optional)</label>
-          <input class="form-input" type="url" name="source_url" value="${model?.source_url || ''}" placeholder="e.g. https://www.printables.com/...">
+          <input class="form-input" type="url" name="source_url" value="${this.escapeHtml(model?.source_url || '')}" placeholder="e.g. https://www.printables.com/...">
         </div>
         <div class="form-group">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -2217,12 +2219,12 @@ const UI = {
               <button type="button" class="btn btn-ghost btn-xs" id="desc-tab-preview" onclick="App.toggleDescTab('preview')" style="padding:2px 8px;font-size:0.75rem">Preview</button>
             </div>
           </div>
-          <textarea class="form-textarea" id="model-description-input" name="description" placeholder="Describe this model using Markdown formatting, lists, links, images..." rows="4">${model?.description || ''}</textarea>
+          <textarea class="form-textarea" id="model-description-input" name="description" placeholder="Describe this model using Markdown formatting, lists, links, images..." rows="4">${this.escapeHtml(model?.description || '')}</textarea>
           <div id="model-description-preview" class="glass-panel" style="display:none;padding:12px;min-height:90px;max-height:220px;overflow-y:auto;background:var(--bg-input)"></div>
         </div>
         <div class="form-group">
           <label class="form-label">Print Tips</label>
-          <textarea class="form-textarea" name="print_tips" placeholder="Recommended settings, supports needed, etc...">${model?.print_tips || ''}</textarea>
+          <textarea class="form-textarea" name="print_tips" placeholder="Recommended settings, supports needed, etc...">${this.escapeHtml(model?.print_tips || '')}</textarea>
         </div>
         <div class="form-group">
           <label class="form-label">Tags</label>
@@ -2289,7 +2291,7 @@ const UI = {
   // opts.fileId: a print of one part of a configuration
   printForm(modelId, materials = [], opts = {}) {
     const matOptions = materials.map(m =>
-      `<option value="${m.id}">${m.name}${m.is_preset ? '' : ' (custom)'}</option>`
+      `<option value="${m.id}">${this.escapeHtml(m.name)}${m.is_preset ? '' : ' (custom)'}</option>`
     ).join('');
 
     return `
@@ -2355,9 +2357,9 @@ const UI = {
 
   // ── Toolbar ──
   toolbar(categories = [], tags = [], users = [], activeFormat = 'all') {
-    const catOpts = categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    const tagOpts = tags.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-    const userOpts = users.map(u => `<option value="${u.id}">${u.username}</option>`).join('');
+    const catOpts = categories.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
+    const tagOpts = tags.map(t => `<option value="${t.id}">${this.escapeHtml(t.name)}</option>`).join('');
+    const userOpts = users.map(u => `<option value="${u.id}">${this.escapeHtml(u.username)}</option>`).join('');
     const formats = [
       { id: 'all', label: 'All' },
       { id: 'stl', label: 'STL' },
@@ -2478,7 +2480,7 @@ const UI = {
   // ── Settings panels ──
   settingsPanel(title, items, type) {
     const listHtml = items.map(item => {
-      const color = item.color ? `<span class="color-dot" style="background:${item.color}"></span>` : '';
+      const color = item.color ? `<span class="color-dot" style="background:${this.escapeHtml(item.color)}"></span>` : '';
       const preset = item.is_preset ? '<span style="font-size:.7rem;color:var(--text-muted);margin-left:4px">(preset)</span>' : '';
       const count = item.model_count != null ? `<span style="font-size:.75rem;color:var(--text-muted)">${item.model_count || item.usage_count || 0}</span>` : '';
       const canDelete = type === 'materials' ? !item.is_preset : true;
@@ -2511,7 +2513,7 @@ const UI = {
             ${items.map(m => {
               const def = localStorage.getItem('3dl_default_material') || 'PLA';
               const isSel = (String(m.id) === String(def) || m.name.toLowerCase() === def.toLowerCase());
-              return `<option value="${m.id}" ${isSel ? 'selected' : ''}>${m.name}</option>`;
+              return `<option value="${m.id}" ${isSel ? 'selected' : ''}>${this.escapeHtml(m.name)}</option>`;
             }).join('')}
           </select>
           <span style="font-size:0.75rem;color:var(--text-muted)">Pre-selected when logging new prints</span>
@@ -2538,8 +2540,8 @@ const UI = {
     if (!models.length) return '<div style="color:var(--text-muted);padding:8px 0;font-size:.875rem">No models yet</div>';
     return models.map(m => `
       <div class="activity-item" style="cursor:pointer" onclick="App.navigate('/models/${m.id}')">
-        <div class="activity-dot" style="background:${m.category_color || 'var(--text-muted)'}"></div>
-        <div style="flex:1;font-weight:500">${m.name}</div>
+        <div class="activity-dot" style="background:${this.escapeHtml(m.category_color || 'var(--text-muted)')}"></div>
+        <div style="flex:1;font-weight:500">${this.escapeHtml(m.name)}</div>
         <span style="font-size:.75rem;color:var(--text-muted)">${this.formatDateShort(m.created_at)}</span>
       </div>`).join('');
   },
@@ -2549,7 +2551,7 @@ const UI = {
     return prints.map(p => `
       <div class="activity-item" style="cursor:pointer" onclick="App.navigate('/models/${p.model_id}')">
         <div class="print-status ${p.successful ? 'success' : 'failed'}"></div>
-        <div style="flex:1"><span style="font-weight:500">${p.model_name}</span> <span style="color:var(--text-muted);font-size:.8rem">— ${p.material_name || 'Unknown'}</span></div>
+        <div style="flex:1"><span style="font-weight:500">${this.escapeHtml(p.model_name)}</span> <span style="color:var(--text-muted);font-size:.8rem">— ${this.escapeHtml(p.material_name || 'Unknown')}</span></div>
         <span style="font-size:.75rem;color:var(--text-muted)">${this.formatDateShort(p.printed_at)}</span>
       </div>`).join('');
   },
@@ -2559,7 +2561,7 @@ const UI = {
     const max = Math.max(...usage.map(u => u.count));
     return usage.map(u => `
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <span style="width:50px;font-size:.8rem;font-weight:600;text-align:right">${u.name}</span>
+        <span style="width:50px;font-size:.8rem;font-weight:600;text-align:right">${this.escapeHtml(u.name)}</span>
         <div style="flex:1;height:24px;background:var(--bg-input);border-radius:6px;overflow:hidden">
           <div style="height:100%;width:${(u.count/max)*100}%;background:var(--accent-gradient);border-radius:6px;transition:width .5s ease"></div>
         </div>
@@ -2591,7 +2593,7 @@ const UI = {
   registerForm(token = '') {
     return `
       <form onsubmit="App.handleRegister(event)" class="form-grid">
-        <input type="hidden" name="token" value="${token}">
+        <input type="hidden" name="token" value="${this.escapeHtml(token)}">
         <div class="form-group">
           <label>Username</label>
           <input type="text" name="username" required placeholder="Choose username" class="form-input">
@@ -2629,7 +2631,7 @@ const UI = {
   resetPasswordForm(token) {
     return `
       <form onsubmit="App.handleResetPassword(event)" class="form-grid">
-        <input type="hidden" name="token" value="${token}">
+        <input type="hidden" name="token" value="${this.escapeHtml(token)}">
         <div class="form-group">
           <label>New Password</label>
           <input type="password" name="password" required placeholder="Enter new password" class="form-input">
@@ -2716,8 +2718,8 @@ const UI = {
     const list = printers.map(p => `
       <div class="settings-item">
         <div style="flex:1">
-          <div style="font-weight:500">${p.name}</div>
-          <div style="font-size:0.8rem;color:var(--text-muted);display:flex;align-items:center;gap:4px">${p.url} ${p.api_key ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-yellow)" title="API Key Configured"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3M18.5 4.5l3 3"/></svg>' : ''}</div>
+          <div style="font-weight:500">${this.escapeHtml(p.name)}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);display:flex;align-items:center;gap:4px">${this.escapeHtml(p.url)} ${p.api_key ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent-yellow)" title="API Key Configured"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3M18.5 4.5l3 3"/></svg>' : ''}</div>
         </div>
         <button class="btn btn-danger btn-sm" onclick="App.deletePrinter('${p.id}')">Delete</button>
       </div>
@@ -2747,7 +2749,7 @@ const UI = {
   },
 
   sendToPrinterForm(fileId, printers = []) {
-    const options = printers.map(p => `<option value="${p.id}">${p.name} (${p.url})</option>`).join('');
+    const options = printers.map(p => `<option value="${p.id}">${this.escapeHtml(p.name)} (${this.escapeHtml(p.url)})</option>`).join('');
     return `
       <form onsubmit="App.handleSendToPrinter(event, ${fileId})">
         <div class="form-group">
@@ -2915,23 +2917,23 @@ const UI = {
       <form onsubmit="App.handleSaveSMTP(event)" class="form-grid">
         <div class="form-group">
           <label>SMTP Host</label>
-          <input type="text" name="smtp_host" value="${config.smtp_host || ''}" placeholder="smtp.gmail.com" class="form-input">
+          <input type="text" name="smtp_host" value="${this.escapeHtml(config.smtp_host || '')}" placeholder="smtp.gmail.com" class="form-input">
         </div>
         <div class="form-group">
           <label>SMTP Port</label>
-          <input type="number" name="smtp_port" value="${config.smtp_port || 587}" class="form-input">
+          <input type="number" name="smtp_port" value="${this.escapeHtml(config.smtp_port || 587)}" class="form-input">
         </div>
         <div class="form-group">
           <label>SMTP User</label>
-          <input type="text" name="smtp_user" value="${config.smtp_user || ''}" class="form-input">
+          <input type="text" name="smtp_user" value="${this.escapeHtml(config.smtp_user || '')}" class="form-input">
         </div>
         <div class="form-group">
           <label>SMTP Password</label>
-          <input type="password" name="smtp_pass" value="${config.smtp_pass || ''}" class="form-input">
+          <input type="password" name="smtp_pass" value="${this.escapeHtml(config.smtp_pass || '')}" class="form-input">
         </div>
         <div class="form-group">
           <label>From Email</label>
-          <input type="text" name="smtp_from" value="${config.smtp_from || ''}" placeholder="3DLib <noreply@example.com>" class="form-input">
+          <input type="text" name="smtp_from" value="${this.escapeHtml(config.smtp_from || '')}" placeholder="3DLib <noreply@example.com>" class="form-input">
         </div>
         <div class="form-group">
           <label>Secure (SSL/TLS)</label>
@@ -2956,11 +2958,11 @@ const UI = {
         <form onsubmit="App.handleUpdateProfile(event)" class="form-grid">
           <div class="form-group">
             <label>Username</label>
-            <input type="text" name="username" value="${user.username}" required class="form-input">
+            <input type="text" name="username" value="${this.escapeHtml(user.username)}" required class="form-input">
           </div>
           <div class="form-group">
             <label>Email</label>
-            <input type="email" name="email" value="${user.email || ''}" required class="form-input">
+            <input type="email" name="email" value="${this.escapeHtml(user.email || '')}" required class="form-input">
           </div>
           <div class="form-group">
             <label>New Password (leave blank to keep current)</label>
@@ -3003,7 +3005,7 @@ const UI = {
           ${p.thumbnail ? `<img src="${this.imgSrc('/uploads/' + p.thumbnail, 480)}" loading="lazy" decoding="async">` : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);opacity:.35"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>'}
         </div>
         <div class="model-card-body">
-          <div class="model-card-title">${p.visibility === 'private' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;color:var(--accent-purple)"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' : ''}${p.name}</div>
+          <div class="model-card-title">${p.visibility === 'private' ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;color:var(--accent-purple)"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' : ''}${this.escapeHtml(p.name)}</div>
           <div class="model-card-meta">${p.model_count} models</div>
         </div>
       </div>`;
@@ -3017,8 +3019,8 @@ const UI = {
           <div class="breadcrumbs" style="margin-bottom:8px">
             <a href="#/collections"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> Back to Collections</a>
           </div>
-          <h1 class="page-title">${project.visibility === 'private' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px;color:var(--accent-purple)"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' : ''}${project.name}</h1>
-          <p class="page-subtitle">${project.description || 'No description'}</p>
+          <h1 class="page-title">${project.visibility === 'private' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px;color:var(--accent-purple)"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' : ''}${this.escapeHtml(project.name)}</h1>
+          <p class="page-subtitle">${this.escapeHtml(project.description || 'No description')}</p>
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-danger btn-sm" onclick="App.deleteProject(${project.id})" style="display:inline-flex;align-items:center;gap:4px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete</button>
@@ -3034,11 +3036,11 @@ const UI = {
       <form onsubmit="App.handleProjectSubmit(event, ${project?.id || 'null'})" class="form-grid">
         <div class="form-group">
           <label>Collection Name</label>
-          <input type="text" name="name" value="${project?.name || ''}" required class="form-input" placeholder="e.g. Iron Man Helm">
+          <input type="text" name="name" value="${this.escapeHtml(project?.name || '')}" required class="form-input" placeholder="e.g. Iron Man Helm">
         </div>
         <div class="form-group">
           <label>Description</label>
-          <textarea name="description" class="form-textarea" placeholder="What is this collection about?">${project?.description || ''}</textarea>
+          <textarea name="description" class="form-textarea" placeholder="What is this collection about?">${this.escapeHtml(project?.description || '')}</textarea>
         </div>
         <div class="form-group">
           <label>Visibility</label>
@@ -3101,7 +3103,7 @@ const UI = {
     return `
       <div style="max-width:1000px;margin:0 auto;padding:20px">
         <div class="detail-header">
-          <div><h1 class="page-title">${model.name}</h1><p class="page-subtitle">Public Shared Model</p></div>
+          <div><h1 class="page-title">${this.escapeHtml(model.name)}</h1><p class="page-subtitle">Public Shared Model</p></div>
         </div>
         <div class="detail-layout">
           <div>
@@ -3109,12 +3111,12 @@ const UI = {
               <div class="glass-panel" style="margin-bottom:24px">
                 <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>3D Studio Preview</div></div>
                 <div class="panel-body no-pad">
-                  <div class="viewer-container" id="public-viewer" data-stl-url="${stlFile.url}"></div>
+                  <div class="viewer-container" id="public-viewer" data-stl-url="${this.escapeHtml(stlFile.url)}"></div>
                 </div>
               </div>` : ''}
             <div class="glass-panel">
               <div class="panel-header"><div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Description</div></div>
-              <div class="panel-body">${model.description || 'No description'}</div>
+              <div class="panel-body">${model.description ? this.renderMarkdown(model.description) : 'No description'}</div>
             </div>
           </div>
           <div>
@@ -3126,11 +3128,11 @@ const UI = {
                     <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
                       ${this.fileTypeIcon(f.file_type)}
                       <div style="min-width:0;flex:1">
-                        <div class="file-name" title="${f.original_name}">${f.original_name}</div>
+                        <div class="file-name" title="${this.escapeHtml(f.original_name)}">${this.escapeHtml(f.original_name)}</div>
                         <div class="file-meta">${this.formatSize(f.file_size)}</div>
                       </div>
                     </div>
-                    <a href="${f.url}" download class="file-action-btn" title="Download"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
+                    <a href="${this.escapeHtml(f.url)}" download class="file-action-btn" title="Download"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
                   </div>`).join('')}
               </div>
             </div>

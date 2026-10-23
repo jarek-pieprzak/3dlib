@@ -1007,7 +1007,7 @@ const Viewer = {
             footerEl.innerHTML = `
               <span style="display:flex;align-items:center;gap:6px">
                 <span class="badge badge-${singleFile.file_type}">${singleFile.file_type.toUpperCase()}</span>
-                <span style="color:var(--text-secondary);font-weight:500">${singleFile.original_name || singleFile.filename}</span>
+                <span style="color:var(--text-secondary);font-weight:500">${UI.escapeHtml(singleFile.original_name || singleFile.filename)}</span>
               </span>
               <span style="opacity:0.6;font-size:0.7rem;display:inline-flex;align-items:center;gap:4px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg>Drag to rotate · Scroll to zoom · Right-click to pan</span>
             `;

@@ -247,6 +247,33 @@ async function runStaticAndUiChecks() {
     assert(code.includes('<code>*f*</code>') && code.includes('<pre><code># size<br>- 2*3*4</code></pre>'), `Code must stay as written: ${code}`);
   });
 
+  await check('Names, descriptions and file metadata never become HTML (cards, forms, model page, share page, settings)', () => {
+    const X = '<x-evil a="1">';
+    const meta = JSON.stringify({ slicer: X, printerModel: X, filamentType: X, printTime: X, tempNozzle: X, infill: X, infillPattern: X });
+    const evilModel = {
+      ...mockModel, name: X, description: X, print_tips: X, source_url: X, category_name: X, category_color: X, thumbnail_url: X,
+      tags: [{ id: 1, name: X }],
+      files: [{ ...mockModel.files[1], original_name: X, metadata: meta, uploader_name: X }, { ...mockModel.files[0], original_name: X, url: X }]
+    };
+    const named = [{ id: 1, name: X, username: X, email: X, color: X, url: X, model_count: 1, thumbnails: [] }];
+    const renders = {
+      modelCard: UI.modelCard({ ...evilModel, thumbnail: '/uploads/a.png' }),
+      modelDetail: UI.modelDetail(evilModel, true),
+      modelForm: UI.modelForm(evilModel, named, named),
+      publicModelDetail: UI.publicModelDetail(evilModel),
+      bulkTagForm: UI.bulkTagForm(named),
+      bulkMoveForm: UI.bulkMoveForm(named, 2),
+      bulkCollectionForm: UI.bulkCollectionForm(named),
+      projectCard: UI.projectCard(named[0]),
+      projectDetail: UI.projectDetail({ ...named[0], description: X, models: [] }),
+      projectForm: UI.projectForm({ ...named[0], description: X }),
+      toolbar: UI.toolbar(named, named, named, 'all'),
+      browseFileCard: UI.browseFileCard({ name: 'a.gcode', type: 'gcode', ext: 'gcode', size: 1, url: '/x', folderPath: 'f', metadata: { printTime: X, filamentType: X, tempNozzle: X } }),
+      settingsPanel: UI.settingsPanel('Categories', named, 'categories')
+    };
+    for (const [label, html] of Object.entries(renders)) assert(!html.includes('<x-evil'), `UI.${label} writes a name as HTML`);
+  });
+
   await check('Names in the browser: Polish order with numbers by value, searches ignore case and Polish letters', () => {
     const sorted = ['Zebra', 'Część 10', 'benchy', 'Łożysko', 'Część 2', 'Lampa'].sort(UI.compareNames);
     assert(sorted.join(', ') === 'benchy, Część 2, Część 10, Lampa, Łożysko, Zebra', `UI.compareNames order: ${sorted.join(', ')}`);

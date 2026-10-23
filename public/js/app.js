@@ -133,9 +133,9 @@ const App = {
     }
     if (group) group.style.display = 'flex';
     list.innerHTML = this.cache.categories.slice(0, 10).map(c => `
-      <a href="#/models?category=${c.id}" class="sidebar-sub-item" title="${c.name}">
-        <span class="dot" style="background:${c.color || 'var(--accent-cyan)'}"></span>
-        <span>${c.name}</span>
+      <a href="#/models?category=${c.id}" class="sidebar-sub-item" title="${UI.escapeHtml(c.name)}">
+        <span class="dot" style="background:${UI.escapeHtml(c.color || 'var(--accent-cyan)')}"></span>
+        <span>${UI.escapeHtml(c.name)}</span>
       </a>
     `).join('');
   },
@@ -157,14 +157,14 @@ const App = {
       }
       if (group) group.style.display = 'flex';
       list.innerHTML = projects.slice(0, 8).map(p => `
-        <a href="#/projects/${p.id}" class="sidebar-sub-item" title="${p.name} (${p.model_count || 0} models)">
+        <a href="#/projects/${p.id}" class="sidebar-sub-item" title="${UI.escapeHtml(p.name)} (${p.model_count || 0} models)">
           <span style="display:inline-flex;align-items:center;color:${p.visibility === 'private' ? 'var(--accent-purple)' : '#f59e0b'};opacity:0.95">
             ${p.visibility === 'private'
               ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
               : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
             }
           </span>
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${p.name}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${UI.escapeHtml(p.name)}</span>
           <span style="font-size:0.65rem;color:var(--text-muted)">${p.model_count || 0}</span>
         </a>
       `).join('');
@@ -213,7 +213,7 @@ const App = {
           <div class="sidebar-printer-header">
             <span style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis">
               <span class="status-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text-muted);display:inline-block;flex-shrink:0"></span>
-              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</span>
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.escapeHtml(p.name)}</span>
             </span>
           </div>
           <div class="sidebar-printer-temps" style="display:none">
@@ -1558,11 +1558,11 @@ const App = {
               <form onsubmit="App.handleUpdateProfile(event)" class="form-grid">
                 <div class="form-group">
                   <label class="form-label">Username</label>
-                  <input type="text" name="username" value="${user.username}" required class="form-input">
+                  <input type="text" name="username" value="${UI.escapeHtml(user.username)}" required class="form-input">
                 </div>
                 <div class="form-group">
                   <label class="form-label">Email Address</label>
-                  <input type="email" name="email" value="${user.email || ''}" required class="form-input">
+                  <input type="email" name="email" value="${UI.escapeHtml(user.email || '')}" required class="form-input">
                 </div>
                 <div class="form-group">
                   <label class="form-label">New Password</label>
@@ -3217,7 +3217,7 @@ const App = {
           ${metaEntries.map(e => `
             <div style="background:var(--bg-input);padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border)">
               <div style="color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em">${e.label}</div>
-              <div style="font-weight:600;font-size:0.85rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.val}</div>
+              <div style="font-weight:600;font-size:0.85rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.escapeHtml(e.val)}</div>
             </div>
           `).join('')}
         </div>
@@ -3234,7 +3234,7 @@ const App = {
     } else if (file.type === 'image') {
       viewerArea = `
         <div style="width:100%;max-height:360px;display:flex;align-items:center;justify-content:center;background:var(--bg-secondary);border-radius:var(--radius-md);overflow:hidden;margin-bottom:16px;border:1px solid var(--border)">
-          <img src="${file.url}" style="max-width:100%;max-height:360px;object-fit:contain" alt="${file.name}">
+          <img src="${UI.escapeHtml(file.url)}" style="max-width:100%;max-height:360px;object-fit:contain" alt="${UI.escapeHtml(file.name)}">
         </div>
       `;
     }
@@ -3246,7 +3246,7 @@ const App = {
         <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:16px;flex-wrap:wrap">
           <div style="font-size:0.8rem;color:var(--text-muted);display:flex;align-items:center;gap:6px">
             <span>Size: <strong>${UI.formatSize(file.size)}</strong></span>
-            ${file.folderPath ? `<span>·</span><span style="display:inline-flex;align-items:center;gap:3px;color:#f59e0b"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${file.folderPath}</span>` : ''}
+            ${file.folderPath ? `<span>·</span><span style="display:inline-flex;align-items:center;gap:3px;color:#f59e0b"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${UI.escapeHtml(file.folderPath)}</span>` : ''}
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             ${(is3D || isGcode) ? `<button class="btn btn-secondary btn-sm" onclick="App.previewFileModal(${UI.jsArg(file.url)}, ${UI.jsArg(file.name)}, ${UI.jsArg(file.type)})">Full Screen</button>` : ''}
@@ -3359,7 +3359,7 @@ const App = {
       <div class="modal-overlay active" id="preview-file-overlay" style="z-index:9999;background:rgba(0,0,0,0.85)">
         <div class="modal" style="width:96vw;max-width:1400px;height:92vh;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">
           <div class="modal-header" style="padding:16px 24px">
-            <h5 class="modal-title" style="margin:0">${name}</h5>
+            <h5 class="modal-title" style="margin:0">${UI.escapeHtml(name)}</h5>
             <button type="button" class="modal-close" onclick="App.closePreviewFileModal(event)">✕</button>
           </div>
           <div class="modal-body" style="flex:1;padding:0;overflow:hidden;position:relative">
@@ -3850,7 +3850,7 @@ const App = {
                     <div style="padding:8px 16px;border-bottom:1px solid var(--border);display:flex;gap:12px;${l.level === 'warning' ? 'background:rgba(245,158,11,0.05);' : ''}">
                       <span style="color:var(--text-muted);white-space:nowrap">${new Date(l.created_at).toLocaleString()}</span>
                       <span style="color:var(--accent-${l.level === 'warning' ? 'pink' : 'cyan'});font-weight:700;width:60px">[${l.level.toUpperCase()}]</span>
-                      <span style="color:var(--text-secondary)">${l.message}</span>
+                      <span style="color:var(--text-secondary)">${UI.escapeHtml(l.message)}</span>
                     </div>
                   `).join('') : '<div style="padding:20px;text-align:center;color:var(--text-muted)">No logs available</div>'}
                 </div>
@@ -3898,8 +3898,8 @@ const App = {
                   <tbody>${users.map(u => `
                     <tr>
                       <td>#${u.id}</td>
-                      <td style="font-weight:600;color:var(--text-primary)">${u.username}</td>
-                      <td>${u.email || '-'}</td>
+                      <td style="font-weight:600;color:var(--text-primary)">${UI.escapeHtml(u.username)}</td>
+                      <td>${UI.escapeHtml(u.email || '-')}</td>
                       <td>
                         <select class="form-input" style="padding:4px 8px;font-size:.85rem;width:auto;display:inline-block" onchange="App.changeUserRole(${u.id}, this)" ${u.id === 1 ? 'disabled' : ''}>
                           <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
@@ -4244,7 +4244,7 @@ const App = {
     const v = (this.historyVersions || []).find(x => x.id === versionId);
     const file = this.historyFile;
     if (!v || !file) return;
-    this.previewFileModal(v.url, UI.escapeHtml(`${file.original_name} · ${UI.sqlDate(v.created_at).toLocaleString()}`), file.file_type);
+    this.previewFileModal(v.url, `${file.original_name} · ${UI.sqlDate(v.created_at).toLocaleString()}`, file.file_type);
   },
 
   async restoreFileVersion(versionId) {
@@ -4425,7 +4425,7 @@ const App = {
 
   previewSlicerSave(id) {
     const s = (this.slicerSaves || []).find(x => x.id === id);
-    if (s) this.previewFileModal(s.url, UI.escapeHtml(s.name), (s.name.match(/\.([^.]+)$/) || [])[1].toLowerCase());
+    if (s) this.previewFileModal(s.url, s.name, (s.name.match(/\.([^.]+)$/) || [])[1].toLowerCase());
   },
 
   showAssignSlicerSave(id) {
@@ -4518,7 +4518,7 @@ const App = {
     list.innerHTML = this.pendingFiles.map((f, i) =>
       `<div class="upload-file-item">
         <span class="badge badge-${f.name.split('.').pop().toLowerCase()}">${f.name.split('.').pop().toUpperCase()}</span>
-        <span>${f.name}</span>
+        <span>${UI.escapeHtml(f.name)}</span>
         <span style="color:var(--text-muted);font-size:.7rem">${UI.formatSize(f.size)}</span>
         <button class="remove-file" onclick="event.preventDefault();App.removePendingFile(${i})">×</button>
       </div>`
@@ -4677,7 +4677,7 @@ const App = {
           size: stlFile.file_size
         })));
       } else if (model.thumbnail_url) {
-        this.openModal(model.name, `<div style="display:flex;justify-content:center;align-items:center;background:var(--bg-dark);height:400px"><img src="${model.thumbnail_url}" style="max-width:100%;max-height:100%;object-fit:contain"></div>`);
+        this.openModal(model.name, `<div style="display:flex;justify-content:center;align-items:center;background:var(--bg-dark);height:400px"><img src="${UI.escapeHtml(model.thumbnail_url)}" style="max-width:100%;max-height:100%;object-fit:contain"></div>`);
       } else {
         this.navigate(`/models/${modelId}`);
       }
@@ -4764,7 +4764,7 @@ const App = {
       this.renderModelDetail(modelId);
     } catch (e) {
       this.toast(e.message, 'error');
-      if (progress) progress.innerHTML = `<div style="color:var(--error);font-size:.875rem;margin-top:8px;display:flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>${e.message}</div>`;
+      if (progress) progress.innerHTML = `<div style="color:var(--error);font-size:.875rem;margin-top:8px;display:flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>${UI.escapeHtml(e.message)}</div>`;
     }
   },
 
@@ -4922,16 +4922,16 @@ const App = {
           <tbody>
             ${ips.map(item => `
               <tr>
-                <td><strong>${item.ip}</strong></td>
+                <td><strong>${UI.escapeHtml(item.ip)}</strong></td>
                 <td>${item.attempts}</td>
                 <td>${UI.formatDate(item.blockedAt)}</td>
-                <td><button type="button" class="btn btn-danger btn-xs" onclick="App.unblockIp('${item.ip}')">Unblock</button></td>
+                <td><button type="button" class="btn btn-danger btn-xs" onclick="App.unblockIp(${UI.jsArg(item.ip)})">Unblock</button></td>
               </tr>
             `).join('')}
           </tbody>
         </table>`;
     } catch (e) {
-      el.innerHTML = `<div style="color:var(--error);font-size:.85rem">${e.message || 'Failed to fetch blocked IPs'}</div>`;
+      el.innerHTML = `<div style="color:var(--error);font-size:.85rem">${UI.escapeHtml(e.message || 'Failed to fetch blocked IPs')}</div>`;
     }
   },
 
@@ -4964,7 +4964,7 @@ const App = {
               <div style="display:flex;flex-direction:column;gap:4px">
                 ${group.files.map(f => `
                   <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.85rem">
-                    <span style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><strong>${f.original_name}</strong> in model <a href="#/models/${f.model_id}" style="color:var(--accent-cyan)">${f.model_name || 'Model #'+f.model_id}</a></span>
+                    <span style="display:inline-flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><strong>${UI.escapeHtml(f.original_name)}</strong> in model <a href="#/models/${f.model_id}" style="color:var(--accent-cyan)">${UI.escapeHtml(f.model_name || 'Model #'+f.model_id)}</a></span>
                     <a href="#/models/${f.model_id}" class="btn btn-ghost btn-xs">View Model</a>
                   </div>
                 `).join('')}
@@ -4973,7 +4973,7 @@ const App = {
           `).join('')}
         </div>`;
     } catch (e) {
-      el.innerHTML = `<div style="color:var(--error);font-size:.85rem">${e.message || 'Failed to scan duplicates'}</div>`;
+      el.innerHTML = `<div style="color:var(--error);font-size:.85rem">${UI.escapeHtml(e.message || 'Failed to scan duplicates')}</div>`;
     }
   }
 };

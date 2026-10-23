@@ -47,7 +47,8 @@ const getFileType = (filename) => {
   return typeMap[ext] || 'other';
 };
 
-const upload = multer({ storage, fileFilter, limits: { fileSize: 500 * 1024 * 1024 } });
+// Browsers send file names as UTF-8; multer's default (latin1) turns "Półka.stl" into "PÃ³Å‚ka.stl"
+const upload = multer({ storage, fileFilter, defParamCharset: 'utf8', limits: { fileSize: 500 * 1024 * 1024 } });
 
 function setUploadsDir(dir) { UPLOADS_DIR = dir; }
 

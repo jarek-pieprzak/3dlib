@@ -904,6 +904,20 @@ async function runE2ETests() {
       assert(Array.isArray(found.file_types) && found.file_types.includes('stl'), `Expected file_types to include "stl", got ${JSON.stringify(found.file_types)}`);
     });
 
+    await check('Uploaded file names keep Polish letters (UTF-8, not latin1)', async () => {
+      const createRes = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'Półki' } });
+      assert(createRes.data && createRes.data.id, `Model create failed (${createRes.status})`);
+      const form = new FormData();
+      form.append('files', new Blob(['solid t\nendsolid t\n'], { type: 'model/stl' }), 'Półka ząbek.stl');
+      const upRes = await apiReq(`/api/models/${createRes.data.id}/files`, { method: 'POST', session: adminSession, body: form });
+      assert(upRes.status === 200 || upRes.status === 201, `File upload failed (${upRes.status}): ${JSON.stringify(upRes.data)}`);
+      const model = await apiReq(`/api/models/${createRes.data.id}`, { session: adminSession });
+      const names = (model.data.files || []).map(f => f.original_name);
+      assert(names.includes('Półka ząbek.stl'), `Expected "Półka ząbek.stl", got ${JSON.stringify(names)}`);
+      const del = await apiReq(`/api/models/${createRes.data.id}`, { method: 'DELETE', session: adminSession });
+      assert(del.status === 200, `Model delete failed (${del.status})`);
+    });
+
     let matrixModelId = null;
 
     await check('Multi-format file upload matrix (.stl, .zip archive with internal scan, .3mf, .gcode, .step, images)', async () => {

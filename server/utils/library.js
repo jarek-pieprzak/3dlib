@@ -3,6 +3,7 @@ const fsPromises = fs.promises;
 const path = require('path');
 const db = require('../database');
 const { parseGcodeMetadata } = require('./gcode');
+const { libraryAvailable } = require('./libraryHealth');
 const AdmZip = require('adm-zip');
 
 // Extensions that actually represent 3D models, CAD files, G-code, or model archives (#78)
@@ -516,12 +517,21 @@ async function scanLibrary(libraryPath) {
   try {
     console.log(`[Scanner] Start library scan: ${libraryPath}`);
     await walk(libraryPath);
-    if (!shouldCancel) await purgeMissingFiles();
+    // An unmounted share looks like an empty library: nothing is purged then (utils/libraryHealth.js)
+    const available = libraryAvailable(libraryPath);
+    if (!available) console.warn(`[Scanner] The library folder ${libraryPath} is missing or empty: nothing removed`);
+    if (!shouldCancel && available) await purgeMissingFiles();
 
-    // Clean up any scanner-created models that only contain documents/images and zero 3D/archive files (#78)
-    const docOnlyModels = db.all(`
+    // Clean up any scanner-created models that only contain documents/images and zero 3D/archive
+    // files (#78). Never a model created in the app (user_id) or one with anything of the user's:
+    // tags, collections, print history, a category or a description
+    const docOnlyModels = !available ? [] : db.all(`
       SELECT m.id FROM models m
       WHERE m.library_path IS NOT NULL
+        AND m.user_id IS NULL AND m.category_id IS NULL AND COALESCE(m.description, '') = ''
+        AND NOT EXISTS (SELECT 1 FROM model_tags WHERE model_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM project_models WHERE model_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM print_history WHERE model_id = m.id)
         AND NOT EXISTS (
           SELECT 1 FROM files f
           WHERE f.model_id = m.id

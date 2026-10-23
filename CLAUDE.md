@@ -87,6 +87,11 @@ page and footer credit GyroidVault; keep that.
   and print history move along).
 - Files that disappear from disk are purged after a scan; a missing `/library-files/...` path is a
   real 404, never the SPA page.
+- Nothing is purged while the library folder is missing or empty: an unmounted share would
+  otherwise wipe the index (`server/utils/libraryHealth.js`, used by the scan and the hourly
+  sync). The sync removes a model without files only when its folder is gone from disk; the
+  scan's cleanup of document-only folders (#78) removes only scanner models nobody touched (no
+  user, tags, collections, prints, category or description).
 - A file replaced on disk keeps its row (and id); a scan updates its `file_size` when it changed,
   so the printer fit check measures it again and a preview the viewer rendered of it is dropped.
   To update an archive, overwrite files in place; deleting the folder first lets the hourly sync

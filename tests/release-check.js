@@ -274,6 +274,21 @@ async function runStaticAndUiChecks() {
     for (const [label, html] of Object.entries(renders)) assert(!html.includes('<x-evil'), `UI.${label} writes a name as HTML`);
   });
 
+  await check('An unmounted library (missing or empty folder, or only dot folders) is not available, so nothing is purged', () => {
+    const { libraryAvailable } = require(path.join(ROOT_DIR, 'server/utils/libraryHealth'));
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-health-'));
+    try {
+      assert(!libraryAvailable(path.join(base, 'missing')), 'A missing folder is not available');
+      const lib = path.join(base, 'lib');
+      fs.mkdirSync(path.join(lib, '.slicer-saves'), { recursive: true });
+      assert(!libraryAvailable(lib), 'An empty mount point (3DLib\'s own .slicer-saves only) is not available');
+      fs.mkdirSync(path.join(lib, 'Benchy'));
+      assert(libraryAvailable(lib), 'A folder with a project is available');
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   await check('Names in the browser: Polish order with numbers by value, searches ignore case and Polish letters', () => {
     const sorted = ['Zebra', 'Część 10', 'benchy', 'Łożysko', 'Część 2', 'Lampa'].sort(UI.compareNames);
     assert(sorted.join(', ') === 'benchy, Część 2, Część 10, Lampa, Łożysko, Zebra', `UI.compareNames order: ${sorted.join(', ')}`);
@@ -787,6 +802,7 @@ async function runE2ETests() {
   const testPort = 3498;
   const baseUrl = `http://127.0.0.1:${testPort}`;
 
+  const serverStartedAt = Date.now(); // the server syncs the library with the disk 10 s after it starts
   const serverProc = spawn(process.execPath, [path.join(ROOT_DIR, 'server/index.js')], {
     cwd: ROOT_DIR,
     env: {
@@ -1007,6 +1023,19 @@ async function runE2ETests() {
 
       const del = await apiReq(`/api/models/${createRes.data.id}`, { method: 'DELETE', session: adminSession });
       assert(del.status === 200, `Model delete failed (${del.status})`);
+    });
+
+    // Created here, checked near the end: after the disk sync 10 s after the start and a scan
+    const keptModels = {};
+    await check('Models can be created in the app without files, or with only a PDF', async () => {
+      const empty = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'Kept empty model' } });
+      const pdfOnly = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { name: 'Kept PDF model' } });
+      assert(empty.data.id && pdfOnly.data.id, `Model create failed (${empty.status}, ${pdfOnly.status})`);
+      const form = new FormData();
+      form.append('files', new Blob(['%PDF-1.4\n%%EOF\n'], { type: 'application/pdf' }), 'manual.pdf');
+      const up = await apiReq(`/api/models/${pdfOnly.data.id}/files`, { method: 'POST', session: adminSession, body: form });
+      assert(up.status === 200 || up.status === 201, `PDF upload failed (${up.status}): ${JSON.stringify(up.data)}`);
+      Object.assign(keptModels, { empty: empty.data.id, pdfOnly: pdfOnly.data.id });
     });
 
     await check('Sorting by name follows the Polish alphabet and ignores case ("benchy" before "Zebra", "Łożysko" among the l\'s)', async () => {
@@ -2392,6 +2421,18 @@ async function runE2ETests() {
       const replaced = (await apiReq(`/api/models/${bar.id}`, { session: adminSession })).data.files.find(f => f.original_name === 'bar.stl');
       assert(replaced.file_size === Buffer.byteLength(shortBar) && replaced.dim_x === 40.5 && replaced.dim_bytes === replaced.file_size,
         `A replaced file: new size and new measurements, got ${replaced.file_size} bytes, ${replaced.dim_x} mm`);
+    });
+
+    await check('Models created in the app survive the disk sync and scans: an empty folder is not a deleted one', async () => {
+      const wait = serverStartedAt + 12000 - Date.now();
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300 && (await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning; i++) await new Promise(r => setTimeout(r, 100));
+      for (const [what, id] of Object.entries(keptModels)) {
+        const res = await apiReq(`/api/models/${id}`, { session: adminSession });
+        assert(res.status === 200, `The ${what} model created in the app was removed (${res.status})`);
+      }
+      assert(!/removing model: Kept /.test(serverLogs), 'The sync must not remove a model whose folder exists');
     });
 
     await check('Authorized Admin CAN delete models (single & bulk)', async () => {

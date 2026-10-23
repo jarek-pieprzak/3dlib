@@ -2,6 +2,7 @@ const fs = require('fs');
 const { all, get, run, saveDb } = require('../database');
 const { LIBRARY_PATH, SYNC_BATCH_SIZE, SYNC_INTERVAL_MS } = require('../config');
 const { logEvent } = require('../utils/modelHelpers');
+const { libraryAvailable } = require('../utils/libraryHealth');
 const logger = require('../utils/logger');
 
 let syncInProgress = false;
@@ -30,6 +31,14 @@ async function syncLibraryWithDisk() {
   }
   syncInProgress = true;
   try {
+    // An unmounted share looks like an empty library: every file would count as deleted
+    if (!libraryAvailable() && get('SELECT 1 AS x FROM files WHERE library_path IS NOT NULL LIMIT 1')) {
+      const msg = `The library folder ${LIBRARY_PATH} is missing or empty: sync skipped, nothing removed`;
+      logger.warn('Sync', msg);
+      logEvent('warning', msg);
+      return;
+    }
+
     // Models and files that have been in the Trash longer than the retention period
     const { purgeExpired } = require('../utils/trash');
     const purged = purgeExpired();
@@ -62,14 +71,16 @@ async function syncLibraryWithDisk() {
     // Cleanup any orphaned file rows whose model no longer exists (#74)
     run('DELETE FROM files WHERE model_id NOT IN (SELECT id FROM models)', [], true);
 
-    // Cleanup empty models to prevent ghost entries
+    // Models without files whose folder (or loose file) is gone from disk. A model created in the
+    // app keeps its empty folder until files arrive, and stays
     const emptyModels = all(`
-      SELECT m.id, m.name FROM models m 
-      LEFT JOIN files f ON f.model_id = m.id 
+      SELECT m.id, m.name, m.library_path FROM models m
+      LEFT JOIN files f ON f.model_id = m.id
       WHERE f.id IS NULL AND m.library_path IS NOT NULL
     `);
     for (const model of emptyModels) {
-      const msg = `Model directory empty/missing, removing model: ${model.name}`;
+      if (fs.existsSync(model.library_path)) continue;
+      const msg = `Model folder missing from disk, removing model: ${model.name}`;
       logger.warn('Sync', msg);
       logEvent('warning', msg);
       run('DELETE FROM models WHERE id=?', [model.id], true);

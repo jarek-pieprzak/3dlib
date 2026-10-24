@@ -1,4 +1,4 @@
-// Saved configurations of a kit configurator (public/js/kits/*: the USSA VAULT one). Each one is
+// Saved configurations of a kit configurator (public/js/kits/*: USSA VAULT, Hero Me Gen7). Each one is
 // a model of its own in the library (utils/kits.js): no files, kit_source_id = the archive's
 // model, kit_config = the choices. They hold the choices only, never file lists, so a rescan of
 // the library does not break them; the kit checks them against the archive on load.
@@ -28,11 +28,11 @@ function readName(body) {
   return { name };
 }
 
-// A locked configuration (password protected) shows its name only
-const toJson = (req, m) => {
+// A locked configuration (password protected) shows its name only; kit: the archive's kit
+const toJson = (req, m, kit) => {
   const locked = !protection.canOpenModel(req, m);
   return {
-    id: m.id, model_id: m.kit_source_id, kit: kits.KIT, name: m.name, config: locked ? null : kits.configOf(m),
+    id: m.id, model_id: m.kit_source_id, kit, name: m.name, config: locked ? null : kits.configOf(m),
     is_protected: Boolean(m.is_protected), locked, created_at: m.created_at, updated_at: m.updated_at
   };
 };
@@ -52,7 +52,8 @@ router.get('/:id/kit-configs', authenticate, (req, res) => {
     const archive = openArchive(req, res);
     if (!archive) return;
     const rows = all('SELECT * FROM models WHERE kit_source_id=? AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC', [archive.id]);
-    res.json(rows.map(m => toJson(req, m)));
+    const kit = kits.kitIdOf(archive);
+    res.json(rows.map(m => toJson(req, m, kit)));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to list configurations' }); }
 });
 
@@ -70,7 +71,7 @@ router.post('/:id/kit-configs', authenticate, (req, res) => {
     const { lastId } = run('INSERT INTO models (name, user_id, kit_source_id, kit_config) VALUES (?, ?, ?, ?)', [n.name, req.user.id, archive.id, c.text], true);
     kits.refreshNeeds(get('SELECT * FROM models WHERE id=?', [lastId]));
     saveDb();
-    res.status(201).json(toJson(req, get('SELECT * FROM models WHERE id=?', [lastId])));
+    res.status(201).json(toJson(req, get('SELECT * FROM models WHERE id=?', [lastId]), kits.kitIdOf(archive)));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the configuration' }); }
 });
 
@@ -96,7 +97,7 @@ router.put('/:id/kit-configs/:configId', authenticate, (req, res) => {
     run("UPDATE models SET name=?, kit_config=?, updated_at=datetime('now') WHERE id=?", [name, config, m.id], true);
     if (config !== m.kit_config) kits.refreshNeeds(get('SELECT * FROM models WHERE id=?', [m.id]));
     saveDb();
-    res.json(toJson(req, get('SELECT * FROM models WHERE id=?', [m.id])));
+    res.json(toJson(req, get('SELECT * FROM models WHERE id=?', [m.id]), kits.kitIdOf(archive)));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to save the configuration' }); }
 });
 

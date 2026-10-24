@@ -1,6 +1,6 @@
 // Kit configurators on the server. The kits are the browser's code (public/js/kits/*), loaded
-// here too, so both always agree.
-//  * An archive: a project whose files a kit recognises (VaultKit.detect). It gets
+// here too, so both always agree: USSA VAULT ('ussa-vault') and Hero Me Gen7 ('hero-me-gen7').
+//  * An archive: a project whose files a kit recognises (its detect). It gets
 //    models.kit_archive and becomes read-only the first time it is recognised: the app never
 //    changes its files. Turning read-only off in Edit sticks, it is not turned on again.
 //  * A configuration: a model without files of its own. kit_source_id is the model of the
@@ -8,9 +8,13 @@
 //    the archive's access rules.
 const { get, all, run, saveDb } = require('../database');
 require('../../public/js/kits/ussa-vault.js');
+require('../../public/js/kits/hero-me-gen7.js');
 
 const VaultKit = globalThis.VaultKit;
+const HeroMeKit = globalThis.HeroMeKit;
+// The kit of archives marked before there were more kits
 const KIT = 'ussa-vault';
+const KITS = { 'ussa-vault': VaultKit, 'hero-me-gen7': HeroMeKit };
 const MAX_CONFIG_BYTES = 64 * 1024;
 
 function archiveFiles(modelId) {
@@ -24,12 +28,21 @@ function refreshArchives() {
       AND (SELECT COUNT(*) FROM files f WHERE f.model_id = m.id AND f.file_type = 'stl' AND f.deleted_at IS NULL) >= 40`);
   let found = 0;
   for (const { id } of candidates) {
-    if (!VaultKit.detect(archiveFiles(id))) continue;
-    run('UPDATE models SET kit_archive = ?, is_readonly = 1 WHERE id = ?', [KIT, id], true);
+    const files = archiveFiles(id);
+    const kit = Object.keys(KITS).find(k => KITS[k].detect(files));
+    if (!kit) continue;
+    run('UPDATE models SET kit_archive = ?, is_readonly = 1 WHERE id = ?', [kit, id], true);
     found++;
   }
   if (found) saveDb();
   return found;
+}
+
+// The kit of an archive: its mark, else the kit that knows its files
+function kitIdOf(archive, files) {
+  if (archive && KITS[archive.kit_archive]) return archive.kit_archive;
+  const list = files || (archive ? archiveFiles(archive.id) : []);
+  return Object.keys(KITS).find(k => KITS[k].detect(list)) || KIT;
 }
 
 function isConfiguration(model) {
@@ -53,14 +66,15 @@ function readConfig(input) {
   return { text };
 }
 
-// The archive of a configuration and its parts list: { source, files, bom }, or null when the
-// archive is gone or in the Trash
+// The archive of a configuration and its parts list: { source, files, kit, cat, bom }, or null
+// when the archive is gone or in the Trash
 function partsOf(model) {
   const source = get('SELECT * FROM models WHERE id = ?', [model.kit_source_id]);
   if (!source || source.deleted_at) return null;
   const files = archiveFiles(source.id);
-  const cat = VaultKit.buildCatalog(files);
-  return { source, files, cat, bom: VaultKit.computeBom(cat, configOf(model)) };
+  const kit = KITS[kitIdOf(source, files)];
+  const cat = kit.buildCatalog(files);
+  return { source, files, kit, cat, bom: kit.computeBom(cat, configOf(model)) };
 }
 
 // The parts list of a project made by hand (models.parts_list), or null
@@ -132,14 +146,14 @@ function progressOf(models) {
 function zipSelection(model) {
   const parts = partsOf(model);
   if (!parts) return null;
-  const { bom, cat, source } = parts;
+  const { bom, cat, source, kit } = parts;
   const ids = new Set(bom.parts.filter(p => p.qty > 0).map(p => p.file.id));
-  if (bom.cfg.docs) for (const f of cat.docs) ids.add(f.id);
+  if (bom.cfg.docs) for (const f of bom.manuals || cat.docs) ids.add(f.id);
   return {
     source,
     files: parts.files.filter(f => ids.has(f.id)),
-    text: { name: `${model.name} parts list.txt`, content: VaultKit.bomText(bom, `${source.name}: ${model.name}`) }
+    text: { name: `${model.name} parts list.txt`, content: kit.bomText(bom, `${source.name}: ${model.name}`, cat) }
   };
 }
 
-module.exports = { KIT, VaultKit, refreshArchives, isConfiguration, configOf, readConfig, partsOf, partsListOf, hasParts, zipSelection, refreshNeeds, needsOf, progressOf };
+module.exports = { KIT, KITS, VaultKit, HeroMeKit, kitIdOf, refreshArchives, isConfiguration, configOf, readConfig, partsOf, partsListOf, hasParts, zipSelection, refreshNeeds, needsOf, progressOf };

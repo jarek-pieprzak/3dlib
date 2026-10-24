@@ -266,7 +266,7 @@ router.get('/:id', (req, res) => {
       saveDb();
       model.kit_progress = kits.progressOf([model])[model.id];
       const src = get('SELECT id, name, is_protected, deleted_at, kit_archive FROM models WHERE id = ?', [model.kit_source_id]);
-      model.kit_source = src ? { id: src.id, name: src.name, is_protected: src.is_protected, deleted_at: src.deleted_at, kit: src.kit_archive || kits.KIT } : null;
+      model.kit_source = src ? { id: src.id, name: src.name, is_protected: src.is_protected, deleted_at: src.deleted_at, kit: kits.kitIdOf(src) } : null;
     } else if (kits.partsListOf(model)) {
       // The parts list counts the files still there (one may have gone to the Trash)
       model.kit_needs = JSON.stringify(kits.refreshNeeds(model));

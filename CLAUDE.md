@@ -107,6 +107,78 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
+- Hero Me Gen7 configurator (`public/js/kits/hero-me-gen7.js`, `window.HeroMeKit`; pure functions,
+  the tests load it too). Kits are a registry now: `server/utils/kits.js` `KITS` / `kitIdOf`
+  (`models.kit_archive` holds the kit id, `kit_source.kit` on a configuration's page), in the
+  browser `App.kitLibs()` / `App.kitLib()`, `this.kit.kitId` / `this.kit.lib`; saved
+  configurations, their ZIP, progress and counters are the same code for both kits.
+  - The project (`HeroMe` on the NAS) holds four releases, one folder each: 7.4 (`Hero Me Gen7
+    Release V4`, cumulative), 7.3, 7.0 (`HMG7 Release V1.0`) and the Magnet Edition (its base and
+    gantry adapters; the other steps come from 7.0, `partsFrom`). A configuration picks the
+    release (`cfg.release`) and only that folder's files. The release is the top folder, the
+    category the folder under it (Base, Gantry Adapters, Hotend Mounts, Part Cooling Ducts, ABL
+    Mounts...), parts are recognised by name. `tests/fixtures/hero-me-gen7-files.tsv`: the 1364
+    files of the real project (2026-10-24); every STL of every release has a place.
+  - Steps: release, printer (gantry adapter + the files of its folder that go with it,
+    `autoGantryExtras`: contained printer words, else shared words; Box X carriage sets),
+    base, hotend mount + skirt (`bestSkirt`: shared words, the start of the name first) + cap +
+    collar spacer (1 mm for collar mounts) + Bowden standoff, part cooling (fans 1 / 2, size,
+    height: long for Vyper / Kobra / Neptune 3 / MSDD, tall for Volcano / Rapido Plus; Gen7
+    left + right ducts, a Gen6 "dual" duct is both sides in one print), ABL (sensor family, side,
+    mount, wing, spacers; the cable tower goes on the other side), extruder mount + risers,
+    cable tower, ADXL345, options. "Auto" shows what the kit picked; ticked lists keep hand
+    picks with `<field>Of` (another adapter or sensor starts automatic again).
+  - Another release maps a choice to the nearest name (`closest`; 7.0's "OEM-MK8-MS" is the
+    Creality OEM mount) with a note; the configuration keeps the asked id, so back in its
+    release the part is chosen again (`choices().ids` say what the lists show).
+  - The stock Neptune 3 Pro / Plus / Max shroud (`Gantry Adapters/Elegoo Neptune/...STOCK`) is
+    a setup of its own: no base, hotend, ducts or tower; 2 × 5015, 10 inserts, 14 screws (its
+    PDF). Insert and screw counts elsewhere are estimates (the joints the 7.0 instructions name).
+  - The instructions (`bom.manuals`): the release's PDFs and the documents next to the chosen
+    parts (Beacon3D readme, Neptune PDF...). The 56-page selection guide is paid, not in the
+    folder.
+  - The printhead in 3D (`public/js/kits/hero-me-gen7-3d.js`, `window.HeroMe3D`, like
+    `VaultKit3D`), from `bom.head` (`headOf`: each part with its file ids and what its name
+    says: side, wing reach, front / rear stepper, riser and tower heights; `head.src`: file id
+    -> path, size, url). The bed is y = 0 with the nozzle on it, x the printer's X, z to the
+    front.
+  - It is put together from the project's own STLs (`buildReal`; `planReal` is the plan
+    without three.js): `public/js/kits/hero-me-gen7-poses.json` gives each file a turn `m` (3×3,
+    rows), a shift `t` and its box in that frame, made offline by `scripts/hero-me-poses.js
+    <the HeroMe folder> [out.json]` (~75 s; run it again only if the files change). The script
+    finds the M3 holes, slots and bores of each STL and puts it on Hero Me's mounting patterns
+    of the 7.4 Universal Base V2: the 30 mm pair on top (hotend mounts), 22 mm below (skirts),
+    the 32 × 12.4 rectangle at the back (gantry), the rear 18 mm pairs on the sides (cable
+    towers, ABL wings); parts that sit on another (clips, sensor mounts) get a place per
+    parent (`on`). ADXL345 mounts go under the front of the base, on the 14 mm pair of
+    inserts every skirt has (the "Spacer for Skirt Mount" options go between) or on the
+    "6Deg-ADXL" duct, never below the nozzle; `board` ({ p, n }, in the mount's own frame) is
+    where the board sits: the open ends of the mount's other pair of holes. (The base's own
+    14 mm pair at the front, behind the heat sink fan, is not theirs.) Ducts are turned walls
+    to the side and scored: as
+    many slots as possible on side holes (a Gen7 duct has two slot columns 22.5 mm apart, like
+    the base's two hole columns; on one only it sat 22.5 mm too far forward), outlet by the
+    nozzle, the fan's ring outside, nothing in the hotend's column or behind the base; a left /
+    right pair placed unlike each other is fitted again, one like the other. The Read Me First
+    photos (7.4) and the Neptune PDF's bottom view are the reference: the fans beside the
+    base's front, the outlets centred front to back under the nozzle.
+    Risers and extruder mounts are stacked at run time on the mount's `top` (+ `height`). A
+    standing motor plate (BMG, Titan, Creality...: a 22-28 mm round opening facing the side
+    or the back) gets `motor` ({ p, n }: the opening, the side away from the hotend): the
+    stepper is drawn there, the extruder on the plate's other side; a flat mount (Orbiter,
+    Sherpa) has them on top.
+    A pose is used only when the file's size matches (a changed file falls back). Hotend,
+    stepper and extruder, sensor, ADXL board and carriage are drawn shapes; fans are not drawn
+    at all (not wanted). A duct without a place ("Centered" Gen6 ducts) is drawn as a shape.
+    No place: Magnet Edition adapters (no M3
+    rectangle), some gantry extras and ABL mounts; the hint under the panel names them.
+    Without a placed base (the stock Neptune shroud) the old model of shapes is drawn (`build`).
+  - The page fetches the poses once (`App.kitHeroPoses`, `?v=` in the URL) and keeps loaded
+    STLs (`App.kitLoadStl`); each file shows as a see-through box until it is in. Hover lights
+    a part and its rows (`App.kitHoverPart`), a row lights its part (`kitHoverFile`), a click
+    opens the part in the 3D Studio ("Show the printhead"). Saved configurations get it as
+    their cover (`kitRenderCover`, waits up to 8 s for the STLs). Without WebGL the first part
+    opens instead.
 - Parts list of any project (the "Parts" tab of the model page; `UI.partsTab` / `partsEditor`,
   `App.parts*`): files of the project with how many to print, hardware (name, how many, "have
   it"), notes, in `models.parts_list` (JSON; `PUT /api/models/:id/parts-list`, an empty list

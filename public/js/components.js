@@ -1510,7 +1510,7 @@ const UI = {
         </div>
       </div>
       ${viewSwitch}
-      ${configure ? this.kitView(model, isConfig && !opts.edit) : `
+      ${configure ? this.kitView(model, isConfig && !opts.edit, opts.kit) : `
       <div class="detail-layout">
         <div class="detail-main">
           ${viewerHtml}
@@ -1591,11 +1591,12 @@ const UI = {
       </div>`;
   },
 
-  // ─── Kit configurators (public/js/kits): USSA VAULT ────────────────────
+  // ─── Kit configurators (public/js/kits): USSA VAULT, Hero Me Gen7 ──────
   // The configurator view of a model page. App.initKit fills the builder and the parts list;
   // the preview panel is the model page's 3D Studio (App.previewFile). locked: a saved
-  // configuration's page, the list and the preview only (the builder shows while editing)
-  kitView(model, locked = false) {
+  // configuration's page, the list and the preview only (the builder shows while editing).
+  // kit: the kit's id; VAULT's panel starts with the tower, the others with a part
+  kitView(model, locked = false, kit = 'ussa-vault') {
     return `
       <div class="kit-layout${locked ? ' is-locked' : ''}">
         <div class="glass-panel kit-builder-panel">
@@ -1604,10 +1605,10 @@ const UI = {
         <div class="kit-result">
           <div class="glass-panel detail-viewer-panel kit-preview-panel" style="overflow:visible">
             <div class="panel-header">
-              <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">Tower</span></div>
+              <div class="panel-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg><span class="detail-viewer-title">${kit === 'ussa-vault' ? 'Tower' : '3D Studio'}</span></div>
               <div class="kit-seg kit-tower-modes" hidden><button type="button" class="kit-seg-btn" data-mode="3d" onclick="App.kitTowerMode('3d')">3D</button><button type="button" class="kit-seg-btn" data-mode="2d" onclick="App.kitTowerMode('2d')">Drawing</button></div>
               <button type="button" class="btn btn-secondary btn-xs kit-open-btn" onclick="App.kitToggleOpen()" title="Open or close every drawer and sustainer" hidden>Open all</button>
-              <button type="button" class="btn btn-secondary btn-xs kit-tower-btn" onclick="App.kitShowTower()" hidden>Show the tower</button>
+              <button type="button" class="btn btn-secondary btn-xs kit-tower-btn" onclick="App.kitShowTower()" hidden>Show the ${kit === 'ussa-vault' ? 'tower' : 'printhead'}</button>
             </div>
             <div class="panel-body no-pad">
               <div class="viewer-container" id="stl-viewer-${model.id}">
@@ -1651,11 +1652,12 @@ const UI = {
       </div>`;
   },
 
-  // The ⓘ button of an option: hover shows its tip (VaultKit.TIPS), a click pins it. set: where
-  // its value lives ('cfg:roof', 'mod:base', 'floor:0:layout', 'slot:0:1:interior'), so a pinned
-  // tip with choices can change it
+  // The ⓘ button of an option: hover shows its tip (the open kit's TIPS), a click pins it. set:
+  // where its value lives ('cfg:roof', 'mod:base', 'floor:0:layout', 'slot:0:1:interior'), so a
+  // pinned tip with choices can change it
   kitTip(key, set) {
-    const tip = VaultKit.TIPS[key];
+    const lib = App.kitLib();
+    const tip = lib && lib.TIPS[key];
     if (!tip) return '';
     return `<button type="button" class="kit-tip-btn" data-tip="${key}"${set ? ` data-tip-set="${set}"` : ''} onclick="App.kitShowTip(this, true)" aria-label="About: ${this.escapeHtml(tip.title)}">i</button>`;
   },
@@ -1897,6 +1899,7 @@ const UI = {
   // or 'edit'. Controls with data-tip show their tip on hover and focus.
   kitBuilder(kit) {
     if (kit.mode === 'view') return '';
+    if (kit.kitId === 'hero-me-gen7') return this.heroBuilder(kit);
     const { cfg, choices: ch } = kit;
     const esc = (s) => this.escapeHtml(s);
     const tip = (key, set) => this.kitTip(key, set);
@@ -1951,36 +1954,7 @@ const UI = {
         </div>`;
     }).reverse().join('');
 
-    const mode = kit.mode || 'archive';
-    const pencil = icon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>');
-    let saved = '';
-    if (mode === 'archive' && kit.loggedIn) {
-      // Each saved configuration is a project of its own: picking one opens its page
-      saved = `
-      <div class="kit-section kit-saved">
-        <select class="form-select kit-select" onchange="App.kitOpenSaved(this.value)" title="Open a saved configuration">
-          ${opt('', kit.saved.length ? `Saved configurations (${kit.saved.length})` : 'No saved configurations', true)}
-          ${kit.saved.map(s => opt(s.id, s.locked ? `${s.name} (protected)` : s.name, false)).join('')}
-        </select>
-        <button type="button" class="btn btn-primary btn-xs" onclick="App.kitSaveAs()">Save as configuration...</button>
-        ${tip('saved')}
-      </div>`;
-    } else if (mode === 'archive') {
-      saved = `
-      <div class="kit-section kit-saved">
-        <span class="kit-locked-note">Log in to save configurations and open saved ones</span>
-        <button type="button" class="btn btn-secondary btn-xs" onclick="App.showLogin()">Log in</button>
-        ${tip('saved')}
-      </div>`;
-    } else if (mode === 'edit') {
-      saved = `
-      <div class="kit-section kit-saved">
-        <span class="kit-locked-note">${pencil}Editing</span>
-        <button type="button" class="btn btn-${kit.dirty ? 'primary' : 'secondary'} btn-xs" onclick="App.kitSaveConfig()"${kit.dirty ? '' : ' disabled'}>Save</button>
-        <button type="button" class="btn btn-secondary btn-xs" onclick="App.kitCancelEdit()">Cancel</button>
-        <button type="button" class="btn btn-ghost btn-xs" onclick="App.kitSaveAs()">Save as copy...</button>
-      </div>`;
-    }
+    const saved = this.kitSavedSection(kit);
 
     const mods = cfg.mods;
     const noBackbone = mods.backbone === 'none';
@@ -2028,9 +2002,174 @@ const UI = {
     return `${saved}${body}`;
   },
 
+  // The head of every builder: saved configurations of the archive, or Save / Cancel while a
+  // configuration is edited
+  kitSavedSection(kit) {
+    const opt = (value, label, selected) => `<option value="${this.escapeHtml(value)}"${selected ? ' selected' : ''}>${this.escapeHtml(label)}</option>`;
+    const tip = (key) => this.kitTip(key);
+    const mode = kit.mode || 'archive';
+    const pencil = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+    if (mode === 'archive' && kit.loggedIn) {
+      // Each saved configuration is a project of its own: picking one opens its page
+      return `
+      <div class="kit-section kit-saved">
+        <select class="form-select kit-select" onchange="App.kitOpenSaved(this.value)" title="Open a saved configuration">
+          ${opt('', kit.saved.length ? `Saved configurations (${kit.saved.length})` : 'No saved configurations', true)}
+          ${kit.saved.map(s => opt(s.id, s.locked ? `${s.name} (protected)` : s.name, false)).join('')}
+        </select>
+        <button type="button" class="btn btn-primary btn-xs" onclick="App.kitSaveAs()">Save as configuration...</button>
+        ${tip('saved')}
+      </div>`;
+    }
+    if (mode === 'archive') {
+      return `
+      <div class="kit-section kit-saved">
+        <span class="kit-locked-note">Log in to save configurations and open saved ones</span>
+        <button type="button" class="btn btn-secondary btn-xs" onclick="App.showLogin()">Log in</button>
+        ${tip('saved')}
+      </div>`;
+    }
+    if (mode === 'edit') {
+      return `
+      <div class="kit-section kit-saved">
+        <span class="kit-locked-note">${pencil}Editing</span>
+        <button type="button" class="btn btn-${kit.dirty ? 'primary' : 'secondary'} btn-xs" onclick="App.kitSaveConfig()"${kit.dirty ? '' : ' disabled'}>Save</button>
+        <button type="button" class="btn btn-secondary btn-xs" onclick="App.kitCancelEdit()">Cancel</button>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="App.kitSaveAs()">Save as copy...</button>
+      </div>`;
+    }
+    return '';
+  },
+
+  // The Hero Me Gen7 builder: the release, then one step per part of the printhead. Every
+  // list holds only what the release has and what fits the steps before; "Auto" shows what
+  // the kit picked (a skirt by its hotend, the parts that go with a gantry adapter...).
+  heroBuilder(kit) {
+    const { cfg, choices: ch } = kit;
+    const sel = ch.sel;
+    const esc = (s) => this.escapeHtml(s);
+    const opt = (value, label, selected, disabled) => `<option value="${esc(value)}"${selected ? ' selected' : ''}${disabled ? ' disabled' : ''}>${esc(label)}</option>`;
+    const select = (field, items, { auto, none, groups } = {}) => {
+      // A part of another release shows the stand-in the kit took for it
+      const current = String((ch.ids || {})[field] || cfg[field]);
+      const head = [
+        auto !== undefined ? opt('auto', `Auto: ${auto ? auto.label : 'none'}`, current === 'auto') : '',
+        none ? opt('none', none, current === 'none') : ''
+      ].join('');
+      let body;
+      if (groups) {
+        const byGroup = new Map();
+        for (const o of items) { if (!byGroup.has(o.group)) byGroup.set(o.group, []); byGroup.get(o.group).push(o); }
+        body = [...byGroup.entries()].sort((a, b) => this.compareNames(a[0], b[0]))
+          .map(([g, list]) => `<optgroup label="${esc(g)}">${list.map(o => opt(o.id, o.label, o.id === current)).join('')}</optgroup>`).join('');
+      } else {
+        body = items.map(o => opt(o.id, o.label, o.id === current)).join('');
+      }
+      return `<select class="form-select kit-select" onchange="App.kitSet('${field}', this.value)">${head}${body}</select>`;
+    };
+    const field = (label, control) => `<div class="kit-field is-wide"><span class="kit-label">${esc(label)}</span>${control}</div>`;
+    const seg = (fieldName, values, current, available, labels = {}) => `<div class="kit-seg">${values.map(v => `<button type="button" class="kit-seg-btn${String(v) === String(current) ? ' is-active' : ''}"${available.includes(v) ? '' : ' disabled'} onclick="App.kitSet('${fieldName}', ${this.jsArg(v)})">${esc(labels[v] || v)}</button>`).join('')}</div>`;
+    // Parts that go with a choice: ticked ones are in the list; "Automatic" drops hand picks.
+    // more: the unticked ones wait folded under that label (a big folder has many)
+    const checks = (fieldName, items, picked, explicit, more) => {
+      if (!items.length) return '';
+      const box = (o) => `<label class="kit-check"><input type="checkbox"${picked.some(p => p.id === o.id) ? ' checked' : ''} onchange="App.kitToggle('${fieldName}', ${this.jsArg(o.id)}, this.checked)">${esc(o.label)}</label>`;
+      const on = more ? items.filter(o => picked.some(p => p.id === o.id)) : items;
+      const off = more ? items.filter(o => !on.includes(o)) : [];
+      return `
+        ${on.length ? `<div class="kit-checks is-list">${on.map(box).join('')}</div>` : ''}
+        ${off.length ? `<details class="kit-more"><summary>${esc(more)} (${off.length})</summary><div class="kit-checks is-list">${off.map(box).join('')}</div></details>` : ''}
+        ${explicit ? `<button type="button" class="btn btn-ghost btn-xs kit-auto-btn" onclick="App.kitSet('${fieldName}', null)">Back to automatic</button>` : ''}`;
+    };
+    const section = (title, body, hint) => `
+      <div class="kit-section">
+        <div class="kit-section-head"><span class="kit-label">${esc(title)}</span></div>
+        ${body}
+        ${hint ? `<div class="kit-hint">${esc(hint)}</div>` : ''}
+      </div>`;
+
+    const release = `
+      <div class="kit-section">
+        ${field('Release', `<select class="form-select kit-select" onchange="App.kitSet('release', this.value)">${ch.releases.map(r => opt(r.id, `${r.label}${r.date ? ` · ${r.date}` : ''} (${r.count} files)`, r.id === cfg.release)).join('')}</select>`)}
+        <div class="kit-section-head"><span class="kit-hint">Only this release's files; another one maps the choices by name.</span><button type="button" class="btn btn-ghost btn-xs" onclick="App.kitReset()">Start over</button></div>
+      </div>`;
+
+    const gantry = section('Printer', `
+        ${field('Gantry', select('gantry', ch.mains, { none: 'No gantry adapter', groups: true }))}
+        ${ch.extras.length ? `<div class="kit-label">With</div>${checks('gantryWith', ch.extras, sel.gantryWith, Array.isArray(cfg.gantryWith), 'Other files of the folder')}` : ''}`,
+      ch.extras.length ? 'The ticked files of the adapter\'s folder are printed with it: clips, back plates, belt parts.' : '');
+
+    if (ch.standalone) {
+      return `${this.kitSavedSection(kit)}${release}${gantry}
+      ${section('Stock Neptune 3 shroud', '<div class="kit-muted">This shroud replaces the printhead cover of a stock Neptune 3 Pro / Plus / Max: no Hero Me base, hotend mount, ducts or cable tower. Its ADXL345 adapters are in the list above.</div>')}
+      ${this.heroOptions(ch, sel, checks)}`;
+    }
+
+    const hotend = section('Base and hotend', `
+        ${field('Base', select('base', ch.bases, { auto: sel.base }))}
+        ${field('Hotend', select('hotend', ch.hotends, { none: 'No hotend mount' }))}
+        ${field('Skirt', select('skirt', ch.skirts, { auto: sel.autoSkirt, none: 'No skirt' }))}
+        ${ch.caps.length ? field('Cap', select('cap', ch.caps, { none: 'No cap' })) : ''}
+        ${ch.spacers.length ? field('Spacer', select('spacer', ch.spacers, { auto: sel.autoSpacer, none: 'No spacer' })) : ''}
+        ${ch.standoffs.length ? field('Standoff', select('standoff', ch.standoffs, { none: 'No Bowden standoff' })) : ''}`,
+      'The skirt goes under the base and matches the hotend; collar hotends take a spacer (1 mm for an E3D V6).');
+
+    const kindLabel = { side: 'left / right', dual: 'one per fan', single: 'one fan' };
+    const duct = sel.duct;
+    const heightOf = (h) => `${h.label}${h.hint ? ` (${h.hint})` : ''}`;
+    const cooling = section('Part cooling', `
+        ${field('Fans', seg('fans', [1, 2], cfg.fans, ch.fanCounts, { 1: 'One', 2: 'Two' }))}
+        ${field('Fan size', ch.fanSizes.length ? seg('fan', ch.fanSizes.map(f => f.id), cfg.fan, ch.fanSizes.map(f => f.id), Object.fromEntries(ch.fanSizes.map(f => [f.id, f.label]))) : '<span class="kit-muted">No ducts</span>')}
+        ${field('Height', `<select class="form-select kit-select" onchange="App.kitSet('height', this.value)">${opt('auto', `Auto: ${(ch.heights.find(h => h.id === sel.autoHeight) || { label: sel.autoHeight }).label}`, cfg.height === 'auto')}${ch.heights.map(h => opt(h.id, heightOf(h), h.id === cfg.height)).join('')}</select>`)}
+        ${field('Ducts', `<select class="form-select kit-select" onchange="App.kitSet('duct', this.value)">${opt('auto', `Auto: ${sel.autoDuct ? `${sel.autoDuct.label}, ${kindLabel[sel.autoDuct.kind]}` : 'none'}`, cfg.duct === 'auto')}${ch.ducts.map(d => opt(d.id, `${d.label}, ${kindLabel[d.kind]}`, d.id === cfg.duct)).join('')}</select>`)}
+        ${cfg.fans === 1 && duct && duct.kind === 'side' ? field('Fan side', seg('side', ['left', 'right'], cfg.side, Object.keys(duct.sides), { left: 'Left', right: 'Right' })) : ''}`,
+      'Long ducts: Vyper, Kobra, Neptune 3, Micro Swiss direct drive. Tall ducts: E3D Volcano, Phaetus Rapido UHF. Set the duct tips 1.6 mm above the bed.');
+
+    const ablFamily = ch.ablFamilies.find(f => f.id === cfg.abl);
+    const abl = section('ABL sensor', `
+        ${field('Sensor', `<select class="form-select kit-select" onchange="App.kitSet('abl', this.value)">${opt('none', 'No ABL sensor', cfg.abl === 'none')}${ch.ablFamilies.map(f => opt(f.id, f.label, f.id === cfg.abl)).join('')}</select>`)}
+        ${ablFamily ? `
+        ${field('Side', seg('ablSide', ['left', 'right'], cfg.ablSide, ['left', 'right'], { left: 'Left', right: 'Right' }))}
+        ${field('Mount', ch.ablMounts.length ? select('ablMount', ch.ablMounts, { auto: sel.autoMount }) : '<span class="kit-muted">None for this side</span>')}
+        ${field('Wing', select('ablWing', ch.ablWings, { auto: sel.autoWing, none: 'No wing' }))}
+        ${ch.ablExtras.length ? `<div class="kit-label">Spacers</div>${checks('ablWith', ch.ablExtras, sel.ablWith, Array.isArray(cfg.ablWith))}` : ''}` : ''}`,
+      ablFamily ? 'The wing holds the sensor\'s mount on the side of the base; the cable tower goes on the other side.' : '');
+
+    const extruder = section('Extruder', `
+        ${field('Mount', select('extruder', ch.extruders, { none: 'None (Bowden)', groups: true }))}
+        ${sel.extruder || cfg.risers.length ? `<div class="kit-label">Risers</div>${checks('risers', ch.risers, sel.risers, false)}` : ''}`,
+      sel.extruder ? 'Front / Rear: where the stepper sits. Risers go between the hotend mount and the extruder mount when a rear stepper hits the X carriage.' : '');
+
+    const cable = section('Cable tower', field('Tower', select('cable', ch.cables, { auto: sel.autoCable, none: 'No tower' })));
+
+    return `${this.kitSavedSection(kit)}${release}${gantry}${hotend}${cooling}${abl}${extruder}${cable}${this.heroOptions(ch, sel, checks)}`;
+  },
+
+  // ADXL345 mounts and the options folder (LED mounts, fan guards, endoscopes, pen mounts...)
+  heroOptions(ch, sel, checks) {
+    const esc = (s) => this.escapeHtml(s);
+    const opt = (value, label, selected) => `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
+    const groups = new Map();
+    for (const o of ch.options) { if (!groups.has(o.group)) groups.set(o.group, []); groups.get(o.group).push(o); }
+    const adxl = ch.standalone ? '' : `
+        <div class="kit-field is-wide"><span class="kit-label">ADXL345</span><select class="form-select kit-select" onchange="App.kitSet('adxl', this.value)">${opt('none', 'No ADXL345 mount', !sel.adxl)}${ch.adxls.map(o => opt(o.id, o.label, sel.adxl && sel.adxl.id === o.id)).join('')}</select></div>`;
+    const lists = [...groups.entries()].sort((a, b) => this.compareNames(a[0], b[0])).map(([g, list]) => {
+      const n = list.filter(o => sel.options.some(p => p.id === o.id)).length;
+      return `<details class="kit-more"${n ? ' open' : ''}><summary>${esc(g)}${n ? ` (${n})` : ''}</summary>${checks('options', list, sel.options, false)}</details>`;
+    }).join('');
+    return `
+      <div class="kit-section">
+        <div class="kit-section-head"><span class="kit-label">Options</span></div>
+        ${adxl}
+        ${lists}
+      </div>`;
+  },
+
   // The result: files to print with print counts (editable), hardware, notes, download
   kitParts(kit) {
     const { bom } = kit;
+    // The instructions: VAULT's PDFs, or the ones of the chosen Hero Me release and parts
+    const manuals = bom.manuals || kit.cat.docs;
     const esc = (s) => this.escapeHtml(s);
     const t = bom.totals;
     const locked = kit.mode === 'view';
@@ -2068,7 +2207,7 @@ const UI = {
       const path = String(p.file.original_name || '');
       const extra = p.group === 'Extra files';
       rows.push(`
-        <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${track && p.qty > 0 && printedOf(p) >= p.qty ? ' is-printed' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" title="${esc(path)}">
+        <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${track && p.qty > 0 && printedOf(p) >= p.qty ? ' is-printed' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" onmouseenter="App.kitHoverFile(${Number(p.file.id)})" onmouseleave="App.kitHoverFile(null)" title="${esc(path)}">
           ${track && p.qty > 0 ? counter(p) : locked ? `<span class="kit-qty is-static" title="Prints">${p.qty}</span>` : `<input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">`}
           <div class="kit-part-main">
             <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}${p.optional ? ' <span class="kit-est" title="Not in the manual: set how many you need">optional</span>' : ''}</div>
@@ -2118,15 +2257,15 @@ const UI = {
           <input class="form-input" list="kit-file-list" placeholder="Add a file from the project..." aria-label="Add a file" onchange="App.kitAddExtra(this.value)">
         </div>`}
         ${hardware ? `<div class="kit-group-title">Hardware to buy</div>${hardware}` : ''}
-        ${kit.cat.docs.length ? `<div class="kit-group-title">Instructions</div>
-        ${kit.cat.docs.map(f => `
+        ${manuals.length ? `<div class="kit-group-title">Instructions</div>
+        ${manuals.map(f => `
         <div class="kit-doc">
           <button type="button" class="kit-doc-name" onclick="App.kitShowManual(${this.jsArg(f.original_name)}, 1)" title="Open in the preview">${esc(f.original_name)}</button>
           <span class="kit-part-size">${this.formatSize(f.file_size)}</span>
           ${download(f)}
         </div>`).join('')}
-        ${locked ? (bom.cfg.docs ? `<div class="kit-muted kit-docs-note">The ${kit.cat.docs.length} instruction PDFs are in the ZIP.</div>` : '')
-          : `<span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${kit.cat.docs.length} instruction PDFs to the ZIP</label>${this.kitTip('docs')}</span>`}` : ''}
+        ${locked ? (bom.cfg.docs ? `<div class="kit-muted kit-docs-note">The ${manuals.length} instruction files are in the ZIP.</div>` : '')
+          : `<span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${manuals.length} instruction ${manuals.every(f => /\.pdf$/i.test(f.original_name)) ? 'PDFs' : 'files'} to the ZIP</label>${this.kitTip('docs')}</span>`}` : ''}
       </div>`;
   },
 

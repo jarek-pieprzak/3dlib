@@ -2200,38 +2200,72 @@ const App = {
     }
   },
 
-  // ─── Kit configurators (public/js/kits): USSA VAULT ─────────────────────
-  // this.kit: { mode, modelId (the page), archiveId, cat (parts catalog), cfg, bom, choices,
-  // saved, previewId, config (a configuration's page: { id, name, cfg }) }.
+  // ─── Kit configurators (public/js/kits): USSA VAULT, Hero Me Gen7 ───────
+  // this.kit: { kitId, lib (VaultKit / HeroMeKit), mode, modelId (the page), archiveId, cat
+  // (parts catalog), cfg, bom, choices, saved, previewId, config (a configuration's page:
+  // { id, name, cfg }) }.
   // mode 'archive': the archive's page, a draft kept in the URL (?c=) and in localStorage;
   // "Save as configuration" makes it a model of its own. 'view': a configuration's page, locked.
   // 'edit': that page while editing (the draft in the URL: ?edit=1&c=).
   // Every change recomputes the parts list and redraws the builder and the list.
-  kitFor(model) {
-    return typeof VaultKit !== 'undefined' && !model.deleted_at && VaultKit.detect(model.files || []) ? 'ussa-vault' : null;
+  kitLibs() {
+    const libs = {};
+    if (typeof VaultKit !== 'undefined') libs['ussa-vault'] = VaultKit;
+    if (typeof HeroMeKit !== 'undefined') libs['hero-me-gen7'] = HeroMeKit;
+    return libs;
   },
 
-  // The archive's page. ctx (a configuration's page): { config: { id, name, cfg }, edit }
+  // The kit of the open configurator (VAULT where there is none: its tips and builder)
+  kitLib(kitId) {
+    const libs = this.kitLibs();
+    return libs[kitId || (this.kit && this.kit.kitId)] || libs['ussa-vault'] || null;
+  },
+
+  // The kit's 3D model (VAULT's tower, the Hero Me printhead) and what it is built from
+  kitLib3d(kitId) {
+    if (kitId === 'hero-me-gen7') return typeof HeroMe3D !== 'undefined' ? HeroMe3D : null;
+    return typeof VaultKit3D !== 'undefined' ? VaultKit3D : null;
+  },
+
+  kitModelInput(kit) {
+    return kit.kitId === 'hero-me-gen7' ? kit.bom.head : kit.cfg;
+  },
+
+  kitFor(model) {
+    if (model.deleted_at) return null;
+    const libs = this.kitLibs();
+    return Object.keys(libs).find(id => libs[id].detect(model.files || [])) || null;
+  },
+
+  // The archive's page. ctx (a configuration's page): { kitId, config: { id, name, cfg }, edit }
   async initKit(model, opts, ctx = null) {
     const stored = (key) => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { return null; } };
-    const fromUrl = opts.c ? VaultKit.decodeConfig(opts.c) : null;
+    const kitId = ctx ? ctx.kitId : this.kitFor(model);
+    const lib = this.kitLib(kitId);
+    if (!lib) return;
+    const fromUrl = opts.c ? lib.decodeConfig(opts.c) : null;
     // A re-render of the page (after Edit, an unlock) must not bring back the URL it opened with
     if (this.currentModelOpts) this.currentModelOpts.c = null;
-    const base = { modelId: model.id, cat: VaultKit.buildCatalog(model.files || []), saved: [], previewId: null, view: 'tower' };
+    // The preview shows the tower (VAULT) or the printhead (Hero Me) until a part is opened;
+    // without the 3D model Hero Me opens its first part
+    const view = kitId === 'ussa-vault' || this.kitLib3d(kitId) ? 'tower' : 'part';
+    const base = { kitId, lib, modelId: model.id, cat: lib.buildCatalog(model.files || []), saved: [], previewId: null, view };
     if (ctx) {
       // The saved choices as the kit reads them against this archive: the draft is compared to them
-      const config = { ...ctx.config, cfg: VaultKit.normalize(base.cat, ctx.config.cfg).cfg };
+      const config = { ...ctx.config, cfg: lib.normalize(base.cat, ctx.config.cfg).cfg };
       this.kit = { ...base, mode: ctx.edit ? 'edit' : 'view', archiveId: ctx.archiveId, config, canEdit: ctx.canEdit };
       this.kitApply(ctx.edit && fromUrl ? fromUrl : config.cfg);
       this.kitBindTips();
+      this.kitPreviewFirst();
       return;
     }
     this.kit = { ...base, mode: 'archive', archiveId: model.id };
-    this.kitApply(fromUrl || (stored(`3dl_kit_${model.id}`) || {}).cfg || VaultKit.defaultConfig());
+    this.kitApply(fromUrl || (stored(`3dl_kit_${model.id}`) || {}).cfg || lib.defaultConfig());
     this.kitBindTips();
+    this.kitPreviewFirst();
     if (!this.currentUser) return;
     try {
-      const saved = await API.getKitConfigs(model.id, 'ussa-vault');
+      const saved = await API.getKitConfigs(model.id, kitId);
       if (!this.kit || this.kit.modelId !== model.id) return;
       this.kit.saved = saved;
       this.kitRenderBuilder();
@@ -2264,10 +2298,12 @@ const App = {
       return;
     }
     const edit = Boolean(opts.edit) && canEdit;
-    this.el.innerHTML = `${UI.modelDetail(page, hasPrinters, { kitConfig: true, edit })}`;
+    const kitId = model.kit_source.kit || this.kitFor(archive) || 'ussa-vault';
+    const lib = this.kitLib(kitId);
+    this.el.innerHTML = `${UI.modelDetail(page, hasPrinters, { kitConfig: true, kit: kitId, edit })}`;
     const ready = this.initKit(page, opts, {
-      archiveId: archive.id, canEdit, edit,
-      config: { id: model.id, name: model.name, cfg: model.kit_config ? this.parseJson(model.kit_config) : VaultKit.defaultConfig() }
+      kitId, archiveId: archive.id, canEdit, edit,
+      config: { id: model.id, name: model.name, cfg: model.kit_config ? this.parseJson(model.kit_config) : lib.defaultConfig() }
     });
     this.fitPoll(model.id, archive.id);
     // A configuration without a cover gets the tower
@@ -2282,14 +2318,14 @@ const App = {
   kitApply(input) {
     const kit = this.kit;
     if (!kit) return;
-    kit.bom = VaultKit.computeBom(kit.cat, input);
+    kit.bom = kit.lib.computeBom(kit.cat, input);
     kit.cfg = kit.bom.cfg;
-    kit.choices = VaultKit.choices(kit.cat, kit.cfg);
+    kit.choices = kit.lib.choices(kit.cat, kit.cfg);
     if (kit.mode === 'archive') {
       try { localStorage.setItem(`3dl_kit_${kit.modelId}`, JSON.stringify({ cfg: kit.cfg })); } catch (e) {}
     }
     if (kit.mode !== 'view' && location.hash.startsWith(`#/models/${kit.modelId}`)) {
-      history.replaceState(null, '', `#/models/${kit.modelId}?${kit.mode === 'edit' ? 'edit=1&' : ''}c=${VaultKit.encodeConfig(kit.cfg)}`);
+      history.replaceState(null, '', `#/models/${kit.modelId}?${kit.mode === 'edit' ? 'edit=1&' : ''}c=${kit.lib.encodeConfig(kit.cfg)}`);
     }
     this.kitRenderBuilder();
     this.kitRenderParts();
@@ -2343,6 +2379,19 @@ const App = {
 
   kitSet(field, value) {
     this.kitUpdate(cfg => { cfg[field] = field === 'depth' ? Number(value) : value; });
+  },
+
+  // A part that goes with a choice, ticked or not (Hero Me: gantry parts, ABL spacers, risers,
+  // options). An automatic list (null) starts from what the kit picked; bom.resolved says
+  // which choice the picks belong to (<field>Of), so another adapter starts automatic again.
+  kitToggle(field, id, on) {
+    const resolved = (this.kit && this.kit.bom.resolved) || {};
+    this.kitUpdate(cfg => {
+      const set = new Set(Array.isArray(cfg[field]) ? cfg[field] : resolved[field] || []);
+      if (on) set.add(id); else set.delete(id);
+      cfg[field] = [...set];
+      if (resolved[`${field}Of`] !== undefined) cfg[`${field}Of`] = resolved[`${field}Of`];
+    });
   },
 
   kitMod(field, value) {
@@ -2406,7 +2455,7 @@ const App = {
   kitAddExtra(name) {
     const file = (this.currentModel.files || []).find(f => f.original_name === name);
     if (!file) return;
-    const key = VaultKit.classify(file.original_name) || `path:${file.original_name}`;
+    const key = this.kit.lib.classify(file.original_name) || `path:${file.original_name}`;
     this.kitUpdate(cfg => { cfg.extra[key] = (cfg.extra[key] || 0) + 1; });
   },
 
@@ -2416,7 +2465,15 @@ const App = {
 
   kitReset() {
     if (!this.kit) return;
-    this.kitApply(VaultKit.defaultConfig());
+    this.kitApply(this.kit.lib.defaultConfig());
+  },
+
+  // A kit without its 3D model (no WebGL) shows its first 3D part when nothing is open
+  kitPreviewFirst() {
+    const kit = this.kit;
+    if (!kit || kit.view === 'tower' || kit.previewId) return;
+    const part = kit.bom.parts.find(p => p.qty > 0 && UI.previewKind(p.file) === '3d');
+    if (part) this.kitPreview(part.file.id);
   },
 
   // A row of the list opens its file in the 3D Studio: only that file, the list is the selector.
@@ -2441,7 +2498,7 @@ const App = {
   kitListText() {
     const kit = this.kit;
     const model = this.currentModel;
-    return VaultKit.bomText(kit.bom, kit.config && model.kit_source ? `${model.kit_source.name}: ${kit.config.name}` : model.name);
+    return kit.lib.bomText(kit.bom, kit.config && model.kit_source ? `${model.kit_source.name}: ${kit.config.name}` : model.name, kit.cat);
   },
 
   kitCopyList() {
@@ -2456,7 +2513,7 @@ const App = {
     if (!kit || !model) return;
     const ids = [...new Set([...kit.bom.parts.filter(p => p.qty > 0).map(p => p.file.id), ...kit.bom.docs.map(f => f.id)])];
     if (!ids.length) return this.toast('Nothing to download', 'error');
-    const label = kit.config ? kit.config.name : VaultKit.describe(kit.cfg).split(' · ')[0];
+    const label = kit.config ? kit.config.name : kit.lib.describe(kit.cfg, kit.cat).split(' · ')[0];
     try {
       // The files are the archive's
       const res = await API.prepareSelectionDownload(kit.archiveId, {
@@ -2715,7 +2772,7 @@ const App = {
   // one being edited); its page opens
   kitSaveAs() {
     if (!this.kit) return;
-    const name = this.kit.config ? `${this.kit.config.name} (copy)` : VaultKit.describe(this.kit.cfg);
+    const name = this.kit.config ? `${this.kit.config.name} (copy)` : this.kit.lib.describe(this.kit.cfg, this.kit.cat);
     this.openModal('Save configuration', UI.kitNameForm({ value: name, submitLabel: 'Save' }));
     setTimeout(() => document.getElementById('kit-name-input')?.select(), 60);
   },
@@ -2726,7 +2783,7 @@ const App = {
     if (!kit) return;
     const name = String(new FormData(e.target).get('name') || '').trim();
     try {
-      const row = await API.createKitConfig(kit.archiveId, { kit: 'ussa-vault', name, config: kit.cfg });
+      const row = await API.createKitConfig(kit.archiveId, { kit: kit.kitId, name, config: kit.cfg });
       this.closeModal();
       this.toast('Configuration saved');
       this.navigate(`/models/${row.id}`);
@@ -2752,7 +2809,7 @@ const App = {
     if (!kit || kit.mode !== 'edit') return;
     try {
       const res = await API.saveKitConfig(kit.config.id, kit.cfg);
-      kit.config.cfg = VaultKit.normalize(kit.cat, res.config).cfg;
+      kit.config.cfg = kit.lib.normalize(kit.cat, res.config).cfg;
       this.kitSetMode('view', kit.config.cfg);
       this.toast('Configuration saved');
       this.kitRenderCover();
@@ -2763,7 +2820,7 @@ const App = {
   kitSetMode(mode, cfg) {
     const kit = this.kit;
     kit.mode = mode;
-    const hash = `#/models/${kit.modelId}${mode === 'edit' ? `?edit=1&c=${VaultKit.encodeConfig(kit.cfg)}` : ''}`;
+    const hash = `#/models/${kit.modelId}${mode === 'edit' ? `?edit=1&c=${kit.lib.encodeConfig(kit.cfg)}` : ''}`;
     history.replaceState(null, '', hash);
     if (this.currentModelOpts) this.currentModelOpts.edit = mode === 'edit';
     // Locked: the list and the preview only; editing brings the builder back
@@ -2773,16 +2830,21 @@ const App = {
     this.kitApply(cfg || kit.cfg);
   },
 
-  // The cover of a configuration: its tower in 3D, on a transparent background like other covers
+  // The cover of a configuration: its tower or printhead in 3D, on a transparent background
+  // like other covers
   async kitRenderCover() {
     const kit = this.kit;
-    if (!kit || !kit.config || typeof VaultKit3D === 'undefined' || typeof Viewer === 'undefined') return;
+    const lib3d = kit && this.kitLib3d(kit.kitId);
+    if (!kit || !kit.config || !lib3d || typeof Viewer === 'undefined') return;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:-10000px;top:0;width:480px;height:320px';
     document.body.appendChild(box);
-    const scene = VaultKit3D.mount(box, kit.cfg, { background: 0x000000 });
+    // Hero Me: with its real parts, once they are in (at most a few seconds)
+    const real = kit.kitId === 'hero-me-gen7' ? { poses: await this.kitHeroPoses(), load: (url) => this.kitLoadStl(url) } : {};
+    const scene = lib3d.mount(box, this.kitModelInput(kit), { background: 0x000000, ...real });
     try {
       if (!scene || !scene.snapshotParts) return;
+      if (scene.loaded) await Promise.race([scene.loaded(), new Promise(r => setTimeout(r, 8000))]);
       const { renderer, scene: s, camera } = scene.snapshotParts();
       const res = await Viewer.takeSnapshot(kit.config.id, renderer, s, camera);
       if (res && this.currentModel && this.currentModel.id === kit.config.id) this.currentModel.thumbnail = res.thumbnail || this.currentModel.thumbnail;
@@ -2799,6 +2861,7 @@ const App = {
     const kit = this.kit;
     const container = kit && document.getElementById(`stl-viewer-${kit.modelId}`);
     if (!container) return;
+    if (kit.kitId === 'hero-me-gen7') return this.kitShowHead(container);
     if (kit.view !== 'tower' && typeof Viewer !== 'undefined') Viewer.cleanup();
     kit.view = 'tower';
     kit.previewId = null;
@@ -2847,6 +2910,104 @@ const App = {
     }
   },
 
+  // The Hero Me printhead in 3D: hovering a part lights its rows in the list, a click opens
+  // its file in the 3D Studio ("Show the printhead" comes back). Without WebGL the first part
+  // opens instead.
+  kitShowHead(container) {
+    const kit = this.kit;
+    if (kit.view !== 'tower' && typeof Viewer !== 'undefined') Viewer.cleanup();
+    kit.view = 'tower';
+    kit.previewId = null;
+    document.querySelectorAll('.kit-part.is-active').forEach(el => el.classList.remove('is-active'));
+    if (kit.scene3d && container.contains(kit.scene3d.canvas)) {
+      kit.scene3d.update(kit.bom.head);
+    } else {
+      this.kitDispose3D();
+      kit.scene3d = typeof HeroMe3D !== 'undefined' ? HeroMe3D.mount(container, kit.bom.head, {
+        background: typeof Viewer !== 'undefined' ? Viewer.sceneColors().background : undefined,
+        onHover: (key, part) => this.kitHoverPart(part),
+        onClick: (key, part) => { if (part && part.files.length) this.kitPreview(part.files[0]); },
+        poses: this.heroPoses || null,
+        load: (url) => this.kitLoadStl(url)
+      }) : null;
+      // The real parts' places come once per page load; until then the model shows
+      if (kit.scene3d && !this.heroPoses) {
+        const scene = kit.scene3d;
+        this.kitHeroPoses().then(p => { if (p && this.kit && this.kit.scene3d === scene) { scene.setPoses(p); this.kitHeadHint(); } });
+      }
+    }
+    if (!kit.scene3d) {
+      kit.view = 'part';
+      return this.kitPreviewFirst();
+    }
+    const panel = container.closest('.detail-viewer-panel');
+    const set = (sel, fn) => { const el = panel && panel.querySelector(sel); if (el) fn(el); };
+    set('.detail-viewer-title', el => { el.textContent = 'Printhead'; });
+    set('.kit-tower-btn', el => { el.hidden = true; });
+    set('.kit-tower-modes', el => { el.hidden = true; });
+    set('.kit-open-btn', el => { el.hidden = true; });
+    this.kitHeadHint();
+  },
+
+  // Under the printhead: the real parts (and those without a place), or the model
+  kitHeadHint() {
+    const kit = this.kit;
+    const el = kit && kit.scene3d && document.querySelector('.kit-preview-panel .detail-viewer-hint');
+    if (!el) return;
+    if (el.dataset.defaultHtml === undefined) el.dataset.defaultHtml = el.innerHTML;
+    el.classList.remove('is-media');
+    const missing = kit.scene3d.missing();
+    el.textContent = kit.scene3d.real()
+      ? `The project's own STLs, put together${missing.length ? ` · no place for ${missing.join(', ')}` : ''} · click a part to open it · drag to turn · scroll to zoom`
+      : 'Where each part goes (a model, not the files) · click a part to open it · drag to turn · scroll to zoom';
+  },
+
+  // Where every Hero Me part goes (scripts/hero-me-poses.js), fetched once
+  kitHeroPoses() {
+    if (!this.heroPosesLoad) {
+      this.heroPosesLoad = fetch('/js/kits/hero-me-gen7-poses.json?v=4')
+        .then(r => (r.ok ? r.json() : null))
+        .then(p => { this.heroPoses = p; return p; })
+        .catch(() => null);
+    }
+    return this.heroPosesLoad;
+  },
+
+  // The printhead's STLs, kept while the page is open (a change of the configuration only
+  // loads the new parts)
+  kitLoadStl(url) {
+    if (!this.stlCache) this.stlCache = new Map();
+    if (!this.stlCache.has(url)) {
+      this.stlCache.set(url, new Promise((resolve, reject) => {
+        if (typeof THREE === 'undefined' || !THREE.STLLoader) return reject(new Error('No STL loader'));
+        new THREE.STLLoader().load(url, (geometry) => { if (!geometry.attributes.normal) geometry.computeVertexNormals(); resolve(geometry); }, undefined, reject);
+      }).catch((e) => { this.stlCache.delete(url); throw e; }));
+    }
+    return this.stlCache.get(url);
+  },
+
+  // A part of the printhead under the pointer: its rows in the list (null: none)
+  kitHoverPart(part) {
+    document.querySelectorAll('.kit-part.is-hover').forEach(el => el.classList.remove('is-hover'));
+    if (!part) return;
+    let first = null;
+    for (const id of part.files) {
+      document.querySelectorAll(`#kit-parts .kit-part[data-file-id="${Number(id)}"]`).forEach(el => { el.classList.add('is-hover'); first = first || el; });
+    }
+    const body = first && first.closest('.kit-parts-body');
+    if (body) {
+      const r = first.getBoundingClientRect();
+      const b = body.getBoundingClientRect();
+      if (r.top < b.top || r.bottom > b.bottom) body.scrollTop += r.top - b.top - b.height / 3;
+    }
+  },
+
+  // A row of the list under the pointer: its part lights in the printhead
+  kitHoverFile(fileId) {
+    const scene = this.kit && this.kit.scene3d;
+    if (scene && scene.highlightFile) scene.highlightFile(fileId);
+  },
+
   // The tower in 3D (a model of simple shapes) or as the drawing with dimensions; remembered
   kitTowerModeNow() {
     try { return localStorage.getItem('3dl_kit_tower') === '2d' ? '2d' : '3d'; } catch (e) { return '3d'; }
@@ -2873,7 +3034,7 @@ const App = {
     const button = document.querySelector('.kit-preview-panel .kit-tower-btn');
     const modes = document.querySelector('.kit-preview-panel .kit-tower-modes');
     const openAll = document.querySelector('.kit-preview-panel .kit-open-btn');
-    if (button) button.hidden = false;
+    if (button) button.hidden = !(this.kit.kitId === 'ussa-vault' || this.kitLib3d(this.kit.kitId));
     if (modes) modes.hidden = true;
     if (openAll) openAll.hidden = true;
   },
@@ -2958,7 +3119,8 @@ const App = {
 
   kitShowTip(el, pinned = false) {
     const key = el && el.dataset.tip;
-    const tip = key && typeof VaultKit !== 'undefined' && VaultKit.TIPS[key];
+    const lib = this.kitLib();
+    const tip = key && lib && lib.TIPS[key];
     if (!tip || !this.kit) return;
     if (!pinned && this.kitTipPinned) return;
     let box = document.getElementById('kit-tip');

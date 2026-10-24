@@ -1729,7 +1729,8 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-notes .is-warning{color:var(--warning)}
 .kit-group-title{padding:12px 16px 4px;font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
 .kit-part{display:flex;align-items:center;gap:10px;padding:5px 16px;cursor:pointer}
-.kit-part:hover{background:color-mix(in srgb, var(--text-primary) 5%, transparent)}
+.kit-part:hover,.kit-part.is-hover{background:color-mix(in srgb, var(--text-primary) 5%, transparent)}
+.kit-part.is-hover{box-shadow:inset 3px 0 0 color-mix(in srgb, var(--accent-cyan) 55%, transparent)}
 .kit-part.is-active{background:color-mix(in srgb, var(--accent-cyan) 12%, transparent);box-shadow:inset 3px 0 0 var(--accent-cyan)}
 .kit-part.is-off{opacity:.5}
 .kit-qty{flex:none;width:56px;padding:3px 6px;font-size:.8rem;text-align:right;color:var(--text-primary);background:var(--bg-input);border:1px solid var(--border);border-radius:5px}
@@ -1744,6 +1745,13 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-hw{display:flex;gap:8px;padding:3px 16px;font-size:.8rem;color:var(--text-secondary)}
 .kit-hw-qty{flex:none;min-width:44px;font-weight:600;text-align:right;color:var(--text-primary)}
 .kit-parts-body>.kit-check{padding:4px 16px}
+/* A narrow list (the list and the 3D Studio side by side): size and buttons under the name */
+.kit-parts-panel{container-type:inline-size}
+@container (max-width:460px){
+  .kit-part{flex-wrap:wrap;row-gap:2px}
+  .kit-part-main{flex:1 1 calc(100% - 80px)}
+  .kit-part-main+*{margin-left:66px}
+}
 /* Wide screens: one window tall like the file view; the builder and the list scroll */
 @media(min-width:1025px) and (min-height:600px){
   .detail-page>.detail-views{flex:none}
@@ -1768,6 +1776,16 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-tip-btn:hover,.kit-tip-btn:focus-visible{color:var(--accent-cyan);border-color:var(--accent-cyan)}
 .kit-label .kit-tip-btn{margin-left:4px;text-transform:none;letter-spacing:0}
 .kit-check-wrap{display:inline-flex;align-items:center;gap:4px}
+/* Hero Me Gen7 builder: lists of parts that go with a choice, hints, option groups */
+.kit-checks.is-list{flex-direction:column;gap:6px}
+.kit-checks.is-list .kit-check{align-items:flex-start}
+.kit-checks.is-list .kit-check input{flex:none;margin-top:2px}
+.kit-hint{font-size:.74rem;line-height:1.45;color:var(--text-muted)}
+.kit-auto-btn{align-self:flex-start}
+.kit-more{border:1px solid var(--border);border-radius:6px;padding:6px 10px}
+.kit-more>summary{cursor:pointer;font-size:.8rem;font-weight:600;color:var(--text-secondary)}
+.kit-more[open]>summary{margin-bottom:8px}
+.kit-field.is-wide>.kit-select{flex:1 1 180px}
 .kit-tip{position:fixed;z-index:1200;max-height:min(76vh, 620px);overflow-y:auto;overscroll-behavior:contain;padding:12px 14px;font-size:.8rem;color:var(--text-secondary);background:var(--bg-card);border:1px solid var(--border);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.35)}
 .kit-tip[hidden]{display:none}
 .kit-tip.is-pinned{border-color:color-mix(in srgb, var(--accent-cyan) 55%, var(--border))}

@@ -138,9 +138,10 @@ async function runStaticAndUiChecks() {
   const compCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/components.js'), 'utf8');
   const appCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/app.js'), 'utf8');
   const kitCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/ussa-vault.js'), 'utf8');
+  const heroCode = fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7.js'), 'utf8');
 
   vm.createContext(sandbox);
-  vm.runInContext(`${kitCode}\n${apiCode}\n${compCode}\n${appCode}\nthis.__API = API; this.__UI = UI; this.__App = App;`, sandbox);
+  vm.runInContext(`${kitCode}\n${heroCode}\n${apiCode}\n${compCode}\n${appCode}\nthis.__API = API; this.__UI = UI; this.__App = App;`, sandbox);
 
   const { __API: API, __UI: UI, __App: App } = sandbox;
   App.currentUser = { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin' };
@@ -613,6 +614,268 @@ async function runStaticAndUiChecks() {
     const html = UI.modelDetail({ ...mockModel, files: [{ ...mockModel.files[0], slicer_token: 'abcdefgh', original_name: 'Main body.stl' }] }, false);
     const links = html.match(/[a-z]+:\/\/open\?file=[^"]+/g) || [];
     assert(links.length && links.every(l => /^[a-z]+:\/\/open\?file=[A-Za-z0-9:/._?=-]+$/.test(l)), `Slicer links must need no %-encoding: ${links.join(' ')}`);
+  });
+
+  // The real Hero Me Gen7 project: "<size>\t<path in the project folder>" of its 1364 files, four
+  // releases side by side (7.4, 7.3, 7.0 and the Magnet Edition)
+  const heroFiles = () => fs.readFileSync(path.join(__dirname, 'fixtures/hero-me-gen7-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean)
+    .map((line, i) => { const [size, name] = line.split('\t'); return { id: i + 1, file_size: Number(size), original_name: name, file_type: /\.stl$/i.test(name) ? 'stl' : /\.pdf$/i.test(name) ? 'pdf' : 'other' }; });
+
+  await check('Hero Me Gen7 configurator renders: release, steps, parts that go with a choice; library names are escaped', () => {
+    const K = sandbox.HeroMeKit;
+    const files = heroFiles();
+    files.push({ id: 9999, file_size: 1, original_name: 'Hero Me Gen7 Release V4/Options/LED Mounts/<img src=x onerror=alert(1)>.stl', file_type: 'stl' });
+    const hero = { ...mockModel, id: 153, name: 'HeroMe', files };
+    const cat = K.buildCatalog(files);
+    const cfg = { ...K.defaultConfig(), gantry: 'ender-3-pro-gantry-adapter', abl: 'bltouch', extruder: 'orbiter-v2.0-rear-mount', options: ['img-src-x-onerror-alert-1'] };
+    const bom = K.computeBom(cat, cfg);
+    const state = { kitId: 'hero-me-gen7', modelId: 153, cat, cfg: bom.cfg, bom, choices: K.choices(cat, bom.cfg), saved: [{ id: 7, name: '<b>Bench</b>', config: bom.cfg }], previewId: null, loggedIn: true, dirty: false };
+    const builder = UI.kitBuilder(state);
+    const parts = UI.kitParts(state);
+    assert(builder.includes("App.kitSet('release', this.value)") && builder.includes('7.4 · July 2023') && builder.includes('Magnet Edition'), 'The builder offers every release');
+    assert(builder.includes("App.kitToggle('gantryWith', &quot;ender-3-pro-cr-10-gantry-clip&quot;, this.checked)") && /checked onchange="App.kitToggle\('gantryWith', &quot;ender-3-pro-cr-10-gantry-clip&quot;/.test(builder), 'The Ender 3 Pro clip is ticked with its adapter');
+    assert(builder.includes("App.kitSet('ablMount', this.value)") && builder.includes('Auto: BLTouch Standard Left Mount') && builder.includes("App.kitToggle('risers'"), 'ABL and extruder steps follow the choices');
+    assert(!builder.includes('<img src=x') && builder.includes('&lt;img src=x onerror=alert(1)&gt;') && !parts.includes('<img src=x'), 'File names from the library are escaped');
+    assert(!builder.includes('<b>Bench</b>') && builder.includes('&lt;b&gt;Bench&lt;/b&gt;'), 'Saved configuration names are escaped');
+    assert(parts.includes('Hardware to buy') && parts.includes('BLTouch sensor') && parts.includes('Hero Me Gen7.4 Read Me First V4.1.pdf') && parts.includes('estimate'), 'The list shows hardware, estimates and the release PDFs');
+    const page = UI.modelDetail(hero, false, { kit: 'hero-me-gen7', view: 'configure' });
+    assert(page.includes('id="kit-builder"') && page.includes('3D Studio') && !page.includes('>Tower<'), 'The configurator opens on the 3D Studio, without a tower');
+    assert(App.kitFor(hero) === 'hero-me-gen7' && App.kitFor({ ...mockModel }) === null, 'The Hero Me project opens in its configurator');
+    const stock = K.computeBom(cat, { gantry: 'neptune-3-pro-shroud-body' });
+    const stockBuilder = UI.kitBuilder({ ...state, cfg: stock.cfg, bom: stock, choices: K.choices(cat, stock.cfg) });
+    assert(stockBuilder.includes('Stock Neptune 3 shroud') && !stockBuilder.includes("App.kitSet('hotend'") && !stockBuilder.includes("App.kitSet('adxl'"), 'The stock Neptune shroud needs no Hero Me base, hotend or ADXL step');
+    assert(UI.kitBuilder({ ...state, mode: 'edit', dirty: true }).includes('App.kitSaveConfig()'), 'Editing a configuration has Save and Cancel');
+    assert(parts.includes('App.kitHoverFile(') && page.includes('Show the printhead'), 'Rows light their part in the printhead, the panel comes back to it');
+
+    // The printhead in 3D, built with the real three.js (no WebGL needed to build it)
+    const three = { console };
+    vm.createContext(three);
+    vm.runInContext(`${fs.readFileSync(path.join(ROOT_DIR, 'public/js/vendor/three.min.js'), 'utf8')}\n${heroCode}\n${fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7-3d.js'), 'utf8')}`, three);
+    const KK = three.HeroMeKit;
+    const cat3 = KK.buildCatalog(heroFiles());
+    const head = (cfg) => KK.computeBom(cat3, cfg);
+    const boxOf = (model, key) => { const b = new three.THREE.Box3(); model.parts[key].meshes.forEach(m => b.expandByObject(m)); return b; };
+    const meshesOf = (model, colour) => { const out = []; model.group.traverse(o => { if (o.isMesh && o.material === model.materials.get(colour)) out.push(o); }); return out; };
+    for (const cfg of [{}, { fans: 1, side: 'right' }, { abl: 'bltouch', ablSide: 'right', extruder: 'orbiter-v2.0-rear-mount', risers: ['6mm-dd-riser-w-mount-points'], adxl: 'adxl345-19mm-mount' },
+      { abl: 'beacon', ablMount: 'beacon3d-abl-19mm-mount' }, { abl: 'ezabl', fan: '4010' }, { fan: 'cpap' }, { release: '7.0', duct: 'standard:5015:gen6-single-centered', fans: 1 },
+      { duct: 'standard:5015:gen6-single-6deg-brace', fans: 1 }, { release: 'me', gantry: 'ender-3-style-box-x-carriage-front' }, { gantry: 'neptune-3-pro-shroud-top-vents-adxl345-body' }]) {
+      const b = head(cfg);
+      const model = three.HeroMe3D.build(b.head);
+      const listed = new Set(b.parts.filter(p => p.qty > 0).map(p => p.file.id));
+      const drawn = Object.values(model.parts).flatMap(p => p.files);
+      assert(Object.values(model.parts).every(p => p.meshes.length) && drawn.every(id => listed.has(id)), `${JSON.stringify(cfg)}: every drawn part is a part of the list`);
+      assert(model.size.height > 60 && model.size.width >= 80, `${JSON.stringify(cfg)}: a printhead-sized model, got ${JSON.stringify(model.size)}`);
+    }
+    const dflt = three.HeroMe3D.build(head({}).head);
+    assert(boxOf(dflt, 'duct-left').max.x < 0 && boxOf(dflt, 'duct-right').min.x > 0 && boxOf(dflt, 'skirt').max.y <= boxOf(dflt, 'base').min.y + 0.01, 'Two ducts on their sides, the skirt under the base');
+    assert(!three.HeroMe3D.build(head({ fans: 1, side: 'right' }).head).parts['duct-left'], 'One fan on the right: one duct, on the right');
+    const rich = three.HeroMe3D.build(head({ abl: 'bltouch', ablSide: 'right', extruder: 'orbiter-v2.0-rear-mount', risers: ['6mm-dd-riser-w-mount-points'] }).head);
+    assert(boxOf(rich, 'abl-wing').min.x > 0 && boxOf(rich, 'cable').max.x < 0 && boxOf(rich, 'riser-0').min.y >= boxOf(rich, 'hotend').max.y - 0.01, 'The sensor on the right, the tower on the left, the riser on the hotend mount');
+    assert(meshesOf(rich, 'stepper').every(m => m.position.z < 0), 'A rear extruder has its stepper behind the hotend');
+    const shroud = three.HeroMe3D.build(head({ gantry: 'neptune-3-pro-shroud-body' }).head);
+    assert(!shroud.parts.base && !shroud.parts.skirt && shroud.parts.gantry, 'The stock Neptune shroud is drawn without a Hero Me base');
+  });
+
+  await check('Hero Me Gen7 kit: every STL of every release has a place; skirts, clips and ducts follow the names', () => {
+    require(path.join(ROOT_DIR, 'public/js/kits/ussa-vault.js'));
+    require(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7.js'));
+    const K = globalThis.HeroMeKit;
+    const files = heroFiles();
+    const vaultFiles = fs.readFileSync(path.join(__dirname, 'fixtures/ussa-vault-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean).map(l => ({ original_name: l.split('\t')[1] }));
+    assert(K.detect(files) && !K.detect(vaultFiles) && !globalThis.VaultKit.detect(files), 'Each kit knows only its own project');
+    assert(!K.detect(files.slice(0, 30)) && !K.detect([{ original_name: 'Benchy.stl' }]), 'Other projects are not Hero Me');
+    const cat = K.buildCatalog(files);
+    assert(cat.releases.map(r => r.id).join() === '7.4,7.3,7.0,me', `Releases, newest first: ${cat.releases.map(r => r.id).join()}`);
+    assert(cat.releases.map(r => r.files.length).join() === '600,405,293,41', `STL files per release: ${cat.releases.map(r => r.files.length).join()}`);
+    // Every STL of a release is an option of some step
+    for (const r of cat.releases) {
+      const ids = new Set();
+      for (const value of Object.values(r.slots)) {
+        const list = Array.isArray(value) ? value : Object.values(value).flat();
+        for (const o of list) {
+          if (!o) continue;
+          for (const f of [...(o.files || []), ...Object.values(o.sides || {}), ...((o.option && o.option.files) || [])]) ids.add(f.id);
+        }
+      }
+      const loose = r.files.filter(f => !ids.has(f.id)).map(f => f.original_name);
+      assert(!loose.length, `${r.id}: files without a place: ${loose.slice(0, 5).join(', ')}`);
+    }
+
+    const bom = (cfg) => K.computeBom(cat, cfg);
+    const names = (b) => b.parts.filter(p => p.qty > 0).map(p => `${p.qty}${p.estimate ? '*' : ''} ${p.file.original_name.split('/').pop()}`).sort();
+    const hw = (b, start) => b.hardware.filter(h => h.name.startsWith(start)).reduce((n, h) => n + h.qty, 0);
+
+    // The default: a stock Ender 3 V2, Creality OEM hotend, Bowden, two 5015 fans
+    const def = bom(K.defaultConfig());
+    assert(def.cfg.release === '7.4' && names(def).join(' | ') === [
+      '1 HMG7 Cable Tower Standard Left.stl', '1 HMG7 Creality OEM-CR10S-Ender3-5 Skirt V2.stl', '1 HMG7 Ender 3 V2 Gantry Adapter V3.stl',
+      '1 HMG7.2 Universal Base V2.stl', '1 HMG7.3 Creality OEM-CR10S-Ender3-5 2-Screw Mount V2.stl',
+      '1 HMG7.4 Standard Single 5015 Left Duct V5.stl', '1 HMG7.4 Standard Single 5015 Right Duct V5.stl'
+    ].join(' | '), `The default parts list: ${names(def).join(' | ')}`);
+    assert(hw(def, '5015 radial') === 2 && hw(def, '40 mm axial') === 1 && def.manuals.length === 3 && !def.warnings.length, `Fans and the three 7.4 PDFs: ${JSON.stringify(def.hardware)}`);
+    // Other releases map the choices by name; the Magnet Edition has its base and adapters
+    const old = bom({ release: '7.0' });
+    assert(names(old).includes('1 HMG7 OEM-MK8-MS Mount.stl') && names(old).includes('1 HMG7 OEM-MK8-MS Skirt V2.stl') && names(old).includes('1 HMG7 Universal Upright Base.stl')
+      && names(old).includes('1 HMG6-dual-5015-6deg-brace-inserts.stl'), `7.0: ${names(old).join(' | ')}`);
+    const me = bom({ release: 'me' });
+    assert(names(me).includes('1 HMG7 ME Upright Base.stl') && names(me).includes('1 HMG7 ME Ender 3 V2 Gantry Adapter V2.stl')
+      && me.parts.some(p => p.file.original_name.startsWith('HMG7 Release V1.0/Hotend Mounts/')), `Magnet Edition: ${names(me).join(' | ')}`);
+    const moved = bom({ release: '7.0', hotend: 'phaetus-x-voron-dragon-st-hf-uhf-screw-mount' });
+    assert(moved.warnings.some(w => w.includes('Phaetus X Voron Dragon ST-HF-UHF Screw Mount')), `A part another release lacks gets a note: ${moved.warnings.join(' / ')}`);
+    const back = bom({ ...bom({ release: '7.0', hotend: 'creality-spider-4-pro-ceramic-2-screw-mount' }).cfg, release: '7.4' });
+    assert(back.cfg.hotend === 'creality-spider-4-pro-ceramic-2-screw-mount' && names(back).includes('1 HMG7.3 Creality Spider 4 Pro Ceramic 2-Screw Mount V2.stl'), 'Back in its release a choice is chosen again');
+    assert(names(bom({ hotend: 'oem-mk8-ms-mount' })).includes('1 HMG7.3 Creality OEM-CR10S-Ender3-5 2-Screw Mount V2.stl'), "7.0's OEM-MK8-MS mount is the Creality OEM mount of 7.4");
+
+    // The skirt that goes with a hotend
+    const skirt = (hotend, release = '7.4') => (bom({ release, hotend }).parts.find(p => /skirt/i.test(p.file.original_name)) || { file: { original_name: '-' } }).file.original_name.split('/').pop();
+    const skirts = {
+      'phaetus-x-voron-dragon-st-hf-uhf-screw-mount': 'HMG7.3 Phaetus X Voron Dragon Skirt V2.stl',
+      'phaetus-dragon-st-hf-uhf-screw-mount': 'HMG7.3 Phaetus Dragon ST-HF-UHF Skirt V2.stl',
+      'creality-spider-3-pro-pc4m10-mount': 'HMG7 Creality Spider 350-3 Pro Skirt V2.stl',
+      'creality-spider-high-temp-2-screw-mount': 'HMG7 Creality Spider 500 Skirt V2.stl',
+      'e3d-v6-vyper-stock-collar-mount': 'HMG7 Anycubic Vyper V5 Stock Skirt V2.stl',
+      'haldis-red-lizard-screw-mount': 'HMG7.4 Universal Skirt.stl'
+    };
+    for (const [hotend, want] of Object.entries(skirts)) assert(skirt(hotend) === want, `${hotend}: skirt ${skirt(hotend)}, not ${want}`);
+    assert(bom({ hotend: 'e3d-v6-vyper-stock-collar-mount' }).parts.filter(p => /Vyper Stock Collar Mount/.test(p.file.original_name)).length === 2, 'A mount in two parts (A, B) prints both');
+    const collar = bom({ hotend: 'e3d-v6-revo-six-dragonfly-bmo-collar-mount' });
+    assert(names(collar).includes('1 HMG7 All Collar Mounts 1mm Spacer.stl') && hw(collar, 'M3 threaded insert') === 8, `A collar mount takes the 1 mm spacer and two more inserts: ${names(collar).join(' | ')}`);
+
+    // The files that go with a gantry adapter
+    const extras = (gantry) => K.choices(cat, { gantry }).sel.gantryWith.map(o => o.label).join(' | ');
+    assert(extras('ender-3-pro-gantry-adapter') === 'Ender 3-Pro-CR-10 Gantry Clip', `Ender 3 Pro: ${extras('ender-3-pro-gantry-adapter')}`);
+    assert(extras('ender-3-pro-cr10-long-gantry-adapter') === 'Ender 3-Pro-CR10 Long Gantry Clip', `Ender 3 Pro long: ${extras('ender-3-pro-cr10-long-gantry-adapter')}`);
+    assert(extras('ender-3-v2-gantry-adapter') === '' && extras('ender-3-v2-neo-gantry-adapter') === 'Ender 3 V2 Neo Gantry Clip', 'The V2 needs no clip, the V2 Neo its own');
+    assert(extras('anycubic-vyper-gantry-adapter') === 'Anycubic Vyper Heat Sink Brace' && extras('ender-5-v-wheel-x-carriage') === '', 'The Vyper brace; the Ender 3 belt bracket is not the Ender 5\'s');
+    assert(extras('ender-3-style-box-x-carriage-front') === 'Ender 3 Style Box X Carriage Bottom | MGN12-H Box X Carriage Top | Plain X Carriage Short Back', `A Box X carriage: ${extras('ender-3-style-box-x-carriage-front')}`);
+    assert(extras('neptune-3-pro-shroud-body-adxl345') === 'N3P-Internal-Support | Neptune-3-Pro-Shroud-Front-Cap-ADXL345', `The ADXL345 shroud takes its front cap: ${extras('neptune-3-pro-shroud-body-adxl345')}`);
+    const picked = bom({ gantry: 'ender-3-pro-gantry-adapter', gantryWith: [], gantryWithOf: 'ender-3-pro-gantry-adapter' });
+    assert(!names(picked).some(n => /Clip/.test(n)) && bom({ gantry: 'cr-10-10s-gantry-adapter', gantryWith: [], gantryWithOf: 'ender-3-pro-gantry-adapter' }).cfg.gantryWith === null,
+      'Unticked parts stay out; another adapter starts automatic again');
+
+    // The stock Neptune 3 shroud: no Hero Me base, the PDF's inserts and screws
+    const stock = bom({ gantry: 'neptune-3-pro-shroud-body', hotend: 'neptune-oem-mount', adxl: 'adxl345-19mm-mount' });
+    assert(!stock.parts.some(p => ['Base', 'Hotend', 'Part cooling', 'ADXL345'].includes(p.group)) && hw(stock, 'M3 threaded insert') === 10 && hw(stock, 'M3 screw') === 14
+      && !stock.hardware.some(h => h.estimate), `Stock Neptune: ${names(stock).join(' | ')}`);
+
+    // Part cooling: one fan prints one side; a Gen6 dual duct is both sides; heights by the printer
+    const one = bom({ fans: 1, side: 'right' });
+    assert(names(one).filter(n => /Duct/.test(n)).join() === '1 HMG7.4 Standard Single 5015 Right Duct V5.stl' && hw(one, '5015 radial') === 1, `One fan: ${names(one).join(' | ')}`);
+    assert(bom({ gantry: 'anycubic-vyper-gantry-adapter' }).parts.some(p => p.file.original_name.includes('/Long Ducts - ')), 'A Vyper gets the long ducts');
+    assert(bom({ hotend: 'phaetus-rapido-plus-screw-mount' }).parts.some(p => p.file.original_name.includes('/Tall Ducts - ')), 'A Rapido UHF (Plus) gets the tall ducts');
+    const g6 = bom({ duct: 'standard:5015:gen6-dual-6deg-brace-inserts' });
+    assert(names(g6).includes('1 HMG6-dual-5015-6deg-brace-inserts.stl') && !names(g6).some(n => /Duct/.test(n)), `Gen6 dual ducts: both sides in one print: ${names(g6).join(' | ')}`);
+    const fan4020 = bom({ fan: '4020' });
+    assert(fan4020.parts.some(p => p.optional && /4020 Fan Mount Spacer/.test(p.file.original_name)), '4020 fans offer the fan mount spacer');
+
+    // ABL: the sensor's mount and wing on one side, the cable tower on the other
+    const abl = bom({ abl: 'bltouch', ablSide: 'right' });
+    assert(names(abl).includes('1 HMG7.2 BLTouch Standard Right Mount.stl') && names(abl).includes('1 HMG7 BL-CR Touch Medium Right Wing V2.stl') && names(abl).includes('1 HMG7 Cable Tower Standard Left.stl'),
+      `BLTouch on the right: ${names(abl).join(' | ')}`);
+    assert(bom({ abl: 'bltouch', ablSide: 'left', ablMount: 'bltouch-standard-right-mount' }).cfg.ablMount === 'bltouch-standard-left-mount', 'A mount follows the side');
+    const beacon = bom({ abl: 'beacon', ablMount: 'beacon3d-abl-19mm-mount' });
+    assert(!names(beacon).some(n => /Wing/.test(n)) && beacon.manuals.some(f => /Beacon3D Sensor\.rtf$/.test(f.original_name)), 'A Beacon under the skirt needs no wing; its readme goes with it');
+
+    // Hand changes, a garbage configuration, the URL form
+    const hand = bom({ qty: { 'p:Base/HMG7.2 Universal Base V2.stl': 2 }, extra: { 'path:Hero Me Gen7 Release V4/_Hero Me Gen7.4 Change Log V1.6.pdf': 1 } });
+    const base = hand.parts.find(p => p.key === 'p:Base/HMG7.2 Universal Base V2.stl');
+    assert(base.qty === 2 && base.auto === 1 && hand.parts.some(p => p.group === 'Extra files'), 'Counts changed by hand and extra files');
+    for (const junk of [null, 'x', [], { release: 'nope', fans: 'x', fan: 'big', qty: { a: -1 }, options: 'all', gantryWith: 5 }]) {
+      const b = bom(junk);
+      assert(b.cfg.release === '7.4' && b.parts.length && !Object.keys(b.cfg.qty).length, `A broken configuration falls back: ${JSON.stringify(junk)}`);
+    }
+    assert(JSON.stringify(K.decodeConfig(K.encodeConfig(abl.cfg))) === JSON.stringify(abl.cfg) && K.decodeConfig('%%%') === null, 'Configurations travel in the URL');
+    assert(K.describe(abl.cfg, cat) === '7.4 · Ender 3 V2 · Creality OEM-CR10S-Ender3-5 2-Screw · 2 × 5015 · BLTouch', `Summary: ${K.describe(abl.cfg, cat)}`);
+    // What the 3D printhead draws: sides, reach, stepper, tower
+    const h = abl.head;
+    assert(h.cooling.layout === 'sides' && h.cooling.files.left.length === 1 && h.cooling.files.right.length === 1 && h.abl.side === 'right' && h.abl.reach === 40 && h.cable.side === 'left',
+      `The printhead of the BLTouch configuration: ${JSON.stringify({ cooling: h.cooling, abl: h.abl && h.abl.reach, cable: h.cable && h.cable.side })}`);
+    const dd = bom({ extruder: 'orbiter-v2.0-rear-mount', risers: ['10mm-dd-riser-w-mount-points'] }).head;
+    assert(dd.extruder.rear && dd.extruder.small && dd.risers[0].mm === 10 && !dd.base.magnet && bom({ release: 'me' }).head.base.magnet, 'A rear Orbiter, a 10 mm riser; only the Magnet Edition base has magnets');
+    assert(bom({ gantry: 'neptune-3-pro-shroud-body' }).head.standalone && bom({ gantry: 'ender-3-style-box-x-carriage-front' }).head.gantry.kind === 'rail', 'The stock shroud stands alone; a Box X carriage rides on a rail');
+    assert(K.bomText(abl, 'HeroMe', cat).includes('## Hardware') && K.bomText(abl, 'HeroMe', cat).includes('Hero Me Gen7 Release V4/ABL Mounts/'), 'The list as text');
+  });
+
+  await check('Hero Me printhead of the real parts: every place is of a file of the project, the parts sit where Hero Me puts them', () => {
+    const poses = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7-poses.json'), 'utf8'));
+    const files = heroFiles();
+    const byPath = new Map(files.map(f => [f.original_name, f]));
+    // Places of files of the project (with their sizes), turned, never stretched or mirrored
+    const det = (m) => m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+    const turn = (m) => m && m.length === 9 && Math.abs(det(m) - 1) < 0.005 && [0, 1, 2].every(i => [0, 1, 2].every(j => Math.abs(m[i * 3] * m[j * 3] + m[i * 3 + 1] * m[j * 3 + 1] + m[i * 3 + 2] * m[j * 3 + 2] - (i === j ? 1 : 0)) < 0.005));
+    const entries = Object.entries(poses.parts);
+    assert(entries.length > 900, `Places of most of the files: ${entries.length}`);
+    for (const [p, pose] of entries) {
+      assert(byPath.has(p) && byPath.get(p).file_size === pose.size, `${p}: a file of the project with its size`);
+      const places = pose.on ? Object.entries(pose.on) : [[null, pose]];
+      assert(places.length && places.every(([parent, q]) => (!parent || byPath.has(parent)) && turn(q.m) && q.t.length === 3 && q.box.length === 6), `${p}: a turn and a shift`);
+      // Ducts never reach behind the base (the carriage is there); a left and a right duct
+      // sit alike
+      if (pose.kind === 'duct') {
+        assert(pose.box[2] > poses.base.box[2] - 5, `${p}: the duct reaches behind the base: ${JSON.stringify(pose.box)}`);
+        const twin = /Left/.test(p) && poses.parts[p.replace(/Left/g, 'Right')];
+        if (twin) assert([1, 2, 4, 5].every(k => Math.abs(twin.box[k] - pose.box[k]) < 4), `${p}: placed unlike its right side: ${JSON.stringify(pose.box)} / ${JSON.stringify(twin.box)}`);
+      }
+      // ADXL345 mounts on the skirts (and the duct made for one), with their board
+      if (/\/ADXL345 Mounts\//.test(p)) assert(pose.on && Object.keys(pose.on).some(k => /\/Skirts\//.test(k)) && pose.board, `${p}: under a skirt, with its board`);
+    }
+
+    const three = { console };
+    vm.createContext(three);
+    vm.runInContext(`${fs.readFileSync(path.join(ROOT_DIR, 'public/js/vendor/three.min.js'), 'utf8')}\n${fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7.js'), 'utf8')}\n${fs.readFileSync(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7-3d.js'), 'utf8')}`, three);
+    const K = three.HeroMeKit;
+    const H = three.HeroMe3D;
+    const cat = K.buildCatalog(files);
+    const bom = (cfg) => K.computeBom(cat, cfg);
+    const of = (plan, key) => plan.items.find(it => it.key === key);
+    // Every placed file is a part of the list
+    for (const cfg of [{}, { abl: 'bltouch', ablSide: 'right', extruder: 'orbiter-v2.0-rear-mount', risers: ['6mm-dd-riser-w-mount-points'], adxl: 'adxl345-15.4mm-horizontal-mount' },
+      { release: '7.3' }, { release: '7.0' }, { release: 'me' }, { duct: 'standard:5015:gen6-dual-6deg-brace-inserts' }, { fan: '4020' }, { abl: 'beacon', ablMount: 'beacon3d-abl-19mm-mount' }]) {
+      const b = bom(cfg);
+      const plan = H.planReal(b.head, poses);
+      const listed = new Set(b.parts.filter(p => p.qty > 0).map(p => p.file.id));
+      assert(plan && of(plan, 'base') && plan.items.every(it => listed.has(it.id)), `${JSON.stringify(cfg)}: placed files are files of the list`);
+    }
+
+    // The default printhead: every part placed, the nozzle on the bed, each part where it goes
+    const dflt = H.planReal(bom({}).head, poses);
+    const B = poses.base.box;
+    assert(dflt.items.map(it => it.key).sort().join() === 'base,cable,duct-left,duct-right,gantry,hotend,skirt' && !dflt.missing.length, `The default printhead: ${dflt.items.map(it => it.key).join()} / ${dflt.missing.join()}`);
+    assert(Math.abs(dflt.nozzle) < 0.5, `The 7.4 ducts' tips 1.6 mm above the bed: ${dflt.nozzle}`);
+    assert(of(dflt, 'hotend').box[4] > B[4] && of(dflt, 'skirt').box[4] <= B[1] + 1 && of(dflt, 'gantry').box[5] <= B[2] + 1, 'The hotend mount on top of the base, the skirt under it, the gantry adapter behind it');
+    assert(of(dflt, 'duct-left').box[0] < B[0] && of(dflt, 'duct-right').box[3] > B[3] && of(dflt, 'cable').box[3] <= B[0] + 1, 'The ducts on their sides, the cable tower on the left');
+    // A Gen7 duct sits on both columns of side holes: by the base's front, not far ahead
+    assert(of(dflt, 'duct-left').box[5] < B[5] + 35, `The ducts by the base: ${JSON.stringify(of(dflt, 'duct-left').box)}`);
+    // A riser and an extruder mount stack on the hotend mount; the sensor on the right
+    const rich = H.planReal(bom({ abl: 'bltouch', ablSide: 'right', extruder: 'orbiter-v2.0-rear-mount', risers: ['6mm-dd-riser-w-mount-points'], adxl: 'adxl345-15.4mm-horizontal-mount' }).head, poses);
+    const mountTop = of(rich, 'hotend').pose.top;
+    assert(!rich.missing.length && Math.abs(of(rich, 'riser-0').box[1] - mountTop) < 1.5 && Math.abs(of(rich, 'extruder').box[1] - of(rich, 'riser-0').box[4]) < 1.5, `The riser on the mount, the extruder mount on the riser: ${JSON.stringify(rich.items.map(it => [it.key, it.box[1], it.box[4]]))}`);
+    assert(rich.stackTop >= of(rich, 'extruder').box[4] - 0.01 && of(rich, 'abl-wing').box[3] > B[3] && rich.sensor && rich.sensor.side === 'right', 'The extruder on top, the BLTouch wing on the right');
+    // The ADXL345 mount under the front of the base, on the skirt's front
+    const skirt = of(rich, 'skirt').box;
+    assert(rich.adxl && rich.adxl.box[2] >= skirt[5] - 1 && rich.adxl.box[4] <= B[1] + 1 && rich.adxl.box[1] > rich.nozzle, `The ADXL345 mount on the skirt's front: ${JSON.stringify(rich.adxl && rich.adxl.box)} / ${JSON.stringify(skirt)}`);
+    // A Gen6 dual duct is one part
+    const dual = H.planReal(bom({ duct: 'standard:5015:gen6-dual-6deg-brace-inserts' }).head, poses);
+    assert(of(dual, 'duct-both') && !of(dual, 'duct-left'), 'A Gen6 dual duct: one part on both sides');
+    // The stock Neptune shroud has no place: the model is drawn
+    assert(H.planReal(bom({ gantry: 'neptune-3-pro-shroud-body' }).head, poses) === null && H.planReal(bom({}).head, null) === null, 'Without a Hero Me base or the places: the model');
+
+    // The scene before the STLs are in: a see-through box per file, the nozzle on the bed
+    const model = H.buildReal(bom({}).head, poses);
+    const ghosts = [];
+    model.group.traverse(o => { if (o.userData.placeholder) ghosts.push(o.userData.part); });
+    assert(ghosts.sort().join() === 'base,cable,duct-left,duct-right,gantry,hotend,skirt', `A box per file: ${ghosts.join()}`);
+    assert(Math.abs(model.group.position.y + dflt.nozzle) < 0.01 && model.size.height > 60 && model.size.width > 80, `A printhead-sized scene: ${JSON.stringify(model.size)}`);
+    // A BMG rear mount is a standing motor plate: the stepper behind it, the extruder in front
+    const bmgHead = bom({ extruder: 'bondtech-bmg-bmg-m-rear-mount' }).head;
+    const plateZ = of(H.planReal(bmgHead, poses), 'extruder').pose.motor.p[2];
+    const bmg = H.buildReal(bmgHead, poses);
+    const zOf = (colour) => { const out = []; bmg.group.traverse(o => { if (o.isMesh && o.material === bmg.materials.get(colour)) out.push(new three.THREE.Box3().setFromObject(o)); }); return out; };
+    assert(zOf('stepper').length && zOf('stepper').every(b => b.max.z <= plateZ) && zOf('black').some(b => b.min.z >= plateZ), `The stepper behind the plate at z ${plateZ}`);
+    // No fans are drawn
+    const colours = new Set();
+    bmg.group.traverse(o => { if (o.isMesh) colours.add([...bmg.materials.entries()].find(([, m]) => m === o.material)?.[0]); });
+    assert(!colours.has('fan') && !colours.has('blade') && !colours.has('intake'), `No fans: ${[...colours].join()}`);
   });
 
   await check('USSA VAULT kit: every STL of the archive is recognised; parts lists follow the manual', () => {
@@ -2368,6 +2631,47 @@ async function runE2ETests() {
       // A changed configuration needs other parts: the progress follows
       assert((await apiReq(`/api/models/${id}/kit-config`, { method: 'PUT', session: adminSession, body: { config: { ...K.defaultConfig(), width: 'S', depth: 3 } } })).status === 200, 'Editing failed');
       assert((await page()).kit_progress.total !== total, 'The needs follow the configuration');
+    });
+
+    await check('Hero Me Gen7: the releases folder is marked on scan and read-only; its configurations know their kit and download their parts', async () => {
+      const AdmZip = require('adm-zip');
+      require(path.join(ROOT_DIR, 'public/js/kits/hero-me-gen7.js'));
+      const K = globalThis.HeroMeKit;
+      const put = (rel, data) => { const p = path.join(tmpLibDir, ...rel.split('/')); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, data); };
+      const tri = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      // The 7.4 base, Creality adapters, hotend mounts, 5015 ducts, cable towers and its PDFs
+      const keep = /^Hero Me Gen7 Release V4\/(Base|Gantry Adapters\/Creality|Hotend Mounts|Part Cooling Ducts\/Standard Ducts\/5015 fans|Cable Management)\/|^Hero Me Gen7 Release V4\/[^/]+\.pdf$/;
+      const picked = fs.readFileSync(path.join(__dirname, 'fixtures/hero-me-gen7-files.tsv'), 'utf8').split(/\r?\n/).filter(Boolean).map(l => l.split('\t')[1]).filter(n => keep.test(n));
+      for (const n of picked) put(`HeroMe Test/${n}`, /\.stl$/i.test(n) ? tri : '%PDF-1.4\n');
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const s = await apiReq('/api/library/scan/status', { session: adminSession });
+        if (s.status === 200 && !s.data.isScanning) break;
+      }
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const hero = await byName('HeroMe Test');
+      assert(hero && hero.kit_archive === 'hero-me-gen7' && hero.is_readonly === 1, `The Hero Me project must be recognised and read-only: ${JSON.stringify(hero && { kit: hero.kit_archive, ro: hero.is_readonly })}`);
+      assert((await apiReq(`/api/models/${hero.id}/fs/mkdir`, { method: 'POST', session: adminSession, body: { path: '', name: 'New' } })).status === 409, 'Nothing changes its files');
+
+      const created = await apiReq(`/api/models/${hero.id}/kit-configs`, { method: 'POST', session: adminSession, body: { kit: 'hero-me-gen7', name: 'Ender 3 V2 head', config: K.defaultConfig() } });
+      assert(created.status === 201 && created.data.kit === 'hero-me-gen7', `Saving a Hero Me configuration: ${JSON.stringify(created.data)}`);
+      const listed = await apiReq(`/api/models/${hero.id}/kit-configs`, { session: adminSession });
+      assert(listed.data.length === 1 && listed.data[0].kit === 'hero-me-gen7', 'The archive lists its configuration with its kit');
+      const page = (await apiReq(`/api/models/${created.data.id}`, { session: adminSession })).data;
+      assert(page.kit_source && page.kit_source.kit === 'hero-me-gen7' && page.kit_progress.total === 7 && page.kit_progress.done === 0, `The configuration's page: ${JSON.stringify({ src: page.kit_source, progress: page.kit_progress })}`);
+
+      // Its ZIP: the seven parts and the parts list; with the PDFs when asked for
+      const zipOf = async () => {
+        const res = await fetch(`${baseUrl}/api/models/${created.data.id}/download`, { headers: { Cookie: adminSession.cookie } });
+        assert(res.status === 200, `The configuration ZIP must download, got ${res.status}`);
+        return new AdmZip(Buffer.from(await res.arrayBuffer())).getEntries().map(e => e.entryName);
+      };
+      let entries = await zipOf();
+      assert(entries.filter(n => /\.stl$/i.test(n)).length === 7 && entries.some(n => n.endsWith('parts list.txt')) && entries.some(n => n.endsWith('HMG7.2 Universal Base V2.stl')), `ZIP entries: ${entries.join(', ')}`);
+      assert((await apiReq(`/api/models/${created.data.id}/kit-config`, { method: 'PUT', session: adminSession, body: { config: { ...K.defaultConfig(), docs: true } } })).status === 200, 'Saving the choices failed');
+      entries = await zipOf();
+      assert(entries.filter(n => /\.pdf$/i.test(n)).length === 3, `The three release PDFs go with it: ${entries.join(', ')}`);
     });
 
     await check('Regenerate covers lists viewer-rendered and missing covers, not covers from images', async () => {

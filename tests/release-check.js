@@ -484,6 +484,9 @@ async function runStaticAndUiChecks() {
     assert(dimDrawing.includes('<dt>Bowl roof</dt><dd>21 mm</dd>') && dimDrawing.includes('<dt>Base</dt><dd>52 mm</dd>') && dimDrawing.includes('<dt>Top lip</dt><dd>9 mm</dd>'), 'Roof, base and lip have their heights');
     assert(dimDrawing.includes('<dt>Height</dt><dd>226 mm</dd>') && dimDrawing.includes('>226 mm</text>'), `The height counts the roof: 52 + 96 + 48 + 9 + 21`);
     assert(UI.kitDrawing({ ...dimCfg, mods: { ...dimCfg.mods, base: 'wheels' } }).includes('≈ 266 mm'), 'An estimated lift makes the height approximate');
+    // Sustainer locks: one in the middle on S and M, two on L and XL
+    const susDrawing = UI.kitDrawing({ ...dimCfg, roof: 'none', floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'flat' }, { type: 'sustainer', interior: 'flat' }] }, { height: '1F', layout: 'L', slots: [{ type: 'sustainer', interior: 'flat' }] }] });
+    assert((susDrawing.match(/<rect class="kd-dark"[^>]*width="18"/g) || []).length === 4, 'Drawing: one lock on each S sustainer, two on the L one');
 
     // The 3D tower, built with the real three.js (no WebGL needed to build it)
     const three = { console };
@@ -506,6 +509,19 @@ async function runStaticAndUiChecks() {
     const railMeshes = (c) => { let n = 0; three.VaultKit3D.build(c).group.traverse(o => { if (o.isMesh && o.material.color.getHex() === 0xf06a24 && o.geometry.parameters && o.geometry.parameters.width === 3 && o.geometry.parameters.height === 5) n++; }); return n; };
     const railCfg = { ...bom.cfg, floors: [{ height: '2F', layout: 'L', slots: [{ type: 'drawer', boxes: '1F+1F', interior: 'empty' }] }, { height: '1F', layout: 'S+S', slots: [{ type: 'drawer', interior: 'empty' }, { type: 'drawer', interior: 'empty' }] }] };
     assert(railMeshes({ ...railCfg, gearedRails: 'auto' }) === 4 && railMeshes({ ...railCfg, gearedRails: 'all' }) === 8, `3D: two rails per box of the two-box module, in every box with "all", got ${railMeshes({ ...railCfg, gearedRails: 'auto' })} / ${railMeshes({ ...railCfg, gearedRails: 'all' })}`);
+    // A lock is a rounded dark box of 26 x 16 x 14
+    const lockMeshes = (c) => {
+      let n = 0;
+      three.VaultKit3D.build(c).group.traverse(o => {
+        if (!o.isMesh) return;
+        o.geometry.computeBoundingBox();
+        const s = o.geometry.boundingBox.getSize(new three.THREE.Vector3());
+        if ([[s.x, 26], [s.y, 16], [s.z, 14]].every(([v, want]) => Math.abs(v - want) < 0.5)) n++;
+      });
+      return n;
+    };
+    const lockCfg = { ...bom.cfg, roof: 'none', floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'flat' }, { type: 'sustainer', interior: 'flat' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'flat' }] }] };
+    assert(lockMeshes(lockCfg) === 4, `3D: one lock on each S sustainer, two on the L one, got ${lockMeshes(lockCfg)}`);
 
     // Every box and every sustainer opens; floors above an open sustainer rise
     const openCfg = { ...bom.cfg, floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'sealed' }, { type: 'drawer', boxes: '1F', interior: 'gridfinity' }] },
@@ -615,35 +631,54 @@ async function runStaticAndUiChecks() {
       ['x4 Runner Guide.stl', 8], ['x4 Runner Slide.stl', 8], ['Runner Stopper.stl', 8], ['Springs.stl', 4], ['Latch.stl', 4],
       ['L4 Grid Roof.stl', 1], ['Top Handle (Turn On Supports).stl', 1], ['Rails.stl', 0]]);
     assert(!def.parts.some(p => p.optional), 'Optional parts only come with their option');
-    assert(hw(def, 'M4 × 14') === 20 && hw(def, 'M6 × 50') === 2, 'Default tower: 4 + 6 M4x14 per 1F / 2F box, 2 M6x50 for the handle');
+    // Facade bolts are the holes of the facade and the box: 6 per L 2F box, 2 per S 1F box
+    assert(hw(def, 'M4 × 14') === 16 && hw(def, 'M6 × 50') === 2, `Default tower: 6 + 2 + 2 + 6 M4x14, 2 M6x50 for the handle, got ${hw(def, 'M4 × 14')}`);
     assert(def.warnings.length === 0, `Default tower: no warnings expected, got ${def.warnings.join(' | ')}`);
+    assert(def.parts.find(p => p.key === 'd:roof:L4:grid').label === 'L4 grid roof', 'The roof row has a short name');
+    // Manual supports (triangular braces as long as the depth) go with the roofs and lids printed
+    // standing, not with the boxes; the heavyweight roofs stand on their own
+    assert(qty(bom({ ...K.defaultConfig(), manualSupports: true }), 'Manual Supports/x4.stl') === 1, 'One support for the grid roof');
 
     // L² holds two S drawer columns; several boxes in one module need geared rails (a pair per box)
     const l2 = bom({ width: 'L', depth: 4, roof: 'table', floors: [{ height: '4F', layout: 'L2', slots: [drawer({ boxes: '2F+2F', interior: 'gridfinity', handles: '2' }), drawer({ boxes: '1F+1F+1F+1F', interior: 'dividers' })] }] });
     expect(l2, 'L² floor', [['L4² Module 4F.stl', 1], ['Latch.stl', 1], ['S Rails.stl', 6], ['S4 Box 2F.stl', 2], ['S4 Box 1F.stl', 4],
       ['x4 Accessory 1st.stl', 1], ['x4 Accessory 2nd.stl', 1], ['S4 Baseplate_With 2 Handles.stl', 2], ['L4 Table Roof.stl', 1],
-      ['34.5MM TALL (full height of 1F drawers)/10-S, x3.stl', 4], ['34.5MM TALL (full height of 1F drawers)/14, x4.stl', 4]]);
-    // Grid divider edge pieces and pins are not in the manual: offered with 0 prints, counted by hand
+      ['34.5MM TALL (full height of 1F drawers)/10-S, x3.stl', 4], ['34.5MM TALL (full height of 1F drawers)/14, x4.stl', 4],
+      ['Straight Edge Piece 1F.stl', 16]]);
+    // Every strip ends in a straight edge piece at the wall (4 for the cross); the pins and the
+    // rounded edge pieces are not shown: offered with 0 prints, counted by hand
     const optional = l2.parts.filter(p => p.optional).map(p => `${p.key}=${p.qty}`).sort().join();
-    assert(optional === 'd:gridedge:34.5:rounded=0,d:gridedge:34.5:straight=0,d:gridpin:loose=0,d:gridpin:tight=0', `Optional divider parts: ${optional}`);
+    assert(optional === 'd:gridedge:34.5:rounded=0,d:gridpin:loose=0,d:gridpin:tight=0', `Optional divider parts: ${optional}`);
     const l2Cfg = { width: 'L', depth: 4, roof: 'table', floors: [{ height: '2F', layout: 'L2', slots: [drawer({ boxes: '2F', interior: 'dividers', low: true }), drawer()] }] };
     const pinned = bom({ ...l2Cfg, qty: { 'd:gridpin:tight': 6 } });
-    expect(pinned, 'Low dividers with pins', [['grid divider pin_tight.stl', 6], ['Rounded Edge Piece 20MM.stl', 0], ['20MM TALL/10-S, x3.stl', 1]]);
+    expect(pinned, 'Low dividers with pins', [['grid divider pin_tight.stl', 6], ['Rounded Edge Piece 20MM.stl', 0], ['Straight Edge Piece 20MM.stl', 4], ['20MM TALL/10-S, x3.stl', 1]]);
     assert(pinned.parts.find(p => p.key === 'd:gridpin:tight').auto === 0 && pinned.totals.prints === bom(l2Cfg).totals.prints + 6, 'Pins counted by hand join the totals');
 
-    // Sustainers: S-M hinge tops are single parts, the L-XL top and every bottom hinge file a pair
-    const sus = bom({ width: 'L', depth: 4, floors: [{ height: '2F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'sustainer', interior: 'gridfinity' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'sealed' }] }] });
+    // Sustainers: S and M have one lock and one hinge top between the bottom hinges, L and XL two
+    // locks and the L-XL hinge top file (a pair); every bottom hinge file is a pair. Dividers and
+    // seal dividers fill every slot of the module (S4: 3, L4 sealed: 3 per half)
+    const susCfg = { width: 'L', depth: 4, floors: [{ height: '2F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'sustainer', interior: 'gridfinity' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'sealed' }] }] };
+    const sus = bom(susCfg);
     expect(sus, 'Sustainers', [['S4 2F Module.stl', 2], ['L4 2F Sealed Module.stl', 1], ['S4 Roof.stl', 2], ['L4 Roof.stl', 1],
-      ['S-M 2-4F Hinge.stl', 2], ['L 2-4F Hinge.stl', 1], ['S Hinge Top.stl', 4], ['L-XL Hinge Top.stl', 1], ['S-M Rods.stl', 2], ['L-XL Rods.stl', 1],
-      ['LOCK HOLDER.stl', 6], ['LOCK OUTER PART 2-4F.stl', 6], ['S4 Baseplate.stl', 1], ['Grid Roof.stl', 0]]);
-    assert(hw(sus, 'M4 × 10') === 24 && hw(sus, 'M4 × 14') === 48 && hw(sus, 'M4 × 20') === 21, 'Sustainers: 8 / 16 / 7 bolts each');
+      ['S-M 2-4F Hinge.stl', 2], ['L 2-4F Hinge.stl', 1], ['S Hinge Top.stl', 2], ['L-XL Hinge Top.stl', 1], ['S-M Rods.stl', 2], ['L-XL Rods.stl', 1],
+      ['LOCK HOLDER.stl', 4], ['LOCK INNER PART.stl', 4], ['LOCK OUTER PART 2-4F.stl', 4], ['1 SET OF PINS FOR 1 LOCK.stl', 4],
+      ['S4 Baseplate.stl', 1], ['S2F Divider.stl', 3], ['L-2F Seal Divider.stl', 6], ['Grid Roof.stl', 0]]);
+    assert(hw(sus, 'M4 × 10') === 24 && hw(sus, 'M4 × 14') === 32 && hw(sus, 'M4 × 20') === 21, `Sustainers: 8 M4x10 and 7 M4x20 each, M4x14 8 per S and 16 per L, got ${hw(sus, 'M4 × 14')}`);
+    assert(qty(bom({ ...susCfg, manualSupports: true }), 'Manual Supports/x4.stl') === 3, 'One support per sustainer lid');
+    // The archive's XL example: two depth dividers crossed by three width dividers, 3 + 6 seal
+    // dividers; S5 and M5 modules have 4 and 3 slots
+    expect(bom({ width: 'XL', depth: 3, floors: [{ height: '1F', layout: 'XL', slots: [{ type: 'sustainer', interior: 'dividers' }] }, { height: '1F', layout: 'XL', slots: [{ type: 'sustainer', interior: 'sealed' }] }] }), 'XL3 sustainers',
+      [['XL3 Depth Divider.stl', 2], ['XL Width Divider.stl', 3], ['XL Seal Divider (Center).stl', 3], ['XL Seal Divider (Sides).stl', 6], ['LOCK HOLDER.stl', 4]]);
+    expect(bom({ width: 'XL', depth: 5, floors: [{ height: '1F', layout: 'S+M', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'sustainer', interior: 'dividers' }] }] }), 'S5 + M5 sustainers',
+      [['S1F Divider.stl', 4], ['M1F Divider.stl', 3], ['M Hinge Top.stl', 1], ['LOCK HOLDER.stl', 2]]);
 
     // XL: 3-5 deep boxes have a back panel, 6-7 deep boxes and baseplates come in two parts
     expect(bom({ width: 'XL', depth: 3, floors: [{ height: '1F', layout: 'XL', slots: [drawer()] }] }), 'XL3 drawer', [['XL3 Box 1F.stl', 1], ['XL3 Back Panel.stl', 1], ['XL Facade 1F.stl', 1], ['x3 Runner Guide XL.stl', 2], ['x3 Runner Slide XL.stl', 2], ['x3 Runner Guide.stl', 0]]);
     // The cut heavyweight roof (fits a 350 x 320 bed) is an XL roof of its own, with the same handle
     const xlRoof = { width: 'XL', depth: 5, floors: [{ height: '1F', layout: 'XL', slots: [drawer()] }] };
     assert(K.choices(cat, xlRoof).roofs.join() === 'grid,table,bowl,heavy,heavycut,undertable', `XL roofs: ${K.choices(cat, xlRoof).roofs.join()}`);
-    expect(bom({ ...xlRoof, roof: 'heavycut' }), 'XL5 cut roof', [['XL5 Heavyweight Roof Cut.stl', 1], ['XL5 Heawyweight Roof.stl', 0], ['Heawyweight Roof Handle.stl', 1], ['Heawyweight Roof Insert.stl', 2]]);
+    expect(bom({ ...xlRoof, roof: 'heavycut', manualSupports: true }), 'XL5 cut roof', [['XL5 Heavyweight Roof Cut.stl', 1], ['XL5 Heawyweight Roof.stl', 0], ['Heawyweight Roof Handle.stl', 1], ['Heawyweight Roof Insert.stl', 2], ['Manual Supports/x5.stl', 0]]);
+    assert(hw(bom(xlRoof), 'M4 × 14') === 4, 'An XL facade has 4 bolt holes');
     assert(K.describe({ ...xlRoof, roof: 'heavycut' }).includes('heavy cut roof'), 'The summary names the cut roof');
     const lCut = K.normalize(cat, { ...K.defaultConfig(), roof: 'heavycut' });
     assert(lCut.cfg.roof === 'grid' && lCut.changes.some(c => /No heavycut roof/.test(c)), 'L towers have no cut roof');
@@ -658,6 +693,7 @@ async function runStaticAndUiChecks() {
       ['Universal 2F Backbone.stl', 6], ['Universal 1F Backbone.stl', 2], ['Universal Pull-out Handle Lock.stl', 2], ['Handle Lock Knob Part 1.stl', 2],
       ['S2F Wall Mount.stl', 1], ['S1F Wall Mount.stl', 1], ['S4F Wall Mount.stl', 1], ['Wall Mount Second Part.stl', 4]]);
     assert(hw(mods, 'M16 threaded rod, 248') === 1 && hw(mods, '6205ZZ') === 2 && hw(mods, 'M4 × 25') === 12, 'Wheels: S rod 248 mm, 2 bearings, 12 M4x25');
+    assert(hw(mods, 'M4 × 14') === 10, `S facades have 4 / 2 / 4 bolt holes (2F / 1F / 4F), got ${hw(mods, 'M4 × 14')}`);
     assert(hw(mods, 'M4 bolt, 60-100') === 32, `Backbone: 4 bolts per board (8 boards), got ${hw(mods, 'M4 bolt, 60-100')}`);
     assert(!mods.notes.some(n => /above the base/.test(n)) && mods.notes.some(n => /below the roof/.test(n)), `The manual's 2F advice: ${mods.notes.join(' | ')}`);
     assert(mods.height === 400, `Tower height: base 52 mm + 7 F x 48 mm + 9 mm, about 400 mm, got ${mods.height}`);

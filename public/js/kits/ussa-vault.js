@@ -11,7 +11,8 @@
  * Quantities count prints of a file. Some files hold a pair (springs, geared rails, rods,
  * bottom hinges, the L-XL hinge top): one print per box or sustainer. Runner guides and slides
  * are single parts since the October 2026 archive: two prints per box. The rules come from the
- * five PDFs in the archive root; quantities the PDFs leave open are marked as estimates and can
+ * five PDFs in the archive root and, where they say nothing, from the STL files themselves
+ * (bolt holes, divider slots); quantities the PDFs leave open are marked as estimates and can
  * be changed by hand (cfg.qty). Parts the PDFs do not show at all are listed with 0 prints
  * (optional) when their option is chosen.
  *
@@ -59,11 +60,22 @@ globalThis.VaultKit = (function () {
   // Grid divider lengths ("Grid Dividers": 10-S x3, 14 x4, 18-M x5, 22 x6, 26-L x7, 32-XL)
   const DIVIDER_WIDTH = { S: 10, M: 18, L: 26, XL: 32 };
   const dividerDepth = (d) => 10 + 4 * (d - 3);
+  // Divider slots of the sustainer modules for depth 3-7, counted on the STL files. A full set
+  // fills every slot, as the archive's "L / XL Dividers Example" pictures do: S and M modules hold
+  // this many dividers; in L and XL modules this many width dividers cross two depth dividers.
+  // Sealed modules hold this many seal dividers in each compartment (L: two halves, XL: three).
+  const DIVIDER_SLOTS = { S: [3, 3, 4, 5, 6], M: [3, 3, 3, 5, 6], L: [3, 3, 4, 5, 6], XL: [3, 3, 4, 5, 6] };
+  const SEAL_SLOTS = { L: [2, 3, 4, 5, 6], XL: [3, 3, 4, 5, 6] };
+  // Short names of the roofs for the parts list
+  const ROOF_ROWS = { grid: 'grid roof', table: 'table roof', bowl: 'bowl roof', heavy: 'heavyweight roof', heavycut: 'heavyweight roof, cut', undertable: 'under-table mount roof' };
+  // Thin roofs and lids are printed standing on an edge, the depth upwards: the manual supports
+  // are for them (the heavyweight roofs stand on a wide edge)
+  const STANDING_ROOFS = ['grid', 'table', 'bowl', 'undertable'];
   const M16_BASE_ROD = { S: 248, M: 338, L: 414, XL: 504 };
   // Measured on the STL files: a module is 9 mm + 48 mm per F tall, the base 52 mm
   const MODULE_PITCH = 48, MODULE_LIP = 9, BASE_HEIGHT = 52;
   const GROUPS = ['Drawer modules', 'Drawer boxes', 'Small drawer parts', 'Sustainers', 'Sustainer parts',
-    'Interiors', 'Roof', 'Base & wheels', 'Backbone & handles', 'Wall mount', 'Extra files'];
+    'Interiors', 'Roof', 'Base & wheels', 'Backbone & handles', 'Wall mount', 'Print supports', 'Extra files'];
 
   // ── Help for the builder: what an option does and how it looks ──
   // image: an illustration cropped from the archive's PDFs (public/img/kits/ussa-vault/<image>.webp);
@@ -99,7 +111,7 @@ globalThis.VaultKit = (function () {
     type: { title: 'Drawer or sustainer', manual: [MANUAL, 5],
       choices: {
         drawer: { label: 'Drawer', image: 'type-drawer', text: 'A box that slides out on runners, with a turn key in the facade. Good for small parts you reach for often.' },
-        sustainer: { label: 'Sustainer', image: 'type-sustainer', text: 'A module with a hinged lid and two locks at the front. Good for bigger or longer items and sealed compartments.' }
+        sustainer: { label: 'Sustainer', image: 'type-sustainer', text: 'A module with a hinged lid and locks at the front: one on S and M, two on L and XL. Good for bigger or longer items and sealed compartments.' }
       } },
     boxes: { title: 'Boxes in the module', image: 'geared-rails', manual: [DRAWER_PDF, 4],
       text: 'A 2F or 4F drawer module holds one tall box or several lower boxes stacked inside, each with its own facade and key. With more than one box, geared rails (added automatically) keep them in place.' },
@@ -107,7 +119,7 @@ globalThis.VaultKit = (function () {
       choices: {
         empty: { label: 'Empty', image: 'drawer-empty', text: 'The bare box with its perforated floor.' },
         gridfinity: { label: 'Gridfinity baseplate', image: 'drawer-gridfinity', text: 'A 42 mm Gridfinity grid in the box for Gridfinity bins; with 0, 1 or 2 handles to lift it out.' },
-        dividers: { label: 'Grid dividers', image: 'drawer-dividers', text: 'Slotted strips that cross to make compartments: one along the width and one along the depth (estimate, add more by hand). The rounded and straight edge pieces and the pins (loose or tight fit) are listed with 0 prints: the manual does not show them, set how many you need.' }
+        dividers: { label: 'Grid dividers', image: 'drawer-dividers', text: 'Strips pinned to the perforated floor: one along the width and one along the depth (estimate, add more by hand). Strips do not cross: the one along the depth is two shorter strips on either side, named by the holes they span (the archive\'s Grid Dividers instructions). Every strip ends in a straight edge piece at the wall: four for the cross. Each strip has two pin holes; the pins (loose or tight fit) and the rounded edge pieces are listed with 0 prints, set how many you need.' }
       } },
     handles: { title: 'Baseplate handles', image: 'drawer-gridfinity', manual: [MANUAL, 9],
       text: 'Handles on the Gridfinity baseplate to lift it out of the box with the bins on it. Not every size has every variant.' },
@@ -117,8 +129,8 @@ globalThis.VaultKit = (function () {
       choices: {
         flat: { label: 'Flat', image: 'sus-flat', text: 'An open module with a flat floor.' },
         gridfinity: { label: 'Gridfinity baseplate', image: 'sus-gridfinity', text: 'A Gridfinity baseplate on the flat floor for Gridfinity bins.' },
-        dividers: { label: 'Dividers', image: 'sus-dividers', text: 'Divider walls along and across the module (counts are estimates, change them in the list).' },
-        sealed: { label: 'Sealed compartments', image: 'sus-sealed', text: 'A module with closed compartments and seal dividers, so small parts cannot wander between them. L and XL only.' }
+        dividers: { label: 'Dividers', image: 'sus-dividers', text: 'Divider walls in the slots of the module, a full set as in the archive\'s example: S and M modules hold 3 to 6 dividers by depth; L and XL ones two depth dividers crossed by 3 to 6 width dividers. Leave some out in the list.' },
+        sealed: { label: 'Sealed compartments', image: 'sus-sealed', text: 'A module with closed compartments and seal dividers, so small parts cannot wander between them. L and XL only. Listed as a full set: every slot of every compartment (2 to 6 per compartment by depth).' }
       } },
     roof: { title: 'Roof', manual: [MANUAL, 10], adds: 'One roof on every drawer module of the top floor; sustainers have their own lids.',
       choices: {
@@ -144,8 +156,8 @@ globalThis.VaultKit = (function () {
       text: 'Bases and sustainer lids of depth 6 and 7 are large: print them whole, or in two parts that a connector joins.' },
     gearedRails: { title: 'Geared rails', image: 'geared-rails', manual: [DRAWER_PDF, 4],
       text: 'Toothed rails on the top and bottom of a box (one print per box: the file holds the pair). Always used when a module holds several boxes; in single boxes they add locking force.' },
-    manualSupports: { title: 'Manual supports', image: 'manual-supports', manual: [DRAWER_PDF, 3],
-      text: 'Separate support strips for printing the boxes (Manual Supports folder, one per box); remove them after printing.' },
+    manualSupports: { title: 'Manual supports', image: 'manual-supports', manual: [MANUAL, 20],
+      text: 'Triangular braces (Manual Supports folder, as long as the module is deep) that steady tall prints: put one against every part printed standing on its edge, the drawer roofs and the sustainer lids. Lids printed in two parts are lower and get none; the heavyweight roofs stand on their own.' },
     base: { title: 'Base', manual: [MODS_PDF, 2], adds: 'A base as wide and deep as the tower.',
       choices: {
         none: { label: 'None', text: 'The bottom module stands on the table or floor.' },
@@ -586,8 +598,9 @@ globalThis.VaultKit = (function () {
       add('d:springs', 1, 'Small drawer parts', 'Springs (pair)');
       add('d:facadecap', 1, 'Small drawer parts', 'Facade cap');
       add('d:label', 1, 'Small drawer parts', 'Label');
-      if (cfg.manualSupports) add(`d:support:${d}`, 1, 'Small drawer parts', `x${d} manual supports`, true);
-      hw('M4 × 14 mm bolt', bh === '1F' ? 4 : 6, 'drawer facades');
+      // The holes of the facade and the box front: S 2 / 4 / 4, M and L 4 / 6 / 6, XL 4 (1F / 2F /
+      // 4F). The manual's "4 for 1F, 6 for 2F / 4F" is drawn on an M drawer.
+      hw('M4 × 14 mm bolt', (bh === '1F' ? 4 : 6) - (w === 'S' ? 2 : 0), 'drawer facades');
       if (slot.interior === 'gridfinity') {
         const n = slot.handles || '0';
         if (has(cat, `d:baseplate:${w}${d}:${n}`)) add(`d:baseplate:${w}${d}:${n}`, 1, 'Interiors', `${w}${d} Gridfinity baseplate${n === '0' ? '' : `, ${n} handle${n === '1' ? '' : 's'}`}`);
@@ -600,8 +613,11 @@ globalThis.VaultKit = (function () {
         const tall = slot.low ? '20' : (bh === '1F' ? '34.5' : '82.5');
         add(`d:griddivider:${tall}:${DIVIDER_WIDTH[w]}`, 1, 'Interiors', `Grid divider ${DIVIDER_WIDTH[w]} (${w} width, ${tall} mm)`, true);
         add(`d:griddivider:${tall}:${dividerDepth(d)}`, 1, 'Interiors', `Grid divider ${dividerDepth(d)} (depth ${d}, ${tall} mm)`, true);
+        // A border part where a strip meets a wall ("01. instructions.jpg" of the archive): both
+        // ends of the strip along the width, the outer ends of the two halves along the depth.
+        // The box walls meet the floor square, so it is the straight piece.
+        add(`d:gridedge:${tall}:straight`, 4, 'Interiors', `Straight edge piece (${tall} mm)`, true);
         option(`d:gridedge:${tall}:rounded`, 'Interiors', `Rounded edge piece (${tall} mm)`);
-        option(`d:gridedge:${tall}:straight`, 'Interiors', `Straight edge piece (${tall} mm)`);
         option('d:gridpin:loose', 'Interiors', 'Grid divider pin, loose fit');
         option('d:gridpin:tight', 'Interiors', 'Grid divider pin, tight fit');
       }
@@ -609,6 +625,9 @@ globalThis.VaultKit = (function () {
 
     const addSustainer = (w, h, slot) => {
       const sm = w === 'S' || w === 'M';
+      // S and M sustainers have one lock in the middle of the facade and one hinge top between
+      // the two bottom hinges; L and XL have two of each (the facade holes, the hinge files)
+      const locks = sm ? 1 : 2;
       const interior = slot.interior;
       const variant = sm ? 'plain' : (interior === 'dividers' ? 'dividers' : interior === 'sealed' ? 'sealed' : 'flat');
       add(`s:module:${w}${d}:${h}:${variant}`, 1, 'Sustainers', `${w}${d} ${h} sustainer module${variant === 'plain' ? '' : ` (${variant})`}`);
@@ -616,20 +635,24 @@ globalThis.VaultKit = (function () {
         add(`s:roof:${w}${d}:part1`, 1, 'Sustainers', `${w}${d} sustainer lid, part 1`);
         add(`s:roof:${w}${d}:part2`, 1, 'Sustainers', `${w}${d} sustainer lid, part 2`);
         add(`s:roofconnector:${w}${d}`, 1, 'Sustainers', `${w}${d} connector for split lid`, true);
-      } else add(`s:roof:${w}${d}:whole`, 1, 'Sustainers', `${w}${d} sustainer lid`);
+      } else {
+        add(`s:roof:${w}${d}:whole`, 1, 'Sustainers', `${w}${d} sustainer lid`);
+        if (cfg.manualSupports) add(`d:support:${d}`, 1, 'Print supports', `x${d} manual support`);
+      }
       const facades = cfg.sustainerFacade === 'universal' ? [`s:facadeu:${w}:${h}`, `s:facade:${w}:${h}`] : [`s:facade:${w}:${h}`, `s:facadeu:${w}:${h}`];
       add(facades.find(k => has(cat, k)) || facades[0], 1, 'Sustainers', `${w}${h} sustainer facade`);
       add(sm ? `s:hinge:SM:${h === '1F' ? 1 : 24}` : (w === 'L' && h !== '1F' ? 's:hinge:L:24' : 's:hinge:LXL:1'), 1, 'Sustainer parts', 'Bottom hinges (pair)');
-      if (sm) add(`s:hingetop:${w}`, 2, 'Sustainer parts', `${w} hinge top`);
+      if (sm) add(`s:hingetop:${w}`, 1, 'Sustainer parts', `${w} hinge top`);
       else add('s:hingetop:LXL', 1, 'Sustainer parts', 'L-XL hinge tops (pair)');
       add(sm ? 's:rods:SM' : 's:rods:LXL', 1, 'Sustainer parts', 'Hinge rods (pair)');
-      add('s:lockholder', 2, 'Sustainer parts', 'Lock holder');
-      add('s:lockinner', 2, 'Sustainer parts', 'Lock inner part');
-      add(`s:lockouter:${h === '1F' ? 1 : 24}`, 2, 'Sustainer parts', `Lock outer part ${h === '1F' ? '1F' : '2-4F'}`);
-      add('s:lockpins', 2, 'Sustainer parts', 'Pins for one lock');
+      add('s:lockholder', locks, 'Sustainer parts', 'Lock holder');
+      add('s:lockinner', locks, 'Sustainer parts', 'Lock inner part');
+      add(`s:lockouter:${h === '1F' ? 1 : 24}`, locks, 'Sustainer parts', `Lock outer part ${h === '1F' ? '1F' : '2-4F'}`);
+      add('s:lockpins', locks, 'Sustainer parts', 'Pins for one lock');
       add('s:label', 1, 'Sustainer parts', 'Label for sustainers');
       hw('M4 × 10 mm bolt', 8, 'sustainer hinges');
-      hw('M4 × 14 mm bolt', 16, 'sustainer locks and hinges');
+      // Four for every lock and every hinge top: the manual's 16 is an L sustainer
+      hw('M4 × 14 mm bolt', 8 * locks, 'sustainer locks and hinges');
       hw('M4 × 20 mm bolt', 7, 'sustainer facades');
       if (interior === 'gridfinity') {
         if (has(cat, `s:baseplate:${w}${d}:whole`)) add(`s:baseplate:${w}${d}:whole`, 1, 'Interiors', `${w}${d} sustainer Gridfinity baseplate`);
@@ -638,17 +661,19 @@ globalThis.VaultKit = (function () {
           add(`s:baseplate:${w}${d}:part2`, 1, 'Interiors', `${w}${d} sustainer Gridfinity baseplate, part 2`);
         }
       } else if (interior === 'dividers') {
-        if (sm) add(`s:divider:${w}:${h}`, 1, 'Interiors', `${w}${h} sustainer divider`, true);
+        const slots = DIVIDER_SLOTS[w][d - 3];
+        if (sm) add(`s:divider:${w}:${h}`, slots, 'Interiors', `${w}${h} sustainer divider`, true);
         else {
           const dh = w === 'XL' ? '1F' : h;
-          add(`s:depthdivider:${w}${d}:${dh}`, 1, 'Interiors', `${w}${d} ${dh} depth divider`, true);
-          add(`s:widthdivider:${w}:${dh}`, 2, 'Interiors', `${w} ${dh} width divider`, true);
+          add(`s:depthdivider:${w}${d}:${dh}`, 2, 'Interiors', `${w}${d} ${dh} depth divider`, true);
+          add(`s:widthdivider:${w}:${dh}`, slots, 'Interiors', `${w} ${dh} width divider`, true);
         }
       } else if (interior === 'sealed') {
+        const slots = SEAL_SLOTS[w][d - 3];
         if (w === 'XL') {
-          add('s:sealdivider:XL:center', 1, 'Interiors', 'XL seal divider (center)', true);
-          add('s:sealdivider:XL:sides', 2, 'Interiors', 'XL seal divider (sides)', true);
-        } else add(`s:sealdivider:L:${h}`, 2, 'Interiors', `L ${h} seal divider`, true);
+          add('s:sealdivider:XL:center', slots, 'Interiors', 'XL seal divider (center)', true);
+          add('s:sealdivider:XL:sides', 2 * slots, 'Interiors', 'XL seal divider (sides)', true);
+        } else add(`s:sealdivider:L:${h}`, 2 * slots, 'Interiors', `L ${h} seal divider`, true);
       }
     };
 
@@ -684,8 +709,8 @@ globalThis.VaultKit = (function () {
     if (cfg.roof !== 'none') {
       const roofMods = topDrawerModules(cfg);
       roofMods.forEach(mod => {
-        add(`d:roof:${mod.w}${d}:${cfg.roof}`, 1, 'Roof', cfg.roof === 'heavycut' ? `${mod.w}${d} heavyweight roof, cut`
-          : `${mod.w}${d} ${(ROOFS.find(r => r.id === cfg.roof) || {}).label || cfg.roof} roof`);
+        add(`d:roof:${mod.w}${d}:${cfg.roof}`, 1, 'Roof', `${mod.w}${d} ${ROOF_ROWS[cfg.roof]}`);
+        if (cfg.manualSupports && STANDING_ROOFS.includes(cfg.roof)) add(`d:support:${d}`, 1, 'Print supports', `x${d} manual support`);
         if (cfg.roof === 'grid') { add('d:tophandle', 1, 'Roof', 'Top handle'); hw('M6 × 50 mm bolt', 2, 'top handle'); }
         if (cfg.roof === 'heavy' || cfg.roof === 'heavycut') { add('d:heavyhandle', 1, 'Roof', 'Heavyweight roof handle'); add('d:heavyinsert', 2, 'Roof', 'Heavyweight roof insert', true); }
       });

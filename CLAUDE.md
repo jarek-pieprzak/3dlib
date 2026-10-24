@@ -135,12 +135,19 @@ page and footer credit GyroidVault; keep that.
     names every family uses win.
   - `computeBom(catalog, config)`: files with print counts, hardware, notes. A count is prints of a
     file: springs, geared rails, rods, bottom hinges and the L-XL hinge top hold a pair; runner
-    guides and slides are single parts since the 2026-10 archive (two per box). L² / XL² are one L /
-    XL module with two drawer columns (S+S / S+M). Counts the PDFs do not give are marked
-    "estimate"; parts they do not show at all (grid divider edge pieces and pins) are "optional"
-    rows with 0 prints when Grid dividers is chosen, hidden on a locked configuration until counted.
-    Every count can be changed by hand. Roof `heavycut` (`XLn Heavyweight Roof Cut`, the
-    heavyweight roof cut to fit a 350 × 320 bed) is a roof choice of its own, XL only.
+    guides and slides are single parts since the 2026-10 archive (two per box). S and M sustainers
+    have one lock and one hinge top (L and XL two). L² / XL² are one L / XL module with two drawer
+    columns (S+S / S+M). Where the PDFs say nothing, the STL files decide (the archive is on the
+    NAS share `Z:\Modele3D\VAULT_USSA`): facade bolts are the holes (S 2 / 4 / 4, M and L
+    4 / 6 / 6, XL 4), sustainer dividers and seal dividers are a full set of the module's slots
+    (`DIVIDER_SLOTS`, `SEAL_SLOTS`), every grid divider strip ends in a straight edge piece at the
+    wall (4 for the cross). Counts the PDFs do not give are marked "estimate"; parts they do not
+    show at all (grid divider pins, rounded edge pieces) are "optional" rows with 0 prints when
+    Grid dividers is chosen, hidden on a locked configuration until counted. Manual supports
+    (`x3`-`x7`, triangular braces) go with the parts printed standing: grid, table, bowl and
+    under-table roofs and whole sustainer lids. Every count can be changed by hand. Roof `heavycut`
+    (`XLn Heavyweight Roof Cut`, the heavyweight roof cut to fit a 350 × 320 bed) is a roof choice
+    of its own, XL only.
   - `normalize` checks a configuration against the archive (unavailable choices fall back, with a
     note). The configuration lives in the URL (`?c=` base64url JSON, `history.replaceState`) and in
     localStorage `3dl_kit_<model id>`.

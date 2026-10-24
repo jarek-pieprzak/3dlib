@@ -184,8 +184,11 @@ globalThis.VaultKit3D = (function () {
             const id = `${fi}:${si}`;
             const so = { fi, openId: id };
             box(cw - 3, h - 2, 8, 'sustainer', cx + cw / 2, y + h / 2, front + 4, 4, { ...so, kind: 'facade' }); // facades are as big as the module (S1F: 164.8 × 47 mm)
-            for (const at of [0.22, 0.78]) box(26, 16, 14, 'dark', cx + cw * at, y + h - 15, front + 9, 3, so);
-            box(34, 10, 2, 'roof', cx + cw / 2, y + h - 15, front + 8.5, 2, so); // label slot between the locks
+            // S and M have one lock in the middle (the label slot under it), L and XL two with the
+            // label slot between them
+            const oneLock = s.w === 'S' || s.w === 'M';
+            for (const at of oneLock ? [0.5] : [0.22, 0.78]) box(26, 16, 14, 'dark', cx + cw * at, y + h - 15, front + 9, 3, so);
+            box(34, 10, 2, 'roof', cx + cw / 2, oneLock ? y + h - 32 : y + h - 15, front + 8.5, 2, so);
             const inner = { x: cx + cw / 2, floorY: y + WALL, z: WALL / 2, w: cw - 2 * WALL - 6, d: D - WALL - 10 };
             if (slot.interior === 'gridfinity') gridfinity(inner.x, inner.floorY, inner.z, inner.w, inner.d, Math.min(h - 20, 40), so);
             if (slot.interior === 'dividers') dividers(inner.x, inner.floorY, inner.z, inner.w, inner.d, h - 16, 2, 1, so);

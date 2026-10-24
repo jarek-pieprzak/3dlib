@@ -1724,10 +1724,12 @@ const UI = {
     const text = (x, y, s, anchor = 'middle', extra = '') => `<text class="kd-text" x="${x}" y="${y}" font-size="${fs}" text-anchor="${anchor}"${extra}>${this.escapeHtml(s)}</text>`;
     const dimH = (x1, x2, y, label) => `<path class="kd-dim" d="M${x1} ${y}H${x2}M${x1} ${y - 8}V${y + 8}M${x2} ${y - 8}V${y + 8}"/>${text((x1 + x2) / 2, y + fs + 4, label)}`;
 
-    // A drawer column: one facade with key and label per box; a sustainer: facade, two locks
-    const column = (slot, x, y, w, h, floorHeight) => {
+    // A drawer column: one facade with key and label per box; a sustainer: facade, locks (one in
+    // the middle on S and M, two on L and XL), label
+    const column = (slot, x, y, w, h, floorHeight, size) => {
       if (slot.type === 'sustainer') {
-        return r('kd-sus', x + 5, y + 5, w - 10, h - 10, 3) + r('kd-dark', x + w * 0.22 - 9, y + 8, 18, 12, 2) + r('kd-dark', x + w * 0.78 - 9, y + 8, 18, 12, 2) + r('kd-label', x + w / 2 - 16, y + h / 2 - 5, 32, 10, 2);
+        const locks = size === 'S' || size === 'M' ? [0.5] : [0.22, 0.78];
+        return r('kd-sus', x + 5, y + 5, w - 10, h - 10, 3) + locks.map(at => r('kd-dark', x + w * at - 9, y + 8, 18, 12, 2)).join('') + r('kd-label', x + w / 2 - 16, y + h / 2 - 5, 32, 10, 2);
       }
       let out = '';
       let by = y;
@@ -1757,7 +1759,7 @@ const UI = {
         let cx = mx;
         slots.forEach((s, si) => {
           if (s.mi !== mi) return;
-          parts += column(floor.slots[si] || {}, cx, y, mm[s.w], h, floor.height);
+          parts += column(floor.slots[si] || {}, cx, y, mm[s.w], h, floor.height, s.w);
           if (cx > mx) parts += `<path class="kd-wall" d="M${cx} ${y + 3}V${y + h - 3}"/>`;
           cx += mm[s.w];
         });
@@ -2007,7 +2009,7 @@ const UI = {
         <div class="kit-checks">
           ${ch.canSplit ? check('Bases and sustainer lids in two parts', cfg.split, "App.kitSet('split', this.checked)", false, 'split') : ''}
           ${check('Geared rails in every box', cfg.gearedRails === 'all', "App.kitSet('gearedRails', this.checked ? 'all' : 'auto')", false, 'gearedRails')}
-          ${check('Manual supports for boxes', cfg.manualSupports, "App.kitSet('manualSupports', this.checked)", false, 'manualSupports')}
+          ${check('Manual supports for roofs and lids', cfg.manualSupports, "App.kitSet('manualSupports', this.checked)", false, 'manualSupports')}
         </div>
       </div>
       <div class="kit-section">

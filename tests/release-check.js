@@ -498,15 +498,17 @@ async function runStaticAndUiChecks() {
       const model = three.VaultKit3D.build(c);
       const floorsH = c.floors.reduce((n, f) => n + F[f.height] * 48, 0);
       assert(model.floorMeshes.length === c.floors.length && model.floorMeshes.every(m => m && m.length >= 2), `3D: every floor needs its meshes (roof ${roof})`);
-      assert(model.size.height >= 40 + 34 + floorsH && model.size.height <= 40 + 34 + floorsH + 70, `3D: tower height ${model.size.height} (roof ${roof})`);
+      // The heavyweight roof is the tallest: 84 mm
+      assert(model.size.height >= 40 + 34 + floorsH && model.size.height <= 40 + 34 + floorsH + 90, `3D: tower height ${model.size.height} (roof ${roof})`);
       let bad = 0;
       model.group.traverse(o => { if (o.isMesh && ![o.position.x, o.position.y, o.position.z].every(Number.isFinite)) bad++; });
       let meshes = 0;
       model.group.traverse(o => { if (o.isMesh) meshes++; });
       assert(!bad && meshes > 60, `3D: ${meshes} meshes, ${bad} with broken positions (roof ${roof})`);
     }
-    // Geared rails show in the boxes that get them: several boxes in a module, or every box
-    const railMeshes = (c) => { let n = 0; three.VaultKit3D.build(c).group.traverse(o => { if (o.isMesh && o.material.color.getHex() === 0xf06a24 && o.geometry.parameters && o.geometry.parameters.width === 3 && o.geometry.parameters.height === 5) n++; }); return n; };
+    // Geared rails show in the boxes that get them (several boxes in a module, or every box):
+    // two racks across the box front behind the facade, as long as the rails file (L 203 mm)
+    const railMeshes = (c) => { let n = 0; three.VaultKit3D.build(c).group.traverse(o => { if (o.isMesh && o.userData.part === 'geared-rail' && o.geometry.parameters.width === (o.position.x === 0 ? 203 : 121) && o.geometry.parameters.depth === 4) n++; }); return n; };
     const railCfg = { ...bom.cfg, floors: [{ height: '2F', layout: 'L', slots: [{ type: 'drawer', boxes: '1F+1F', interior: 'empty' }] }, { height: '1F', layout: 'S+S', slots: [{ type: 'drawer', interior: 'empty' }, { type: 'drawer', interior: 'empty' }] }] };
     assert(railMeshes({ ...railCfg, gearedRails: 'auto' }) === 4 && railMeshes({ ...railCfg, gearedRails: 'all' }) === 8, `3D: two rails per box of the two-box module, in every box with "all", got ${railMeshes({ ...railCfg, gearedRails: 'auto' })} / ${railMeshes({ ...railCfg, gearedRails: 'all' })}`);
     // A lock is a rounded dark box of 26 x 16 x 14
@@ -522,6 +524,22 @@ async function runStaticAndUiChecks() {
     };
     const lockCfg = { ...bom.cfg, roof: 'none', floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'flat' }, { type: 'sustainer', interior: 'flat' }] }, { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'flat' }] }] };
     assert(lockMeshes(lockCfg) === 4, `3D: one lock on each S sustainer, two on the L one, got ${lockMeshes(lockCfg)}`);
+    // The 3D tower draws the parts list: dividers, seal dividers, hinges, rods and runners
+    const parts3d = (c) => { const n = {}; three.VaultKit3D.build(c).group.traverse(o => { const p = o.isMesh && o.userData.part; if (p) n[p] = (n[p] || 0) + 1; }); return n; };
+    const sus3d = parts3d({ ...bom.cfg, width: 'L', depth: 4, roof: 'none', mods: {}, floors: [{ height: '2F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'dividers' }, { type: 'sustainer', interior: 'flat' }] },
+      { height: '2F', layout: 'L', slots: [{ type: 'sustainer', interior: 'sealed' }] }, { height: '1F', layout: 'L', slots: [{ type: 'sustainer', interior: 'dividers' }] }] });
+    assert(sus3d.divider === 3 + 6 + 5 && sus3d['seal-wall'] === 1, `3D: 3 S4 dividers, 3 seal dividers in each half of the L4 sealed module, 2 + 3 L4 dividers, got ${JSON.stringify(sus3d)}`);
+    assert(sus3d['hinge-top'] === 6 && sus3d['hinge-bottom'] === 8 && sus3d['hinge-rod'] === 6, `3D: one hinge top on S, two on L, two bottom hinges each, got ${JSON.stringify(sus3d)}`);
+    const xlCfg = { ...bom.cfg, width: 'XL', depth: 5, roof: 'heavycut', mods: {}, floors: [{ height: '1F', layout: 'XL', slots: [{ type: 'sustainer', interior: 'sealed' }] },
+      { height: '1F', layout: 'XL2', slots: [{ type: 'drawer', interior: 'dividers' }, { type: 'drawer', interior: 'empty' }] }] };
+    const xl3d = parts3d(xlCfg);
+    assert(xl3d['seal-wall'] === 2 && xl3d.divider === 3 * 4 + 2 && xl3d['runner-slide'] === 4 && xl3d['runner-guide'] === 4, `3D: XL5 sealed has 3 compartments of 4, two runners per box, got ${JSON.stringify(xl3d)}`);
+    // The cut heavyweight roof: the outer walls 39 mm lower; latch marks stand out of the walls
+    const outerTop = (roof) => { let topY = -1; three.VaultKit3D.build({ ...xlCfg, roof }).group.traverse(o => { if (o.isMesh && o.userData.part === 'roof-outer') { o.geometry.computeBoundingBox(); topY = Math.max(topY, o.position.y + o.geometry.boundingBox.max.y); } }); return topY; };
+    assert(Math.round(outerTop('heavy') - outerTop('heavycut')) === 39, `3D: cut roof corners, got ${outerTop('heavy')} / ${outerTop('heavycut')}`);
+    let flush = 0;
+    three.VaultKit3D.build(lockCfg).group.traverse(o => { if (o.isMesh && o.userData.part === 'latch' && Math.abs(o.position.x) + 1 < 330 / 2 - 1.5 + 0.3) flush++; });
+    assert(!flush, `3D: ${flush} latch marks are flush with the wall`);
 
     // Every box and every sustainer opens; floors above an open sustainer rise
     const openCfg = { ...bom.cfg, floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'sealed' }, { type: 'drawer', boxes: '1F', interior: 'gridfinity' }] },

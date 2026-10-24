@@ -1,9 +1,9 @@
 /* ─── USSA VAULT kit: the tower in 3D ──────────────────────────────────────
  * A model of a configuration (VaultKit config) built from simple shapes in real sizes
- * (millimetres, measured on the archive's STLs): hollow modules, drawer boxes with their facades,
- * sustainers with lids and locks, interiors, roofs, base, wheels or casters, backbone, pegboards,
- * handles and wall mounts. The archive's own STLs are far too heavy to assemble in a browser
- * (a tower is gigabytes).
+ * (millimetres, measured on the archive's STLs): hollow modules, drawer boxes with their facades
+ * and runners, sustainers with lids, hinges and locks, interiors (as many dividers as the parts
+ * list has), roofs, base, wheels or casters, backbone, pegboards, handles and wall mounts. The
+ * archive's own STLs are far too heavy to assemble in a browser (a tower is gigabytes).
  *
  * Drawers slide out and sustainer lids open (click them); everything above an open sustainer
  * rises so its lid can swing, as when the stack is taken apart.
@@ -18,7 +18,13 @@ globalThis.VaultKit3D = (function () {
   const F = { '1F': 1, '2F': 2, '4F': 4 };
   const P = 48; // mm per F
   const WALL = 4; // module walls
+  const LID = 14; // a sustainer lid: a tray on top of the module walls
   const GRID = 42; // Gridfinity unit
+  // Sustainer depth dividers stand this far either side of the middle (the slots of the width
+  // dividers); built-in walls of the XL sealed module (STL)
+  const DEPTH_DIVIDERS = { L: 41, XL: 85.5 };
+  const XL_SEAL_WALLS = 62.5;
+  const RAILS = { S: 121, M: 166, L: 203, XL: 248 }; // geared rail length by box width
   // Light grey PLA with orange latches and dark boxes, like the renders in the manual
   const COLORS = {
     module: 0xd9dce1, facade: 0xf2f3f5, sustainer: 0xe7e9ec, dark: 0x2d3036, orange: 0xf06a24, roof: 0xcfd3d9,
@@ -78,10 +84,17 @@ globalThis.VaultKit3D = (function () {
         (floorMeshes[o.fi] = floorMeshes[o.fi] || []).push(mesh);
       }
       if (o.openId) mesh.userData.openId = o.openId;
+      if (o.part) mesh.userData.part = o.part;
       (o.parent || (o.fi !== undefined ? floorGroup(o.fi) : group)).add(mesh);
       return mesh;
     };
     const box = (w, h, d, color, x, y, z, r = 0, o) => place(r > 0 ? roundedBox(w, h, d, r) : new THREE.BoxGeometry(Math.max(0.1, w), Math.max(0.1, h), Math.max(0.1, d)), color, x, y, z, o);
+    // A flat shape ([x, y] points) made thick along z, centred on z
+    const prism = (points, thickness, color, x, y, z, o) => {
+      const g = new THREE.ExtrudeGeometry(new THREE.Shape(points.map(([px, py]) => new THREE.Vector2(px, py))), { depth: thickness, bevelEnabled: false });
+      g.translate(0, 0, -thickness / 2);
+      return place(g, color, x, y, z, o);
+    };
     // A cylinder along the x axis (wheels), the z axis (keys) or upright (rods)
     const cylinder = (radius, length, color, x, y, z, axis, o) => {
       const g = new THREE.CylinderGeometry(radius, radius, length, 28);
@@ -121,10 +134,34 @@ globalThis.VaultKit3D = (function () {
       bin(0, nz - 3, 2, 1);
       bin(nx - 1, 0, 1, 2);
     };
-    // Divider walls: one across (along the width) and one along the depth, or a grid of them
+    // Divider walls: `across` of them along the width, spread over the depth, and walls along the
+    // depth at the offsets `along` (from the middle)
     const dividers = (x, floorY, z, w, d, h, across, along, o) => {
-      for (let i = 1; i <= along; i++) box(3, h, d, 'divider', x - w / 2 + (w * i) / (along + 1), floorY + h / 2, z, 0, o);
-      for (let k = 1; k <= across; k++) box(w, h, 3, 'divider', x, floorY + h / 2, z - d / 2 + (d * k) / (across + 1), 0, o);
+      for (const ax of along) box(3, h, d, 'divider', x + ax, floorY + h / 2, z, 0, { ...o, part: 'divider' });
+      for (let k = 1; k <= across; k++) box(w, h, 3, 'divider', x, floorY + h / 2, z - d / 2 + (d * k) / (across + 1), 0, { ...o, part: 'divider' });
+    };
+    // A sustainer's interior, with the parts list's counts: S and M dividers along the width; L and
+    // XL two depth dividers crossed by width dividers; sealed modules have built-in walls (L one in
+    // the middle, XL two) and seal dividers along the width in every compartment
+    const slotsFor = (table, w) => (((globalThis.VaultKit && VaultKit[table]) || {})[w] || [])[Number(cfg.depth) - 3] || 1;
+    const sustainerInterior = (size, interior, inner, h, o) => {
+      const { x, floorY, z, w, d } = inner;
+      if (interior === 'gridfinity') gridfinity(x, floorY, z, w, d, Math.min(h - 8, 40), o);
+      if (interior === 'dividers') {
+        const n = slotsFor('DIVIDER_SLOTS', size);
+        const depthAt = DEPTH_DIVIDERS[size];
+        dividers(x, floorY, z, w, d, h - 4, n, depthAt ? [-depthAt, depthAt] : [], o);
+      }
+      if (interior === 'sealed') {
+        const n = slotsFor('SEAL_SLOTS', size);
+        const walls = size === 'XL' ? [-XL_SEAL_WALLS, XL_SEAL_WALLS] : [0];
+        walls.forEach(wx => box(6, h, d, 'sustainer', x + wx, floorY + h / 2, z, 0, { ...o, part: 'seal-wall' }));
+        const edges = [-w / 2, ...walls.flatMap(wx => [wx - 3, wx + 3]), w / 2];
+        for (let c = 0; c < edges.length; c += 2) {
+          const cw = edges[c + 1] - edges[c];
+          dividers(x + edges[c] + cw / 2, floorY, z, cw - 2, d, h - 2, n, [], o);
+        }
+      }
     };
 
     // Base, wheels or casters, feet
@@ -163,15 +200,18 @@ globalThis.VaultKit3D = (function () {
         const sustainer = !mod.cols && (floor.slots[first] || {}).type === 'sustainer';
         const x0 = mx + 1.5;
         const w = mw - 3;
+        // A sustainer's walls end under its lid
+        const wh = sustainer ? h - LID : h;
         box(w, WALL, D, 'module', x0 + w / 2, y + WALL / 2, 0, 1, shell);
         if (!sustainer) box(w, WALL, D, 'module', x0 + w / 2, y + h - WALL / 2, 0, 1, shell);
-        box(WALL, h, D, 'module', x0 + WALL / 2, y + h / 2, 0, 1, shell);
-        box(WALL, h, D, 'module', x0 + w - WALL / 2, y + h / 2, 0, 1, shell);
-        box(w, h, WALL, 'module', x0 + w / 2, y + h / 2, back + WALL / 2, 1, shell);
-        // Orange latch marks on the outer sides, one per F near the front
+        box(WALL, wh, D, 'module', x0 + WALL / 2, y + wh / 2, 0, 1, shell);
+        box(WALL, wh, D, 'module', x0 + w - WALL / 2, y + wh / 2, 0, 1, shell);
+        box(w, wh, WALL, 'module', x0 + w / 2, y + wh / 2, back + WALL / 2, 1, shell);
+        // Orange latch marks on the outer sides, one per F near the front, standing 0.6 mm out of
+        // the wall (flush with it the two faces flicker)
         for (let k = 0; k < (F[floor.height] || 1); k++) {
-          if (mi === 0) box(2, 6, 20, 'orange', mx - 0.5, y + 24 + k * P, front - 34, 0, fo);
-          if (mi === layout.modules.length - 1) box(2, 6, 20, 'orange', mx + mw - 2.5, y + 24 + k * P, front - 34, 0, fo);
+          if (mi === 0) box(2, 6, 20, 'orange', x0 + 0.4, y + 24 + k * P, front - 34, 0, { ...fo, part: 'latch' });
+          if (mi === layout.modules.length - 1) box(2, 6, 20, 'orange', x0 + w - 0.4, y + 24 + k * P, front - 34, 0, { ...fo, part: 'latch' });
         }
         let cx = mx;
         slots.forEach((s, si) => {
@@ -180,28 +220,66 @@ globalThis.VaultKit3D = (function () {
           const slot = floor.slots[si] || {};
           if (cx > mx) box(WALL, h - 2 * WALL, D - WALL, 'module', cx, y + h / 2, WALL / 2, 0, shell); // the middle wall of L² / XL²
           if (slot.type === 'sustainer') {
-            // The facade is the front wall; the lid turns on hinges at the back
+            // The facade is the front wall; the lid, a shallow tray, turns on hinges at the back
             const id = `${fi}:${si}`;
             const so = { fi, openId: id };
-            box(cw - 3, h - 2, 8, 'sustainer', cx + cw / 2, y + h / 2, front + 4, 4, { ...so, kind: 'facade' }); // facades are as big as the module (S1F: 164.8 × 47 mm)
+            const sx = cx + cw / 2;
+            const wallTop = y + h - LID;
+            box(cw - 3, h - LID - 2, 8, 'sustainer', sx, y + (h - LID) / 2, front + 4, 4, { ...so, kind: 'facade' }); // as wide as the module (S1F: 164.8 × 46 mm)
             // S and M have one lock in the middle (the label slot under it), L and XL two with the
-            // label slot between them
+            // label slot between them; the locks reach up over the lid
             const oneLock = s.w === 'S' || s.w === 'M';
             for (const at of oneLock ? [0.5] : [0.22, 0.78]) box(26, 16, 14, 'dark', cx + cw * at, y + h - 15, front + 9, 3, so);
-            box(34, 10, 2, 'roof', cx + cw / 2, oneLock ? y + h - 32 : y + h - 15, front + 8.5, 2, so);
-            const inner = { x: cx + cw / 2, floorY: y + WALL, z: WALL / 2, w: cw - 2 * WALL - 6, d: D - WALL - 10 };
-            if (slot.interior === 'gridfinity') gridfinity(inner.x, inner.floorY, inner.z, inner.w, inner.d, Math.min(h - 20, 40), so);
-            if (slot.interior === 'dividers') dividers(inner.x, inner.floorY, inner.z, inner.w, inner.d, h - 16, 2, 1, so);
-            if (slot.interior === 'sealed') dividers(inner.x, inner.floorY, inner.z, inner.w, inner.d, h - 12, 1, 1, so);
+            box(34, 10, 2, 'roof', sx, oneLock ? y + h - 32 : wallTop - 10, front + 8.5, 2, so);
+            const inner = { x: sx, floorY: y + WALL, z: WALL / 2, w: cw - 2 * WALL - 6, d: D - WALL - 10 };
+            sustainerInterior(s.w, slot.interior, inner, wallTop - inner.floorY - 2, so);
+
+            // Hinges along the top of the back wall: S and M one hinge top on the lid between two
+            // bottom hinges (63 / 99 mm, 40 mm), L and XL two pairs (40 mm on the lid, 50 mm on
+            // the module); the rods' orange ends show at both ends of every knuckle line
             const lid = new THREE.Group();
-            lid.position.set(cx + cw / 2, y + h, back);
+            lid.position.set(sx, wallTop, back);
             floorGroup(fi).add(lid);
-            box(cw - 4, 6, D, 'roof', 0, -3, D / 2, 3, { ...so, parent: lid });
+            const lo = { ...so, parent: lid };
+            const plateH = Math.min(wallTop - y - 12, h > P ? 58 : 34);
+            // The knuckles lie on the lid's axis (the top back edge), so the lid's own turn in place
+            const knuckle = (len, at, onLid) => onLid
+              ? cylinder(5, len, 'dark', at, 0, 0, 'x', { ...lo, part: 'hinge-knuckle' })
+              : cylinder(5, len, 'dark', sx + at, wallTop, back, 'x', { ...so, part: 'hinge-knuckle' });
+            const bottomHinge = (len, at) => {
+              box(len, plateH, 3, 'dark', sx + at, wallTop - plateH / 2, back + WALL + 1.5, 1, { ...so, part: 'hinge-bottom' });
+              knuckle(len, at, false);
+            };
+            const topHinge = (len, at) => {
+              box(len, 3, 46, 'dark', at, LID - 5.5, 25, 1, { ...lo, part: 'hinge-top' });
+              knuckle(len, at, true);
+            };
+            const rod = (from, to) => cylinder(2.5, to - from + 6, 'orange', sx + (from + to) / 2, wallTop, back, 'x', { ...so, part: 'hinge-rod' });
+            if (oneLock) {
+              const top = s.w === 'S' ? 63 : 99;
+              topHinge(top, 0);
+              for (const side of [-1, 1]) bottomHinge(40, side * (top / 2 + 20.5));
+              rod(-(top / 2 + 41), top / 2 + 41);
+            } else {
+              for (const side of [-1, 1]) {
+                const at = side * cw * 0.22;
+                bottomHinge(50, at + side * 22.5);
+                topHinge(40, at - side * 22.5);
+                rod(Math.min(at - side * 42.5, at + side * 47.5), Math.max(at - side * 42.5, at + side * 47.5));
+              }
+            }
+            // The lid: a plate with a rim all round, on top of the walls
+            const lw = cw - 4;
+            box(lw, 4, D, 'roof', 0, LID - 2, D / 2, 3, lo);
+            box(lw, LID - 4, 3, 'roof', 0, (LID - 4) / 2, D - 1.5, 0, lo);
+            box(lw, LID - 4, 3, 'roof', 0, (LID - 4) / 2, 1.5, 0, lo);
+            for (const side of [-1, 1]) box(3, LID - 4, D - 6, 'roof', side * (lw / 2 - 1.5), (LID - 4) / 2, D / 2, 0, lo);
             openables.push({ id, kind: 'sustainer', fi, node: lid, angle: -1.9 });
           } else {
             // Every box slides out with its facade, key, label and interior. Geared rails, as the
-            // parts list has them (several boxes in the module, or "in every box"): toothed strips
-            // in the sides of the box, the lower one on the left, the upper one on the right
+            // parts list has them (several boxes in the module, or "in every box"): two toothed
+            // racks across the box front behind the facade, above and below the key's gear, which
+            // moves them when the key turns: an extra lock of the drawer front
             const boxes = String(slot.boxes || floor.height).split('+');
             const rails = boxes.length > 1 || cfg.gearedRails === 'all';
             let top = y + h;
@@ -229,12 +307,16 @@ globalThis.VaultKit3D = (function () {
               box(3, wallH, bd, 'box', bx - bw / 2 + 1.5, floorY + wallH / 2, 0, 0, bo);
               box(3, wallH, bd, 'box', bx + bw / 2 - 1.5, floorY + wallH / 2, 0, 0, bo);
               box(bw, wallH, 3, 'box', bx, floorY + wallH / 2, back + 7.5, 0, bo);
-              if (rails) {
-                box(3, 5, bd - 8, 'orange', bx - bw / 2 - 1.5, floorY + 4, 0, 0, bo);
-                box(3, 5, bd - 8, 'orange', bx + bw / 2 + 1.5, floorY + wallH - 4, 0, 0, bo);
+              box(bw, wallH, 3, 'box', bx, floorY + wallH / 2, bd / 2 - 1.5, 0, bo);
+              if (rails) for (const dy of [13.5, -13.5]) box(RAILS[s.w] || bw - 10, 5, 4, 'orange', bx, ky + dy, bd / 2 + 2.5, 0, { ...bo, part: 'geared-rail' });
+              // Runners low on both sides (one size for every box height): the slide in the box
+              // side comes out with the box, the guide stays in the module
+              for (const side of [-1, 1]) {
+                box(3, 12, bd - 26, 'facade', bx + side * (bw / 2 + 0.5), floorY + 14, -4, 0, { ...bo, part: 'runner-slide' });
+                box(3, 20, bd - 4, 'roof', bx + side * (bw / 2 + 4.7), floorY + 14, 0, 0, { ...shell, part: 'runner-guide' });
               }
               if (slot.interior === 'gridfinity') gridfinity(bx, floorY + 3, -2, bw - 8, bd - 10, Math.max(12, wallH - 14), bo);
-              if (slot.interior === 'dividers') dividers(bx, floorY + 3, -2, bw - 8, bd - 10, slot.low ? 20 : wallH - 4, 1, 1, bo);
+              if (slot.interior === 'dividers') dividers(bx, floorY + 3, -2, bw - 8, bd - 10, slot.low ? 20 : wallH - 4, 1, [0], bo);
               openables.push({ id, kind: 'drawer', fi, node, out: D * 0.72 });
               top -= bH;
             });
@@ -277,10 +359,23 @@ globalThis.VaultKit3D = (function () {
             roofTop = Math.max(roofTop, topY + 24);
           }
           if (kind === 'heavy') {
-            box(mw - 4, 8, D - 4, 'roof', cx, topY + 4, 0, 4, tp);
-            for (const side of [-1, 1]) box(mw * 0.3, 54, D - 12, 'roof', cx + side * (mw * 0.35 - 4), topY + 8 + 27, 0, 6, tp);
-            cylinder(9, mw * 0.4, 'dark', cx, topY + 44, 0, 'x', tp);
-            roofTop = Math.max(roofTop, topY + 62);
+            // As the STL's profile: a 10 mm floor, a bowl at each end (thin outer wall, front and
+            // back walls) and two 21 mm posts 119 mm apart that hold the handle. The cut roof's
+            // outer top corners are cut off at 45°, 39 mm down the outer wall
+            const H = 84;
+            const cut = cfg.roof === 'heavycut' ? 39 : 0;
+            box(mw - 4, 10, D - 4, 'roof', cx, topY + 5, 0, 3, tp);
+            for (const side of [-1, 1]) {
+              const outer = mw / 2 - 2;
+              box(21, H - 10, D - 4, 'roof', cx + side * 70, topY + 10 + (H - 10) / 2, 0, 3, tp);
+              box(4, H - 10 - cut, D - 4, 'roof', cx + side * (outer - 2), topY + 10 + (H - 10 - cut) / 2, 0, 1, { ...tp, part: 'roof-outer' });
+              // Front and back walls of the bowl, from the post to the outer wall (x outwards)
+              const corner = cut ? [[outer, H - cut], [outer - cut, H]] : [[outer, H]];
+              const shape = [[80.5, 10], [outer, 10], ...corner, [80.5, H]].map(([px, py]) => [side * px, py]);
+              for (const z of [front - 4, back + 4]) prism(shape, 4, 'roof', cx, topY, z, tp);
+            }
+            cylinder(13, 157, 'dark', cx, topY + H - 16, 0, 'x', tp);
+            roofTop = Math.max(roofTop, topY + H);
           }
           if (kind === 'undertable') { box(mw + 20, 8, D + 20, 'roof', cx, topY + 4, 0, 3, tp); roofTop = Math.max(roofTop, topY + 8); }
         }

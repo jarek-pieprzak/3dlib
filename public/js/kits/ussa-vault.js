@@ -42,7 +42,7 @@ globalThis.VaultKit = (function () {
       { id: 'M+S', label: 'M + S', modules: [{ w: 'M' }, { w: 'S' }] }
     ]
   };
-  // A taller drawer module can hold several lower boxes (geared rails keep them in place)
+  // A taller drawer module can hold several lower boxes (each then locked by its geared rails)
   const BOX_SPLITS = { '1F': ['1F'], '2F': ['2F', '1F+1F'], '4F': ['4F', '2F+2F', '2F+1F+1F', '1F+1F+1F+1F'] };
   const ROOFS = [
     { id: 'grid', label: 'Grid (Gridfinity top, handle)' },
@@ -114,7 +114,7 @@ globalThis.VaultKit = (function () {
         sustainer: { label: 'Sustainer', image: 'type-sustainer', text: 'A module with a hinged lid and locks at the front: one on S and M, two on L and XL. Good for bigger or longer items and sealed compartments.' }
       } },
     boxes: { title: 'Boxes in the module', image: 'geared-rails', manual: [DRAWER_PDF, 4],
-      text: 'A 2F or 4F drawer module holds one tall box or several lower boxes stacked inside, each with its own facade and key. With more than one box, geared rails (added automatically) keep them in place.' },
+      text: 'A 2F or 4F drawer module holds one tall box or several lower boxes stacked inside, each with its own facade and key. With more than one box, every box gets geared rails (added automatically): its key then locks it in the module.' },
     drawerInterior: { title: 'Drawer interior', manual: [MANUAL, 9],
       choices: {
         empty: { label: 'Empty', image: 'drawer-empty', text: 'The bare box with its perforated floor.' },
@@ -155,7 +155,7 @@ globalThis.VaultKit = (function () {
     split: { title: 'Two-part bases and lids',
       text: 'Bases and sustainer lids of depth 6 and 7 are large: print them whole, or in two parts that a connector joins.' },
     gearedRails: { title: 'Geared rails', image: 'geared-rails', manual: [DRAWER_PDF, 4],
-      text: 'Toothed rails on the top and bottom of a box (one print per box: the file holds the pair). Always used when a module holds several boxes; in single boxes they add locking force.' },
+      text: 'An extra lock for the drawer front: two toothed racks slide into the box front behind the facade, one above and one below the key\'s gear, which moves them when the key turns (one print per box: the file holds the pair). The manual asks for them when a 2F or 4F module holds more than one box; in single boxes they add locking force.' },
     manualSupports: { title: 'Manual supports', image: 'manual-supports', manual: [MANUAL, 20],
       text: 'Triangular braces (Manual Supports folder, as long as the module is deep) that steady tall prints: put one against every part printed standing on its edge, the drawer roofs and the sustainer lids. Lids printed in two parts are lower and get none; the heavyweight roofs stand on their own.' },
     base: { title: 'Base', manual: [MODS_PDF, 2], adds: 'A base as wide and deep as the tower.',
@@ -884,6 +884,7 @@ globalThis.VaultKit = (function () {
 
   return {
     WIDTHS, DEPTHS, HEIGHTS, LAYOUTS, BOX_SPLITS, ROOFS, DRAWER_INTERIORS, SUSTAINER_INTERIORS, BASES, BACKBONES, PEGBOARDS, GROUPS, TIPS,
+    DIVIDER_SLOTS, SEAL_SLOTS,
     classify, buildCatalog, detect, slotsOf, choices, defaultConfig, newFloor, defaultSlot, normalize, towerHeight,
     computeBom, describe, bomText, encodeConfig, decodeConfig
   };

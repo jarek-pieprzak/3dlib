@@ -140,7 +140,8 @@ page and footer credit GyroidVault; keep that.
     columns (S+S / S+M). Where the PDFs say nothing, the STL files decide (the archive is on the
     NAS share `Z:\Modele3D\VAULT_USSA`): facade bolts are the holes (S 2 / 4 / 4, M and L
     4 / 6 / 6, XL 4), sustainer dividers and seal dividers are a full set of the module's slots
-    (`DIVIDER_SLOTS`, `SEAL_SLOTS`), every grid divider strip ends in a straight edge piece at the
+    (`DIVIDER_SLOTS`, `SEAL_SLOTS`; the 3D tower draws the same counts, with the hinges, rods and
+    runners of the list), every grid divider strip ends in a straight edge piece at the
     wall (4 for the cross). Counts the PDFs do not give are marked "estimate"; parts they do not
     show at all (grid divider pins, rounded edge pieces) are "optional" rows with 0 prints when
     Grid dividers is chosen, hidden on a locked configuration until counted. Manual supports

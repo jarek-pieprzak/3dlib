@@ -31,3 +31,4 @@ scratch/
 import_models/
 .claude
 # CLAUDE.md
+.history

@@ -10,7 +10,8 @@ const PrintFit = globalThis.PrintFit;
 const DEFAULT_BEDS = [
   { id: 'bambu-p1s', name: 'Bambu Lab P1S', x: 256, y: 256, z: 256, margin: 0 },
   { id: 'snapmaker-u1', name: 'Snapmaker U1', x: 270, y: 270, z: 270, margin: 0 },
-  { id: 'creality-sparkx-i8', name: 'Creality SparkX i8', x: 260, y: 260, z: 255, margin: 0 }
+  { id: 'creality-sparkx-i8', name: 'Creality SparkX i8', x: 260, y: 260, z: 255, margin: 0 },
+  { id: 'voron-24-350', name: 'Voron 2.4 350', x: 350, y: 350, z: 255, margin: 0 }
 ];
 // The 3D files the server measures (utils/meshSize.js)
 const MEASURABLE_SQL = "file_type IN ('stl','obj','3mf','step') AND deleted_at IS NULL AND COALESCE(is_archive_entry, 0) = 0 AND COALESCE(library_path, '') NOT LIKE '%::%'";

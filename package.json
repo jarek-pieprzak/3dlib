@@ -8,6 +8,7 @@
     "test": "node tests/release-check.js",
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "dev:local": "set \"LIBRARY_PATH=D:/!3d print/vault_ussa\" && node --watch server/index.js",
     "seed:demo": "node scripts/seed-demo-data.js",
     "seed:restore": "node scripts/seed-demo-data.js --restore",
     "import:models": "node scripts/import-user-models.js"

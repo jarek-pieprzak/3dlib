@@ -541,6 +541,15 @@ async function runStaticAndUiChecks() {
     let flush = 0;
     three.VaultKit3D.build(lockCfg).group.traverse(o => { if (o.isMesh && o.userData.part === 'latch' && Math.abs(o.position.x) + 1 < 330 / 2 - 1.5 + 0.3) flush++; });
     assert(!flush, `3D: ${flush} latch marks are flush with the wall`);
+    // The under-table mount: the table top is flush with the drawer fronts and reaches 60 mm past
+    // the tower at the sides and the back, so the mount plate under it shows
+    const ut = three.VaultKit3D.build({ ...bom.cfg, roof: 'undertable', mods: {} });
+    ut.group.updateMatrixWorld(true);
+    const extent = (test) => { const b = new three.THREE.Box3(); ut.group.traverse(o => { if (o.isMesh && test(o)) b.union(new three.THREE.Box3().setFromObject(o)); }); return b; };
+    const table = extent(o => o.material === ut.materials.get('wood'));
+    const fronts = extent(o => o.userData.kind === 'facade');
+    assert(Math.abs(table.max.z - fronts.max.z) < 0.5, `3D: the table is flush with the drawer fronts, got ${table.max.z} / ${fronts.max.z}`);
+    assert(Math.round(table.max.x - table.min.x - ut.size.width) === 120 && Math.round(-ut.size.depth / 2 - table.min.z) === 60, `3D: the table reaches 60 mm past the sides and the back, got ${table.max.x - table.min.x} wide, back at ${table.min.z}`);
 
     // Every box and every sustainer opens; floors above an open sustainer rise
     const openCfg = { ...bom.cfg, floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'sealed' }, { type: 'drawer', boxes: '1F', interior: 'gridfinity' }] },
@@ -2830,16 +2839,17 @@ async function runE2ETests() {
       assert(cleared.preferred_slicer === null && cleared.preferred_printer === null, 'Cleared defaults are null');
     });
 
-    await check('Printer fit: the three default printers, an edited list, sizes of a model measured in the background', async () => {
+    await check('Printer fit: the four default printers, an edited list, sizes of a model measured in the background', async () => {
       const beds = await apiReq('/api/printer-beds');
-      assert(beds.status === 200 && beds.data.map(b => b.id).join() === 'bambu-p1s,snapmaker-u1,creality-sparkx-i8', `Default printers: ${JSON.stringify(beds.data)}`);
+      assert(beds.status === 200 && beds.data.map(b => b.id).join() === 'bambu-p1s,snapmaker-u1,creality-sparkx-i8,voron-24-350', `Default printers: ${JSON.stringify(beds.data)}`);
       assert(beds.data[2].x === 260 && beds.data[2].z === 255, 'SparkX i8: 260 × 260 × 255 mm');
+      assert(beds.data[3].x === 350 && beds.data[3].y === 350 && beds.data[3].z === 255, 'Voron 2.4 350: 350 × 350 × 255 mm');
       assert((await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [{ name: 'Tiny', x: 5, y: 5, z: 5 }] })).status === 400, 'A build volume under 10 mm is refused');
       const maker = await makerSession();
       assert((await apiReq('/api/printer-beds', { method: 'PUT', session: maker, body: beds.data })).status === 403, 'Only an admin changes the printers');
-      const saved = await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [...beds.data, { name: 'Voron 2.4 350', x: 350, y: 350, z: 340, margin: 2 }] });
-      assert(saved.status === 200 && saved.data.length === 4 && saved.data[3].id === 'voron-2-4-350', `Saved printers: ${JSON.stringify(saved.data)}`);
-      assert((await apiReq('/api/printer-beds')).data.length === 4, 'The edited list is kept');
+      const saved = await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: [...beds.data, { name: 'Prusa Core One', x: 250, y: 220, z: 270, margin: 2 }] });
+      assert(saved.status === 200 && saved.data.length === 5 && saved.data[4].id === 'prusa-core-one', `Saved printers: ${JSON.stringify(saved.data)}`);
+      assert((await apiReq('/api/printer-beds')).data.length === 5, 'The edited list is kept');
       await apiReq('/api/printer-beds', { method: 'PUT', session: adminSession, body: beds.data });
 
       // The STL files of a library project get their sizes
@@ -2858,8 +2868,9 @@ async function runE2ETests() {
       assert(sizes.data.errors[big.id] || sizes.data.sizes[big.id], 'Random bytes as an STL are measured or marked as failed, never left waiting');
       assert(part.dim_x === 5 && part.dim_bytes === part.file_size, 'The model page gets the size with its files');
 
-      // The model list: a badge per model and the "Fits my printer" filter
-      const longBar = 'solid l\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 400 0 0\nvertex 0 10 10\nendloop\nendfacet\nendsolid l\n';
+      // The model list: a badge per model and the "Fits my printer" filter. The bar is longer than
+      // the Voron's 350 × 350 bed is on the diagonal (495 mm)
+      const longBar = 'solid l\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 600 0 0\nvertex 0 10 10\nendloop\nendfacet\nendsolid l\n';
       fs.mkdirSync(path.join(tmpLibDir, 'Long Bar'), { recursive: true });
       fs.writeFileSync(path.join(tmpLibDir, 'Long Bar', 'bar.stl'), longBar);
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
@@ -2872,7 +2883,7 @@ async function runE2ETests() {
       const listed = (await apiReq('/api/models?limit=96', { session: adminSession })).data.models;
       const barFit = listed.find(m => m.id === bar.id).fit;
       const zipFit = listed.find(m => m.id === model.id).fit;
-      assert(barFit && barFit.total === 1 && barFit.misfit.any === 1 && barFit.misfit['bambu-p1s'] === 1, `A 400 mm bar fits none of the printers: ${JSON.stringify(barFit)}`);
+      assert(barFit && barFit.total === 1 && barFit.misfit.any === 1 && barFit.misfit['bambu-p1s'] === 1, `A 600 mm bar fits none of the printers: ${JSON.stringify(barFit)}`);
       assert(zipFit && zipFit.misfit.any === 0 && zipFit.pending === 0, `Zip Project fits: ${JSON.stringify(zipFit)}`);
       const fitting = (await apiReq('/api/models?fits=bambu-p1s&limit=96', { session: adminSession })).data.models.map(m => m.name);
       assert(fitting.includes('Zip Project') && !fitting.includes('Long Bar'), `Fits my printer: ${fitting.join(', ')}`);
@@ -2881,7 +2892,7 @@ async function runE2ETests() {
       assert(card.fit.misfit.any === 1, 'The search results carry the fit too');
 
       // A file replaced on disk (a new version of an archive) gets its new size and is measured again
-      const shortBar = longBar.replace('vertex 400 0 0', 'vertex 40.5 0 0');
+      const shortBar = longBar.replace('vertex 600 0 0', 'vertex 40.5 0 0');
       fs.writeFileSync(path.join(tmpLibDir, 'Long Bar', 'bar.stl'), shortBar);
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
       for (let i = 0; i < 300; i++) {

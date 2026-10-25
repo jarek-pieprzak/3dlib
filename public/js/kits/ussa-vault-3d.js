@@ -381,7 +381,9 @@ globalThis.VaultKit3D = (function () {
         }
         mx += mw;
       });
-      if (kind === 'undertable') { box(W + 260, 22, D + 240, 'wood', 0, topY + 8 + 11, -20, 4, tp); roofTop = topY + 30; }
+      // The table top: flush with the drawer fronts (front + 8) and 60 mm past the tower at the
+      // sides and the back, so the mount plate under it shows
+      if (kind === 'undertable') { box(W + 120, 22, D + 68, 'wood', 0, topY + 8 + 11, -26, 4, tp); roofTop = topY + 30; }
     }
 
     // Along the back: backbone boards (two per 4F floor), pegboards, wall mounts, handles

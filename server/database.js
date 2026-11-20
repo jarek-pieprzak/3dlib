@@ -318,6 +318,11 @@ async function initDatabase() {
     if (!uCols.some(c => c.name === 'preferred_printer')) db.run('ALTER TABLE users ADD COLUMN preferred_printer TEXT');
     // Login tokens carry it as "tv": a new password raises it and logs out every other session
     if (!uCols.some(c => c.name === 'token_version')) db.run('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0');
+    // The user's own Thingiverse App Token for the source import (never sent to the browser) and
+    // what Thingiverse said about it last: 'ok' / 'invalid' (Profile and the app's notice)
+    for (const col of ['thingiverse_token TEXT', 'thingiverse_token_status TEXT', 'thingiverse_token_checked_at TEXT']) {
+      if (!uCols.some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE users ADD COLUMN ${col}`);
+    }
     
     // Auto-migrate the very first user (id 1) to admin to prevent lockout when roles are enforced
     db.run("UPDATE users SET role = 'admin' WHERE id = 1 AND role != 'admin'");

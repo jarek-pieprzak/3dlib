@@ -1,33 +1,12 @@
-// MakerWorld (makerworld.com) model pages: what 3DLib copies of them into the project folder, so
-// the documentation stays when the page changes or goes. Pure functions, no I/O (the browser-free
-// download is server/services/sourceImport.js); the tests load this file directly.
+// What the source import (server/services/sourceImport.js) shares between the sites it copies
+// (sources/makerworld.js, printables.js, thingiverse.js): HTML -> Markdown, the files a page brings
+// and its README. Pure functions, no I/O; the tests load this file directly.
 //
-// The page itself sits behind a bot check, its data does not: GET /api/v1/design-service/design/<id>
-// gives the design as JSON: `summary` (the description, HTML), `designExtension.design_pictures`
-// (the gallery), `design_other` (attached documents: the PDF manuals), `boms` / `boms_of_other_part_list`
-// (hardware), `instances` (the print profiles), `tags`, `designCreator`, `license`, `createTime`.
-
-const SITE = 'https://makerworld.com';
-
-// "https://makerworld.com/pl/models/786733-vault-assault?from=recommend#profileId-1" -> 786733
-function designIdOf(url) {
-  let u;
-  try { u = new URL(String(url || '').trim()); } catch (e) { return null; }
-  if (!/^https?:$/.test(u.protocol) || !/^(www\.)?makerworld\.com$/i.test(u.hostname)) return null;
-  const m = /^\/(?:[a-z]{2}(?:-[a-z]{2,4})?\/)?models\/(\d+)(?:[-/]|$)/i.exec(u.pathname);
-  return m ? Number(m[1]) : null;
-}
-
-const apiUrl = (id) => `${SITE}/api/v1/design-service/design/${id}`;
-const pageUrl = (id) => `${SITE}/en/models/${id}`;
-
-// Images and documents of a design live on Bambu Lab's CDNs; nothing else is downloaded
-function isAssetUrl(url) {
-  try {
-    const u = new URL(url);
-    return u.protocol === 'https:' && /(^|\.)(bblmw|bblcdn|bambulab)\.com$/i.test(u.hostname);
-  } catch (e) { return false; }
-}
+// A site module turns its data into a page:
+//   { site, id, url, title, author, published, license,
+//     description (HTML), sections: [{ title, html | markdown }],
+//     pictures: [{ url, name }], documents: [{ url, name }], tags: [names],
+//     hardware: [{ name, qty, note }] }
 
 // ─── HTML -> Markdown (what UI.renderMarkdown shows) ─────────────────────────
 
@@ -55,7 +34,7 @@ function attrOf(attrs, name) {
 }
 
 const VOID = new Set(['br', 'img', 'hr', 'input', 'meta', 'link', 'source', 'wbr', 'col', 'area', 'embed', 'param', 'track']);
-// Widgets and code of the page, not part of the text ("Boost me" is MakerWorld's tip box)
+// Widgets and code of a page, not part of the text ("Boost me" is MakerWorld's tip box)
 const DROP = new Set(['script', 'style', 'noscript', 'svg', 'button', 'form', 'boostme']);
 
 // A forgiving tree: unclosed tags close with their parent, stray closing tags are ignored
@@ -222,11 +201,11 @@ function tidy(md) {
   return s.replace(/\u0000(\d+)\u0000/g, (m, i) => fences[i]);
 }
 
-// ─── What a design brings along ──────────────────────────────────────────────
+// ─── What a page brings along ────────────────────────────────────────────────
 
 // A name that is a valid file name on SMB shares (the project folder lives on one)
 function safeFileName(name, fallback) {
-  let s = String(name || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim()
+  let s = String(name || '').replace(/[<>:"/\|?*\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim()
     .replace(/ +(\.[^. ]+)$/, '$1').replace(/^\.+/, '').replace(/[. ]+$/, '');
   if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(s)) s = '_' + s;
   if (s.length > 120) {
@@ -243,126 +222,83 @@ function extOf(url, fallback) {
   } catch (e) { return fallback; }
 }
 
+// A file name with an extension ("Front view" from a picture URL ending in .jpg: "Front view.jpg");
+// base: the name without an extension when there is none
+function fileNameOf(name, url, base, defExt) {
+  let n = safeFileName(name, base);
+  if (!/\.[a-z0-9]{2,5}$/i.test(n)) n += `.${extOf(url, defExt)}`;
+  return n;
+}
+
+// The HTML of a page that holds pictures: its description and the sections written in HTML
+const htmlParts = (page) => [page.description || '', ...(page.sections || []).map(s => s.html || '')];
+
 // The files to download, with where they go in the project folder:
-// [{ url, rel, kind: 'description' | 'gallery' | 'document' }]. Description images are numbered in
-// their order, gallery pictures and documents keep their names.
-function assetsOf(design) {
-  const ext = design.designExtension || {};
+// [{ url, rel, kind: 'description' | 'gallery' | 'document' }]. Pictures of the description are
+// numbered by their place in it, gallery pictures and documents keep their names. isAsset(url):
+// the hosts the site keeps its files on (nothing else is downloaded).
+function assetsOf(page, isAsset) {
   const out = [];
   const taken = new Set();
   const add = (url, rel, kind) => {
-    if (!url || !isAssetUrl(url) || out.some(a => a.url === url)) return;
+    if (!url || !isAsset(url) || out.some(a => a.url === url)) return;
     let r = rel;
     for (let i = 2; taken.has(r.toLowerCase()); i++) r = rel.replace(/(\.[^./]+)?$/, m => ` (${i})${m}`);
     taken.add(r.toLowerCase());
     out.push({ url, rel: r, kind });
   };
-  imagesOf(design.summary || '').forEach((url, i) => {
-    add(url, `images/description-${String(i + 1).padStart(2, '0')}.${extOf(url, 'jpg')}`, 'description');
-  });
-  (ext.design_pictures || []).forEach((p, i) => {
-    const e = extOf(p.url, 'jpg');
-    const fallback = `picture-${String(i + 1).padStart(2, '0')}.${e}`;
-    let name = safeFileName(p.name, fallback);
-    if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += `.${e}`;
-    add(p.url, `images/${name}`, 'gallery');
-  });
-  for (const d of [...(ext.design_other || []), ...(ext.design_guide || [])]) {
-    const e = extOf(d.url, 'pdf');
-    let name = safeFileName(d.name, `document.${e}`);
-    if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += `.${e}`;
-    add(d.url, name, 'document');
-  }
+  const inText = [];
+  for (const html of htmlParts(page)) for (const src of imagesOf(html)) if (!inText.includes(src)) inText.push(src);
+  inText.forEach((url, i) => add(url, `images/description-${String(i + 1).padStart(2, '0')}.${extOf(url, 'jpg')}`, 'description'));
+  (page.pictures || []).forEach((p, i) => add(p.url, `images/${fileNameOf(p.name, p.url, `picture-${String(i + 1).padStart(2, '0')}`, 'jpg')}`, 'gallery'));
+  for (const d of page.documents || []) add(d.url, fileNameOf(d.name, d.url, 'document', 'pdf'), 'document');
   return out;
 }
 
-// Hardware of the design: [{ name, qty, note }]. Store items come in packs ("M3x10 ... (20PCS)"),
-// their quantity counts packs.
-function hardwareOf(design) {
-  const ext = design.designExtension || {};
-  const out = [];
-  for (const b of ext.boms || []) {
-    let name = String(b.displayTitle || b.title || '').replace(/\s+-\s+[A-Z]{1,3}\d{2,4}$/, '').trim();
-    // "0.4x3x10 mm (10PCS)" says what size, its parent what it is ("Extension Springs")
-    const parent = String(b.displayParentTitle || b.parentTitle || '').trim();
-    if (parent && !/[a-z]{3,}/i.test(name.replace(/\(\d+\s*PCS\)|\bmm\b/gi, ''))) name = `${parent} ${name}`;
-    if (name) out.push({ name: name.slice(0, 120), qty: Math.max(1, Number(b.quantity) || 1), note: '' });
-  }
-  for (const p of ext.boms_of_other_part_list || []) {
-    const name = String(p.name || '').replace(/_/g, ' ').trim();
-    const note = String(p.note || '').replace(/_/g, ' ').replace(/^\((.*)\)$/, '$1').trim();
-    if (name) out.push({ name: name.slice(0, 120), qty: Math.max(1, Number(p.quantity) || 1), note });
-  }
-  return out;
-}
+// First line of an imported README: a later import may overwrite only a README that has it
+const marker = (url) => `<!-- 3dlib-source: ${url} -->`;
+const hasMarker = (text) => /^\s*<!-- 3dlib-source: /.test(String(text || ''));
 
 const day = (iso) => (/^\d{4}-\d{2}-\d{2}/.exec(String(iso || '')) || [''])[0];
 
-// First line of an imported README: a re-import may overwrite only a README that has it
-function marker(id) {
-  return `<!-- 3dlib-source: ${pageUrl(id)} -->`;
-}
-const hasMarker = (text) => /^\s*<!-- 3dlib-source: /.test(String(text || ''));
-
-// The README of the project: who made it and where it comes from, the description, the print
-// profiles, hardware, documents and the gallery. local(url) gives the project-relative path of a
-// downloaded file (or null: the file keeps its URL). today: "YYYY-MM-DD".
-function buildReadme(design, { local = () => null, today = '' } = {}) {
-  const id = design.id;
-  const ext = design.designExtension || {};
+// The README of the project: where it comes from and who made it, the description, the sections
+// of the site (print profiles, settings, instructions), hardware, documents and the gallery.
+// local(url): the project-relative path of a downloaded file (null: the file keeps its URL).
+// today: "YYYY-MM-DD".
+function buildReadme(page, { local = () => null, today = '' } = {}) {
   const target = (url) => local(url) || url;
-  const lines = [marker(id), `# ${String(design.title || `MakerWorld model ${id}`).trim()}`, ''];
+  const lines = [marker(page.url), `# ${String(page.title || `${page.site} model ${page.id}`).trim()}`, ''];
 
-  const by = design.designCreator && design.designCreator.name ? `by **${design.designCreator.name}** ` : '';
-  const facts = [`${by}on [MakerWorld](${pageUrl(id)})`];
-  if (day(design.createTime)) facts.push(`published ${day(design.createTime)}`);
-  if (design.license) facts.push(design.license);
-  lines.push(facts.join(' · ').replace(/^by/, 'By').replace(/^on/, 'On'));
+  const facts = [`${page.author ? `By **${page.author}** on` : 'On'} [${page.site}](${mdTarget(page.url)})`];
+  if (day(page.published)) facts.push(`published ${day(page.published)}`);
+  if (page.license) facts.push(page.license);
+  lines.push(facts.join(' · '));
   if (today) lines.push(`Copied by 3DLib on ${today}.`);
   lines.push('');
 
-  const description = htmlToMarkdown(design.summary || '', { image: target });
+  const description = htmlToMarkdown(page.description || '', { image: target });
   if (description) lines.push(description, '');
 
-  // The designer's own print profiles (the others are uploads of other users)
-  const all = (design.instances || []).filter(i => i && i.title);
-  const uid = design.designCreator && design.designCreator.uid;
-  const own = all.filter(i => uid && i.instanceCreator && i.instanceCreator.uid === uid);
-  const profiles = own.length ? own : all;
-  if (profiles.length) {
-    lines.push('## Print profiles', '');
-    for (const p of profiles) {
-      lines.push(`### ${String(p.title).trim()}`, '');
-      const facts = [];
-      if (Number(p.prediction) > 0) facts.push(`${(Number(p.prediction) / 3600).toFixed(1)} h`);
-      if (Number(p.weight) > 0) facts.push(`${Math.round(Number(p.weight))} g`);
-      if (Number(p.materialColorCnt) > 0) facts.push(`${p.materialColorCnt} colour${Number(p.materialColorCnt) === 1 ? '' : 's'}`);
-      if (p.needAms) facts.push('AMS');
-      if (facts.length) lines.push(facts.join(' · '), '');
-      // One setting per paragraph: one per line here
-      const settings = htmlToMarkdown(p.summary || '', { image: target }).replace(/\n{2,}/g, '\n');
-      if (settings) lines.push(settings, '');
-      const fil = (p.instanceFilaments || []).filter(f => f && (f.type || f.color))
-        .map(f => [f.type, f.color, Number(f.usedG) > 0 ? `${Math.round(Number(f.usedG))} g` : ''].filter(Boolean).join(' '));
-      if (fil.length) lines.push(`Filaments: ${fil.join(', ')}`, '');
-    }
+  for (const s of page.sections || []) {
+    const body = s.markdown !== undefined ? String(s.markdown).trim() : htmlToMarkdown(s.html || '', { image: target });
+    if (body) lines.push(`## ${s.title}`, '', body, '');
   }
 
-  const hardware = hardwareOf(design);
+  const hardware = page.hardware || [];
   if (hardware.length) {
     lines.push('## Hardware', '');
     for (const h of hardware) lines.push(`- ${h.qty} × ${h.name}${h.note ? ` (${h.note})` : ''}`);
     lines.push('');
   }
 
-  const documents = [...(ext.design_other || []), ...(ext.design_guide || [])].filter(d => d && d.url);
+  const documents = (page.documents || []).filter(d => d && d.url);
   if (documents.length) {
     lines.push('## Documents', '');
     for (const d of documents) lines.push(`- [${String(d.name || 'Document').replace(/[[\]]/g, '')}](${mdTarget(target(d.url))})`);
     lines.push('');
   }
 
-  const pictures = (ext.design_pictures || []).filter(p => p && p.url);
+  const pictures = (page.pictures || []).filter(p => p && p.url);
   if (pictures.length) {
     lines.push('## Gallery', '');
     lines.push(pictures.map(p => `![${String(p.name || '').replace(/[[\]]/g, '')}](${mdTarget(target(p.url))})`).join(' '));
@@ -371,7 +307,21 @@ function buildReadme(design, { local = () => null, today = '' } = {}) {
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
 
+// Plain text with line breaks as HTML (descriptions some sites keep as text)
+function textToHtml(text) {
+  const esc = String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return esc.split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+}
+
+// "https:" URL whose host is one of `hosts` or under one of them
+function onHosts(url, hosts) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && hosts.some(h => u.hostname === h || u.hostname.endsWith(`.${h}`));
+  } catch (e) { return false; }
+}
+
 module.exports = {
-  designIdOf, apiUrl, pageUrl, isAssetUrl, htmlToMarkdown, imagesOf, assetsOf, hardwareOf,
-  buildReadme, marker, hasMarker, safeFileName
+  htmlToMarkdown, imagesOf, mdTarget, safeFileName, extOf, assetsOf, buildReadme, marker, hasMarker,
+  day, textToHtml, onHosts
 };

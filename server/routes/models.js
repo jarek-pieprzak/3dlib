@@ -587,7 +587,7 @@ router.post('/', authenticate, requireUploader, (req, res) => {
         run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [r.lastId, tagId]);
       }
     }
-    sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [r.lastId]), null);
+    sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [r.lastId]), null, userId);
     res.status(201).json(get('SELECT * FROM models WHERE id=?', [r.lastId]));
   } catch (e) {
     console.error('Failed to create model:', e);
@@ -644,8 +644,9 @@ router.put('/:id', authenticate, (req, res) => {
         }
       }
     }
-    // A MakerWorld page as the source: its documentation is copied into the project folder
-    sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [id]), model.source_url);
+    // A MakerWorld, Printables or Thingiverse page as the source: its documentation is copied into
+    // the project folder (Thingiverse with the token of the user who saves)
+    sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [id]), model.source_url, req.user.id);
     res.json(get('SELECT * FROM models WHERE id=?', [id]));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to update model' }); }
 });

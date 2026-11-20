@@ -1,37 +1,31 @@
 // Copies the documentation of a model's source page into its project folder, so it stays when the
-// page changes or goes: README.md (who made it, the description, print profiles, hardware), the
-// pictures under images/ and the attached documents (PDF manuals). Pages 3DLib knows: MakerWorld
-// (server/utils/makerworld.js).
+// page changes or goes: README.md (who made it, the description, print profiles or settings,
+// hardware), the pictures under images/ and the attached documents (PDF manuals). Sites:
+// MakerWorld, Printables, Thingiverse (server/utils/sources/; Thingiverse with the token of the
+// user who saved the model, users.thingiverse_token).
 //
 // It starts by itself when a model is saved with such a Source URL (a new URL, or one whose last
 // copy failed) and runs in the background; models.source_import keeps the outcome for the model
-// page: { url, status: 'running' | 'done' | 'error', at, message }.
+// page: { url, site, status: 'running' | 'done' | 'error', at, message, code }; code
+// 'token_missing' / 'token_invalid' when the site wants a (new) token of the user.
 //  * Files already in the folder stay as they are (a second import downloads only what is new);
 //    a download the project already has under another name or folder (same content) is dropped
 //    and the README links that file.
-//  * A README that 3DLib did not write is kept: the copy goes to "MakerWorld.md" next to it.
+//  * A README that 3DLib did not write is kept: the copy goes to "<Site>.md" next to it.
 //  * A project made of one loose file becomes a folder first; read-only projects are left alone.
-//  * Tags of the page are added; the hardware fills the Parts tab when it has no list yet.
+//  * Tags of the page are added; hardware fills the Parts tab when it has no list yet.
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
-const https = require('https');
 const { get, all, run, saveDb } = require('../database');
 const { getFileType, getScanStatus } = require('../utils/library');
 const projectFiles = require('../utils/projectFiles');
-const makerworld = require('../utils/makerworld');
+const { sourceOf } = require('../utils/sources');
+const { assetsOf, buildReadme, hasMarker } = require('../utils/sources/common');
+const http = require('../utils/sources/http');
 const { tagIdFor, logEvent, hashFileStream } = require('../utils/modelHelpers');
 const { newToken } = require('../utils/slicerToken');
-const { version } = require('../../package.json');
 
-const USER_AGENT = `3DLib/${version} (self-hosted model library)`;
-const MAX_JSON_BYTES = 30 * 1024 * 1024;
 const MAX_FILE_BYTES = 500 * 1024 * 1024;
-const TIMEOUT_MS = 60000;
-
-// The tests answer for makerworld.com and the CDN: https://<host>/<path> -> <origin>/<host>/<path>
-const TEST_ORIGIN = process.env.NODE_ENV === 'test' ? (process.env.SOURCE_IMPORT_TEST_ORIGIN || '') : '';
-const requestUrl = (url) => (TEST_ORIGIN ? `${TEST_ORIGIN}/${url.replace(/^https?:\/\//, '')}` : url);
 
 const running = new Set();
 
@@ -44,58 +38,19 @@ function setStatus(modelId, status) {
   saveDb();
 }
 
-// The page a URL points to, or null when 3DLib cannot copy it
-function sourceOf(url) {
-  const id = makerworld.designIdOf(url);
-  return id ? { site: 'MakerWorld', id } : null;
-}
-
-// ─── HTTP ────────────────────────────────────────────────────────────────────
-
-function open(url, redirects = 3) {
-  return new Promise((resolve, reject) => {
-    const target = requestUrl(url);
-    const lib = target.startsWith('https:') ? https : http;
-    const req = lib.get(target, { headers: { 'user-agent': USER_AGENT, accept: '*/*' }, timeout: TIMEOUT_MS }, (res) => {
-      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects > 0) {
-        res.resume();
-        let next;
-        try { next = new URL(res.headers.location, url).href; } catch (e) { return reject(new Error('Bad redirect')); }
-        if (!makerworld.isAssetUrl(next) && new URL(next).hostname !== new URL(url).hostname) {
-          return reject(new Error(`Redirected to ${new URL(next).hostname}`));
-        }
-        return resolve(open(next, redirects - 1));
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(Object.assign(new Error(`HTTP ${res.statusCode}`), { status: res.statusCode }));
-      }
-      resolve(res);
-    });
-    req.on('timeout', () => req.destroy(new Error('Timed out')));
-    req.on('error', reject);
-  });
-}
-
-async function fetchJson(url) {
-  const res = await open(url);
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of res) {
-    size += chunk.length;
-    if (size > MAX_JSON_BYTES) { res.destroy(); throw new Error('The answer is too large'); }
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+// What Thingiverse said about a user's token last ('ok' / 'invalid'): Profile and the app's notice
+function markToken(userId, status) {
+  run("UPDATE users SET thingiverse_token_status = ?, thingiverse_token_checked_at = datetime('now') WHERE id = ? AND thingiverse_token IS NOT NULL",
+    [status, userId], true);
 }
 
 // A hidden ".<name>.part" next to the destination: the scanner skips dotfiles
 const partOf = (dest) => path.join(path.dirname(dest), `.${path.basename(dest)}.part`);
 
 // Into `part` (the caller renames it or drops it)
-async function download(url, part) {
+async function download(url, part, opts) {
   fs.mkdirSync(path.dirname(part), { recursive: true });
-  const res = await open(url);
+  const res = await http.open(url, opts);
   let size = 0;
   try {
     await new Promise((resolve, reject) => {
@@ -172,28 +127,44 @@ function addTags(model, tags) {
 }
 
 // The hardware of the page as the Parts tab's list, when the project has none yet
-function fillPartsList(model, hardware) {
+function fillPartsList(model, hardware, site) {
   if (!hardware.length || get('SELECT parts_list FROM models WHERE id = ?', [model.id]).parts_list) return false;
   const list = {
     files: [],
     hardware: hardware.map(h => ({ name: h.name, qty: h.qty, have: false })),
-    notes: ['Hardware from MakerWorld.', ...hardware.filter(h => h.note).map(h => `${h.name}: ${h.note}`)].join('\n')
+    notes: [`Hardware from ${site}.`, ...hardware.filter(h => h.note).map(h => `${h.name}: ${h.note}`)].join('\n')
   };
   run('UPDATE models SET parts_list = ?, kit_needs = NULL WHERE id = ?', [JSON.stringify(list), model.id], true);
   require('../utils/kits').refreshNeeds(get('SELECT * FROM models WHERE id = ?', [model.id]));
   return true;
 }
 
-async function importMakerWorld(modelId, url, id) {
-  let design;
-  try {
-    design = await fetchJson(makerworld.apiUrl(id));
-  } catch (e) {
-    if (e.status === 403 || e.status === 429) throw new Error(`MakerWorld refused the request (${e.message}); try again later`);
-    if (e.status === 404) throw new Error('MakerWorld has no model with this number');
-    throw new Error(`MakerWorld could not be reached: ${e.message}`);
+// The page of the site, with errors in words for the model page
+async function loadPage(source, id, userId) {
+  let token = null;
+  if (source.needsToken) {
+    const user = userId ? get('SELECT thingiverse_token FROM users WHERE id = ?', [userId]) : null;
+    token = (user && user.thingiverse_token) || null;
   }
-  if (!design || Number(design.id) !== id) throw new Error('MakerWorld sent no model data');
+  try {
+    const page = await source.load(id, http, { token });
+    if (token) markToken(userId, 'ok');
+    return { page, token };
+  } catch (e) {
+    if (typeof e.code === 'string' && e.code.startsWith('token_')) {
+      if (e.code === 'token_invalid' && userId) { markToken(userId, 'invalid'); saveDb(); }
+      throw e;
+    }
+    if (e.status === 403 || e.status === 429) throw new Error(`${source.site} refused the request (${e.message}); try again later`);
+    if (e.status === 404) throw new Error(`${source.site} has no model with this number`);
+    if (e.status || e.code) throw new Error(`${source.site} could not be reached: ${e.message}`);
+    throw e;
+  }
+}
+
+async function importPage(modelId, found, userId) {
+  const { source, id } = found;
+  const { page, token } = await loadPage(source, id, userId);
 
   await waitForScan();
   const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [modelId]);
@@ -210,7 +181,7 @@ async function importMakerWorld(modelId, url, id) {
   const touched = [];
   const own = all("SELECT library_path FROM files WHERE model_id = ? AND deleted_at IS NULL AND library_path IS NOT NULL AND library_path NOT LIKE '%::%'", [modelId])
     .map(f => f.library_path);
-  for (const asset of makerworld.assetsOf(design)) {
+  for (const asset of assetsOf(page, source.isAsset)) {
     const dest = path.join(root, ...asset.rel.split('/'));
     const part = partOf(dest);
     try {
@@ -218,7 +189,7 @@ async function importMakerWorld(modelId, url, id) {
         local.set(asset.url, asset.rel);
         touched.push(dest);
       } else {
-        await download(asset.url, part);
+        await download(asset.url, part, { allow: source.isAsset, headers: source.headersFor ? source.headersFor(asset.url, token) : undefined });
         const twin = await sameContent(part, own);
         if (twin) {
           fs.unlinkSync(part);
@@ -240,30 +211,28 @@ async function importMakerWorld(modelId, url, id) {
   }
 
   // README.md, unless the project has a README of its own
-  let readmeName = 'README.md';
-  for (const name of ['README.md', 'MakerWorld.md']) {
-    readmeName = name;
+  let readmeName = null;
+  for (const name of ['README.md', `${source.site}.md`]) {
     const p = path.join(root, name);
-    if (!projectFiles.exists(p) || makerworld.hasMarker(fs.readFileSync(p, 'utf8').slice(0, 300))) break;
-    readmeName = null;
+    if (!projectFiles.exists(p) || hasMarker(fs.readFileSync(p, 'utf8').slice(0, 300))) { readmeName = name; break; }
   }
   if (readmeName) {
     const today = new Date().toISOString().slice(0, 10);
-    writeText(path.join(root, readmeName), makerworld.buildReadme(design, { local: u => local.get(u) || null, today }));
+    writeText(path.join(root, readmeName), buildReadme(page, { local: u => local.get(u) || null, today }));
     touched.push(path.join(root, readmeName));
   }
 
   const fresh = get('SELECT * FROM models WHERE id = ?', [modelId]);
   for (const abs of touched) indexFile(fresh, root, abs);
-  const tags = addTags(fresh, design.tags);
-  const parts = fillPartsList(fresh, makerworld.hardwareOf(design));
+  const tags = addTags(fresh, page.tags);
+  const parts = fillPartsList(fresh, page.hardware || [], source.site);
   run("UPDATE models SET updated_at = datetime('now') WHERE id = ?", [modelId], true);
   saveDb();
 
   const n = (k, one, many) => `${counts[k]} ${counts[k] === 1 ? one : many}`;
   const bits = [readmeName ? `the description (${readmeName})` : 'no description (README.md is not from 3DLib)',
     n('description', 'picture of it', 'pictures of it'), n('gallery', 'gallery picture', 'gallery pictures'), n('document', 'document', 'documents')];
-  let message = `Copied ${bits.join(', ')} from MakerWorld`;
+  let message = `Copied ${bits.join(', ')} from ${source.site}`;
   if (tags) message += `; ${tags} tag${tags === 1 ? '' : 's'} added`;
   if (parts) message += '; hardware in the Parts tab';
   if (reused.length) message += `. Already in the project: ${reused.join(', ')}`;
@@ -271,31 +240,33 @@ async function importMakerWorld(modelId, url, id) {
   return { message, failed: failed.length };
 }
 
-async function runImport(modelId, url) {
-  const source = sourceOf(url);
+async function runImport(modelId, url, userId) {
+  const found = sourceOf(url);
+  const site = found.source.site;
   running.add(modelId);
-  setStatus(modelId, { url, status: 'running', message: `Copying the documentation from ${source.site}...` });
+  setStatus(modelId, { url, site, status: 'running', message: `Copying the documentation from ${site}...` });
   try {
-    const r = await importMakerWorld(modelId, url, source.id);
-    setStatus(modelId, { url, status: 'done', message: r.message });
+    const r = await importPage(modelId, found, userId);
+    setStatus(modelId, { url, site, status: 'done', message: r.message });
     logEvent(r.failed ? 'warning' : 'info', `Source import, model ${modelId}: ${r.message}`);
   } catch (e) {
-    const message = e instanceof projectFiles.FsError ? e.message : (e.message || 'The copy failed');
-    if (get('SELECT id FROM models WHERE id = ?', [modelId])) setStatus(modelId, { url, status: 'error', message });
+    const message = e.message || 'The copy failed';
+    const code = typeof e.code === 'string' && e.code.startsWith('token_') ? e.code : undefined;
+    if (get('SELECT id FROM models WHERE id = ?', [modelId])) setStatus(modelId, { url, site, status: 'error', message, code });
     logEvent('warning', `Source import, model ${modelId} (${url}): ${message}`);
   } finally {
     running.delete(modelId);
   }
 }
 
-// After a model is saved: copies its source page when the URL is new or its last copy failed.
-// True when a copy started.
-function maybeStart(model, previousUrl) {
+// After a model is saved by userId: copies its source page when the URL is new or its last copy
+// failed. True when a copy started.
+function maybeStart(model, previousUrl, userId) {
   const url = model && model.source_url;
   if (!url || !sourceOf(url) || running.has(model.id) || model.kit_source_id) return false;
   const last = statusOf(model);
   if (url === previousUrl && last && last.url === url && last.status === 'done') return false;
-  runImport(model.id, url).catch(() => {});
+  runImport(model.id, url, userId).catch(() => {});
   return true;
 }
 
@@ -303,8 +274,8 @@ function maybeStart(model, previousUrl) {
 function resetInterrupted() {
   for (const m of all("SELECT id, source_import FROM models WHERE source_import LIKE '%\"running\"%'")) {
     const s = statusOf(m);
-    if (s && s.status === 'running') setStatus(m.id, { url: s.url, status: 'error', message: 'The copy was cut off by a restart: save the model again to retry' });
+    if (s && s.status === 'running') setStatus(m.id, { url: s.url, site: s.site, status: 'error', message: 'The copy was cut off by a restart: save the model again to retry' });
   }
 }
 
-module.exports = { maybeStart, sourceOf, statusOf, resetInterrupted, isRunning: (id) => running.has(id) };
+module.exports = { maybeStart, statusOf, resetInterrupted, markToken, isRunning: (id) => running.has(id) };

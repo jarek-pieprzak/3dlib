@@ -107,22 +107,36 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
-- Source import (`server/services/sourceImport.js`, `server/utils/makerworld.js`): saving a model
-  with a MakerWorld Source URL (new, or its last copy failed) copies the page into the project
-  folder in the background: `README.md` (marker line `<!-- 3dlib-source: ... -->`, title, author,
-  licence, the description as Markdown, the designer's print profiles, hardware, documents,
-  gallery), pictures in `images/` (`description-NN.<ext>` by position, gallery names kept), the
-  PDFs in the folder. Data from `GET makerworld.com/api/v1/design-service/design/<id>` (the page
-  itself sits behind a bot check, the API does not; plain `https.get`, `3DLib/<version>` user
-  agent; Node's `fetch` gets 403). Files only from Bambu's CDNs. Files at their place stay; a
-  download whose content the project has elsewhere is dropped and the README links that file;
-  a README without the marker stays (copy goes to `MakerWorld.md`); a loose file becomes a
-  folder; read-only projects fail. Tags of the page are added; hardware fills an empty Parts
-  list. `models.source_import` = { url, status running/done/error, at, message } (a restart marks
-  a running one failed); the model page polls `GET /api/models/:id/source-import` and offers
-  "Copy failed · retry". Tests: a local fake MakerWorld (`SOURCE_IMPORT_TEST_ORIGIN`, only with
-  `NODE_ENV=test`). `UI.renderMarkdown(text, { base })` resolves a README's relative pictures and
-  links next to it; its photos go through `/thumbs` and open full size.
+- Source import (`server/services/sourceImport.js`, `server/utils/sources/`): saving a model with
+  a MakerWorld, Printables or Thingiverse Source URL (new, or its last copy failed) copies the
+  page into the project folder in the background: `README.md` (marker line
+  `<!-- 3dlib-source: ... -->`, title, author, licence, the description as Markdown, the site's
+  sections: MakerWorld print profiles, Printables print settings, Thingiverse details parts;
+  hardware, documents, gallery), pictures in `images/` (`description-NN.<ext>` by position,
+  gallery names kept), the PDFs in the folder (never the model files).
+  - Sites are modules of `sources/index.js` (`idOf`, `isAsset`, `load` -> a page of
+    `sources/common.js`, which has HTML -> Markdown, `assetsOf`, `buildReadme`). HTTP:
+    `sources/http.js` (Node `https`, `3DLib/<version>` user agent; Node's `fetch` gets 403 from
+    MakerWorld; redirects only to the site's hosts, headers to the first host only).
+  - MakerWorld: `GET makerworld.com/api/v1/design-service/design/<id>`. Printables: GraphQL
+    `api.printables.com/graphql/` `print(id)` (no login), "other files" that are documents via the
+    `getDownloadLink` mutation, plus the page PDF Printables makes ("Printables page.pdf").
+    Thingiverse: `api.thingiverse.com` with the App Token of the user who saved the model
+    (`users.thingiverse_token`, Profile -> API & Integrations with how to get one; `PUT /api/auth/
+    thingiverse-token` checks it with Thingiverse first, `DELETE` removes it; the browser gets only
+    `user.thingiverse` = { set, hint (last 4), status ok/invalid, checked_at }). A 401 marks the
+    token invalid: `#app-notice` above every page (`App.renderAppNotice`) until a new one is saved.
+  - Files at their place stay; a download whose content the project has elsewhere is dropped and
+    the README links that file; a README without the marker stays (copy goes to `<Site>.md`); a
+    loose file becomes a folder; read-only projects fail. Tags of the page are added; hardware
+    fills an empty Parts list.
+  - `models.source_import` = { url, site, status running/done/error, at, message, code
+    token_missing/token_invalid } (a restart marks a running one failed); the model page polls
+    `GET /api/models/:id/source-import` and offers "Copy failed · retry" or "<Site> · Token
+    needed" (opens the token settings).
+  - Tests: a local fake of the three sites (`SOURCE_IMPORT_TEST_ORIGIN`, only with
+    `NODE_ENV=test`). `UI.renderMarkdown(text, { base })` resolves a README's relative pictures
+    and links next to it; its photos go through `/thumbs` and open full size.
 - File list icons (`UI.fileIcon` / `fileIconType`): each kind of file has its icon (PDF, MD, text,
   archive, sheet, code, vector, link, OBJ, SCAD...); images, 3MF plates and stored renders show
   as small pictures; STL / 3MF up to 20 MB without one are rendered by the viewer once on screen

@@ -670,16 +670,69 @@ const UI = {
     return s && s.url === model.source_url ? s : null;
   },
 
-  // Next to the Source link: the copy running, or failed (a click tries again)
+  // Next to the Source link: the copy running, or failed (a click tries again; a token the site
+  // wants opens Profile -> API & Integrations, unless the user has a working one by now)
   sourceImportBadge(model, copy = this.sourceImportOf(model)) {
     if (!copy) return '';
     if (copy.status === 'running') {
       return `<span class="badge badge-source-import" title="${this.escapeHtml(copy.message || '')}"><span class="source-import-spin"></span>Copying the page...</span>`;
     }
+    const user = typeof App !== 'undefined' ? App.currentUser : null;
+    const tokenOk = user && user.thingiverse && user.thingiverse.set && user.thingiverse.status !== 'invalid';
+    if (copy.status === 'error' && copy.code && !tokenOk) {
+      const label = copy.code === 'token_invalid' ? 'Token refused' : 'Token needed';
+      return `<button type="button" class="badge badge-source-import is-error" onclick="App.openTokenSettings()" title="${this.escapeHtml(`${copy.message || ''} Click to open your token settings, then save the model again.`)}">${this.escapeHtml(copy.site || 'Source')} · ${label}</button>`;
+    }
     if (copy.status === 'error') {
       return `<button type="button" class="badge badge-source-import is-error" onclick="App.retrySourceImport(${model.id})" title="${this.escapeHtml(`${copy.message || 'The copy failed'}. Click to try again.`)}">Copy failed · retry</button>`;
     }
     return '';
+  },
+
+  // The notice above every page while Thingiverse refuses the user's token (App.renderAppNotice)
+  tokenNotice(t) {
+    const when = t.checked_at ? ` on ${this.formatDateShort(this.sqlDate(t.checked_at))}` : '';
+    return `<div class="app-notice-body">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>Thingiverse refused your API token${this.escapeHtml(when)}: Thingiverse pages are not copied until you paste a new one.</span>
+      <button type="button" class="btn btn-sm btn-primary" onclick="App.openTokenSettings()">Update token</button>
+      <button type="button" class="app-notice-close" onclick="App.closeAppNotice()" title="Hide until the next session" aria-label="Hide">×</button>
+    </div>`;
+  },
+
+  // Profile -> API & Integrations: the user's own Thingiverse token, what Thingiverse said about it
+  // last, and how to get one. t: { set, hint, status, checked_at } (never the token)
+  thingiverseTokenPanel(t = { set: false }) {
+    const when = t.checked_at ? ` (${this.formatDateShort(this.sqlDate(t.checked_at))})` : '';
+    const hint = this.escapeHtml(t.hint || '');
+    const status = !t.set
+      ? '<div class="token-status is-none">No token yet: Thingiverse pages are not copied.</div>'
+      : t.status === 'invalid'
+        ? `<div class="token-status is-invalid">Thingiverse refused the token …${hint}${this.escapeHtml(when)}: paste a new one.</div>`
+        : `<div class="token-status is-ok">Token …${hint} works${this.escapeHtml(when)}.</div>`;
+    return `
+      <div class="glass-panel" style="margin-top:20px" id="thingiverse-token-panel">
+        <div class="panel-header"><div class="panel-title">Thingiverse</div></div>
+        <div class="panel-body">
+          <p class="token-lead">A Thingiverse link as a model's Source URL copies the page into the project (description, pictures, PDFs). Thingiverse answers only with a token of your own; MakerWorld and Printables need none.</p>
+          ${status}
+          <form class="token-form" onsubmit="App.saveThingiverseToken(event)">
+            <input type="text" class="form-input masked-input" name="token" placeholder="${t.set ? 'Paste a new App Token to replace it' : 'Paste your App Token'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" required>
+            <button type="submit" class="btn btn-primary">Check and save</button>
+            ${t.set ? '<button type="button" class="btn btn-secondary" onclick="App.removeThingiverseToken()">Remove</button>' : ''}
+          </form>
+          <details class="token-howto"${t.set && t.status !== 'invalid' ? '' : ' open'}>
+            <summary>How to get the token</summary>
+            <ol>
+              <li>Sign in at <a href="https://www.thingiverse.com" target="_blank" rel="noopener noreferrer">thingiverse.com</a>.</li>
+              <li>Open <a href="https://www.thingiverse.com/apps/create" target="_blank" rel="noopener noreferrer">thingiverse.com/apps/create</a> and create an app: type <strong>Desktop app</strong>, any name (for example "3DLib") and a short description, the address of your 3DLib as its URL; accept the terms.</li>
+              <li>On the page of the new app copy the <strong>App Token</strong> (not the Client ID or the Client Secret).</li>
+              <li>Paste it above and save: 3DLib asks Thingiverse whether it works before keeping it.</li>
+            </ol>
+            <p>Every 3DLib user has a token of their own; it is used only for the pages you link and never shown again. When Thingiverse stops accepting it (the app was deleted or its token renewed), a notice at the top of every page says so until you paste a new one.</p>
+          </details>
+        </div>
+      </div>`;
   },
 
   safeUrl(url) {
@@ -2447,7 +2500,7 @@ const UI = {
         <div class="form-group">
           <label class="form-label">Source URL (optional)</label>
           <input class="form-input" type="url" name="source_url" value="${this.escapeHtml(model?.source_url || '')}" placeholder="e.g. https://www.printables.com/...">
-          <div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">A MakerWorld link: on save, its description, pictures and PDFs are copied into the project folder (README.md, images/).</div>
+          <div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">A MakerWorld, Printables or Thingiverse link: on save, its description, pictures and PDFs are copied into the project folder (README.md, images/). Thingiverse needs your token (Profile → API &amp; Integrations).</div>
         </div>
         <div class="form-group">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">

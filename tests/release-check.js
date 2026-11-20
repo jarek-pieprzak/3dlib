@@ -284,15 +284,16 @@ async function runStaticAndUiChecks() {
   });
 
   await check('MakerWorld import: page links, the description as Markdown, the files it brings, the README', () => {
-    const mw = require(path.join(ROOT_DIR, 'server/utils/makerworld'));
-    assert(mw.designIdOf('https://makerworld.com/pl/models/786733-vault-assault-unique-fully-printable-board-game?from=recommend#profileId-2709317') === 786733, 'A page link with language, slug, query and hash');
-    assert(mw.designIdOf('https://makerworld.com/models/12') === 12 && mw.designIdOf('https://www.makerworld.com/en/models/5/') === 5, 'Links without a slug');
+    const mw = require(path.join(ROOT_DIR, 'server/utils/sources/makerworld'));
+    const common = require(path.join(ROOT_DIR, 'server/utils/sources/common'));
+    assert(mw.idOf('https://makerworld.com/pl/models/786733-vault-assault-unique-fully-printable-board-game?from=recommend#profileId-2709317') === 786733, 'A page link with language, slug, query and hash');
+    assert(mw.idOf('https://makerworld.com/models/12') === 12 && mw.idOf('https://www.makerworld.com/en/models/5/') === 5, 'Links without a slug');
     for (const bad of ['https://makerworld.com.evil.com/models/1', 'https://evil.com/makerworld.com/models/1', 'ftp://makerworld.com/models/1', 'https://makerworld.com/en/collections/1', '', null]) {
-      assert(mw.designIdOf(bad) === null, `Not a MakerWorld model page: ${bad}`);
+      assert(mw.idOf(bad) === null, `Not a MakerWorld model page: ${bad}`);
     }
-    assert(mw.isAssetUrl('https://makerworld.bblmw.com/a.jpg') && !mw.isAssetUrl('http://makerworld.bblmw.com/a.jpg') && !mw.isAssetUrl('https://bblmw.com.evil.io/a.jpg'), 'Only the CDNs over https');
+    assert(mw.isAsset('https://makerworld.bblmw.com/a.jpg') && !mw.isAsset('http://makerworld.bblmw.com/a.jpg') && !mw.isAsset('https://bblmw.com.evil.io/a.jpg'), 'Only the CDNs over https');
 
-    const md = mw.htmlToMarkdown('<p><span style="color:red"><strong>Update 1 </strong></span>text &amp; more&nbsp;</p><p>&nbsp;</p><h3><strong><u>Design</u></strong></h3>'
+    const md = common.htmlToMarkdown('<p><span style="color:red"><strong>Update 1 </strong></span>text &amp; more&nbsp;</p><p>&nbsp;</p><h3><strong><u>Design</u></strong></h3>'
       + '<ul><li><strong>Gears</strong>: many<ul><li>inner</li></ul></li><li>two</li></ul><ol><li>a</li><li>b<br>c</li></ol>'
       + '<p><img src="https://x.bblmw.com/1.jpg"><img alt="B [2]" src="https://x.bblmw.com/2 (b).jpg"></p>'
       + '<p><a href="https://x.bblmw.com/1.jpg"><img src="https://x.bblmw.com/1.jpg"></a> <a href="javascript:x()">bad</a> <a href="https://example.com/a(b)">link</a></p>'
@@ -322,7 +323,8 @@ async function runStaticAndUiChecks() {
         boms_of_other_part_list: [{ name: '12mm_Elastic_Band', quantity: 4, note: '(Only_if_no_springs)' }]
       }
     };
-    const assets = mw.assetsOf(design);
+    const page = mw.pageOf(design);
+    const assets = common.assetsOf(page, mw.isAsset);
     assert(JSON.stringify(assets.map(a => `${a.kind}:${a.rel}`)) === JSON.stringify([
       'description:images/description-01.jpg', 'description:images/description-03.png',
       'gallery:images/Front view.jpg', 'gallery:images/Front view (2).jpg', 'gallery:images/picture-03.webp', 'document:Manual (v2).pdf'
@@ -333,15 +335,72 @@ async function runStaticAndUiChecks() {
       { name: '12mm Elastic Band', qty: 4, note: 'Only if no springs' }
     ]), `Hardware: ${JSON.stringify(mw.hardwareOf(design))}`);
     const local = new Map(assets.map(a => [a.url, a.rel]));
-    const readme = mw.buildReadme(design, { local: u => local.get(u) || null, today: '2026-11-20' });
-    assert(mw.hasMarker(readme) && readme.startsWith('<!-- 3dlib-source: https://makerworld.com/en/models/9 -->\n# Clock\n'), `README starts with its marker and title:\n${readme}`);
+    const readme = common.buildReadme(page, { local: u => local.get(u) || null, today: '2026-11-20' });
+    assert(common.hasMarker(readme) && readme.startsWith('<!-- 3dlib-source: https://makerworld.com/en/models/9 -->\n# Clock\n'), `README starts with its marker and title:\n${readme}`);
     for (const part of [
       'By **Maker** on [MakerWorld](https://makerworld.com/en/models/9) · published 2024-11-14 · Standard Digital File License', 'Copied by 3DLib on 2026-11-20.',
-      '![](images/description-01.jpg)', '![](https://evil.example/x.jpg)', '### Full', '2.0 h · 100 g · 2 colours · AMS', '0.2mm\n15% infill', 'Filaments: PLA #000000 90 g',
+      '![](images/description-01.jpg)', '![](https://evil.example/x.jpg)', '## Print profiles', '### Full', '2.0 h · 100 g · 2 colours · AMS', '0.2mm\n15% infill', 'Filaments: PLA #000000 90 g',
       '- 4 × 12mm Elastic Band (Only if no springs)', '- [Manual (v2).pdf](Manual%20%28v2%29.pdf)', '![Front: view?.jpg](images/Front%20view.jpg)'
     ]) assert(readme.includes(part), `README is missing "${part}":\n${readme}`);
     assert(!readme.includes('Remix of another user'), 'Only the designer\'s own print profiles');
-    assert(!mw.hasMarker('# My own readme'), 'A README without the marker is not 3DLib\'s');
+    assert(!common.hasMarker('# My own readme'), 'A README without the marker is not 3DLib\'s');
+  });
+
+  await check('Printables and Thingiverse import: page links, pages of their data, which link goes to which site', () => {
+    const common = require(path.join(ROOT_DIR, 'server/utils/sources/common'));
+    const { sourceOf } = require(path.join(ROOT_DIR, 'server/utils/sources'));
+    const pr = require(path.join(ROOT_DIR, 'server/utils/sources/printables'));
+    const tv = require(path.join(ROOT_DIR, 'server/utils/sources/thingiverse'));
+    assert(pr.idOf('https://www.printables.com/model/3161-3d-benchy') === 3161 && pr.idOf('https://printables.com/pl/model/5-x/files') === 5 && pr.idOf('https://www.printables.com/model/77') === 77, 'Printables links');
+    assert(pr.idOf('https://www.printables.com/social/1-x') === null && pr.idOf('https://printables.com.evil.io/model/1') === null, 'Not Printables model pages');
+    assert(tv.idOf('https://www.thingiverse.com/thing:763622') === 763622 && tv.idOf('https://thingiverse.com/thing:5/files') === 5, 'Thingiverse links');
+    assert(tv.idOf('https://www.thingiverse.com/things:1') === null && tv.idOf('https://thingiverse.com.evil.io/thing:1') === null, 'Not Thingiverse thing pages');
+    assert(sourceOf('https://makerworld.com/models/1').source.site === 'MakerWorld' && sourceOf('https://www.printables.com/model/2-a').source.site === 'Printables'
+      && sourceOf('https://www.thingiverse.com/thing:3').source.site === 'Thingiverse' && sourceOf('https://example.com/model/1') === null, 'Each link goes to its site');
+    assert(tv.isAsset('https://cdn.thingiverse.com/assets/a.pdf') && !tv.isAsset('https://cdn.thingiverse.com.evil.io/a.pdf') && pr.isAsset('https://files.printables.com/a.pdf'), 'Files only from the sites\' own hosts');
+    assert(JSON.stringify(tv.headersFor('https://api.thingiverse.com/files/1/download', 'T')) === JSON.stringify({ authorization: 'Bearer T' }) && tv.headersFor('https://cdn.thingiverse.com/a.pdf', 'T') === undefined, 'The token goes to the API only');
+
+    const p = pr.pageOf({
+      id: '12', name: 'Clip', summary: 'A clip for cables.', description: '<p>Print it <img src="https://media.printables.com/media/prints/12/d.png"></p>',
+      datePublished: '2025-02-14T09:26:10+00:00', license: { name: 'CC BY' }, user: { publicUsername: 'Maker' }, tags: [{ name: 'clip' }],
+      images: [{ filePath: 'media/prints/12/images/1_a/clip.jpg' }], pdfFilePath: 'media/prints/12/pdfs/12-clip.pdf',
+      printDuration: '2.46', numPieces: 4, weight: '29.00', nozzleDiameters: ['0.40'], layerHeights: ['0.15', '0.2'], materials: [{ name: 'PLA' }],
+      otherFiles: [{ id: '5', name: 'Manual.pdf' }, { id: '6', name: 'Body.step' }, { id: '7', name: 'Notes.txt' }]
+    }, { 5: 'https://files.printables.com/media/prints/12/other/Manual.pdf', 6: 'https://files.printables.com/x.step' });
+    assert(p.title === 'Clip' && p.author === 'Maker' && p.license === 'CC BY' && p.url === 'https://www.printables.com/model/12', `Printables page: ${JSON.stringify(p)}`);
+    assert(p.description.startsWith('<p>A clip for cables.</p>'), 'The summary leads the description');
+    assert(JSON.stringify(p.documents.map(d => d.name)) === JSON.stringify(['Manual.pdf', 'Printables page.pdf']), `Documents: the PDFs with a link, the page PDF (not the STEP): ${JSON.stringify(p.documents)}`);
+    assert(p.sections[0].title === 'Print settings' && p.sections[0].markdown.includes('- Print time: 2.5 h') && p.sections[0].markdown.includes('- Layer height: 0.15, 0.2 mm'), `Print settings: ${JSON.stringify(p.sections)}`);
+    const pa = common.assetsOf(p, pr.isAsset).map(a => a.rel);
+    assert(JSON.stringify(pa) === JSON.stringify(['images/description-01.png', 'images/clip.jpg', 'Manual.pdf', 'Printables page.pdf']), `Printables files: ${pa}`);
+
+    const thing = {
+      id: 9, name: 'Box', added: '2015-04-09T09:46:56+00:00', license: 'Creative Commons - Attribution', creator: { name: 'maker9' },
+      details_parts: [
+        { type: 'summary', name: 'Summary', data: [{ content: 'A box.\n\nWith a lid.' }] },
+        { type: 'settings', name: 'Print Settings', data: [{ printer: 'MK3', supports: 'No', infill: '20%', notes: '' }] },
+        { type: 'tips', name: 'Post-Printing', data: [{ content: '<p>Sand <img src="https://cdn.thingiverse.com/assets/t.jpg"></p>' }] },
+        { type: 'custom', name: 'Empty', data: [] }
+      ],
+      tags: [{ name: 'box' }, { name: 'lid' }]
+    };
+    const images = [{ name: 'box.jpg', sizes: [{ type: 'thumb', size: 'small', url: 'https://cdn.thingiverse.com/renders/s.jpg' }, { type: 'display', size: 'large', url: 'https://cdn.thingiverse.com/assets/l.jpg' }, { type: 'preview', size: 'featured', url: 'https://cdn.thingiverse.com/assets/f.jpg' }] }];
+    const files = [{ name: 'box.stl', direct_url: 'https://cdn.thingiverse.com/assets/box.stl' }, { name: 'Guide.pdf', direct_url: 'https://cdn.thingiverse.com/assets/g.pdf' }, { name: 'Other.pdf', download_url: 'https://api.thingiverse.com/files/3/download' }];
+    const t = tv.pageOf(thing, images, files);
+    assert(t.description === '<p>A box.</p><p>With a lid.</p>' && t.author === 'maker9' && t.url === 'https://www.thingiverse.com/thing:9', `Thingiverse page: ${JSON.stringify(t)}`);
+    assert(JSON.stringify(t.sections.map(s => s.title)) === JSON.stringify(['Print Settings', 'Post-Printing']) && t.sections[0].markdown === '- Printer: MK3\n- Supports: No\n- Infill: 20%', `Sections: ${JSON.stringify(t.sections)}`);
+    assert(t.pictures[0].url === 'https://cdn.thingiverse.com/assets/l.jpg', 'The biggest picture of an image');
+    assert(JSON.stringify(t.documents.map(d => d.url)) === JSON.stringify(['https://cdn.thingiverse.com/assets/g.pdf', 'https://api.thingiverse.com/files/3/download']) && JSON.stringify(t.tags) === '["box","lid"]', `Documents and tags: ${JSON.stringify(t)}`);
+    const old = tv.pageOf({ id: 4, name: 'Old', description: 'Line 1\nLine 2', instructions_html: '<p>Do it</p>' });
+    assert(old.description === '<p>Line 1<br>Line 2</p>' && old.sections[0].title === 'Instructions', `A thing without details_parts: ${JSON.stringify(old)}`);
+    const readme = common.buildReadme(t, { local: () => null });
+    assert(readme.includes('## Post-Printing') && readme.includes('![](https://cdn.thingiverse.com/assets/t.jpg)') && readme.includes('By **maker9** on [Thingiverse](https://www.thingiverse.com/thing:9)'), `Thingiverse README:\n${readme}`);
+
+    // The token settings and the notice never put the token or a name into HTML unescaped
+    const panel = UI.thingiverseTokenPanel({ set: true, hint: '<b>1', status: 'invalid', checked_at: '2026-11-20 10:00:00' });
+    assert(panel.includes('…&lt;b&gt;1') && panel.includes('is-invalid') && panel.includes('App.removeThingiverseToken()') && panel.includes('thingiverse.com/apps/create'), 'Token panel: escaped hint, refused state, remove, instructions');
+    assert(UI.thingiverseTokenPanel({ set: false }).includes('No token yet') && !UI.thingiverseTokenPanel({ set: false }).includes('removeThingiverseToken'), 'Without a token: no Remove');
+    assert(UI.tokenNotice({ status: 'invalid', checked_at: '2026-11-20 10:00:00' }).includes('App.openTokenSettings()'), 'The notice opens the token settings');
   });
 
   await check('Names, descriptions and file metadata never become HTML (cards, forms, model page, share page, settings)', () => {
@@ -1249,12 +1308,50 @@ async function runE2ETests() {
     }
   };
   const makerWorldHits = [];
+  // Printables (GraphQL) and Thingiverse (API with a token: "good-token" works, others get 401)
+  const printablesPrint = {
+    id: '777', name: 'Cable Clip', summary: 'Clips for cables.', description: '<p>Print <strong>flat</strong>.</p>', datePublished: '2025-01-02T00:00:00+00:00',
+    license: { name: 'CC BY' }, user: { publicUsername: 'Clipper' }, tags: [{ name: 'clip' }], images: [{ filePath: 'media/prints/777/images/1_a/clip.jpg' }],
+    pdfFilePath: 'media/prints/777/pdfs/777.pdf', printDuration: '1.5', numPieces: 2, weight: '10', nozzleDiameters: ['0.4'], layerHeights: ['0.2'], materials: [{ name: 'PETG' }],
+    otherFiles: [{ id: '31', name: 'Assembly.pdf' }, { id: '32', name: 'Body.step' }]
+  };
+  const thingiverseThing = {
+    id: 888, name: 'Desk Box', added: '2016-05-06T07:08:09+00:00', license: 'Creative Commons - Attribution', creator: { name: 'boxer' },
+    details_parts: [{ type: 'summary', name: 'Summary', data: [{ content: '<p>A box for the desk.</p>' }] }], tags: [{ name: 'box' }]
+  };
+  const thingiverseRevoked = { on: false };
+  const cdnAuth = []; // Authorization headers that reached a CDN (must stay empty)
   const makerWorld = require('http').createServer((req, res) => {
     makerWorldHits.push(req.url);
     const send = (status, body, type = 'application/octet-stream') => { res.writeHead(status, { 'Content-Type': type }); res.end(body); };
     if (req.url === '/makerworld.com/api/v1/design-service/design/4242') return send(200, JSON.stringify(makerWorldDesign), 'application/json');
     if (req.url === '/makerworld.com/api/v1/design-service/design/403') return send(403, '<title>Just a moment...</title>', 'text/html');
     if (req.url.startsWith('/makerworld.bblmw.com/') && !req.url.includes('missing')) return send(200, Buffer.from(`file ${req.url}`));
+    if (req.url === '/api.printables.com/graphql/' && req.method === 'POST') {
+      let body = '';
+      req.on('data', c => { body += c; });
+      req.on('end', () => {
+        const q = JSON.parse(body);
+        if (/getDownloadLink/.test(q.query)) {
+          const ok = q.variables.id === '31' && q.variables.printId === '777' && q.variables.fileType === 'other';
+          return send(200, JSON.stringify({ data: { getDownloadLink: ok ? { ok: true, output: { link: 'https://files.printables.com/media/prints/777/other/Assembly.pdf' } } : { ok: false, output: null } } }), 'application/json');
+        }
+        send(200, JSON.stringify({ data: { print: q.variables.id === '777' ? printablesPrint : null } }), 'application/json');
+      });
+      return;
+    }
+    if (req.url.startsWith('/media.printables.com/') || req.url.startsWith('/files.printables.com/') || req.url.startsWith('/cdn.thingiverse.com/')) {
+      cdnAuth.push(req.headers.authorization || '');
+      return send(200, Buffer.from(`file ${req.url}`));
+    }
+    if (req.url.startsWith('/api.thingiverse.com/')) {
+      if (req.headers.authorization !== 'Bearer good-token' || thingiverseRevoked.on) return send(401, JSON.stringify({ error: 'Unauthorized' }), 'application/json');
+      const route = req.url.slice('/api.thingiverse.com'.length);
+      if (route === '/things/763622' || route === '/things/888') return send(200, JSON.stringify(route === '/things/888' ? thingiverseThing : { id: 763622 }), 'application/json');
+      if (route === '/things/888/images') return send(200, JSON.stringify([{ name: 'box.jpg', sizes: [{ type: 'display', size: 'large', url: 'https://cdn.thingiverse.com/assets/box.jpg' }] }]), 'application/json');
+      if (route === '/things/888/files') return send(200, JSON.stringify([{ name: 'box.stl', direct_url: 'https://cdn.thingiverse.com/assets/box.stl' }, { name: 'Guide.pdf', download_url: 'https://api.thingiverse.com/files/5/download' }]), 'application/json');
+      if (route === '/files/5/download') { res.writeHead(302, { Location: 'https://cdn.thingiverse.com/assets/guide.pdf' }); return res.end(); }
+    }
     send(404, 'Not found', 'text/plain');
   });
   await new Promise(resolve => makerWorld.listen(makerWorldPort, '127.0.0.1', resolve));
@@ -3102,8 +3199,8 @@ async function runE2ETests() {
       const gear = await byName('Gear Clock');
 
       // Not a known page: nothing starts
-      const other = await apiReq(`/api/models/${gear.id}`, { method: 'PUT', session: adminSession, body: { source_url: 'https://www.printables.com/model/1' } });
-      assert(!other.data.source_import, `Only MakerWorld pages are copied: ${other.data.source_import}`);
+      const other = await apiReq(`/api/models/${gear.id}`, { method: 'PUT', session: adminSession, body: { source_url: 'https://cults3d.com/en/3d-model/various/clock' } });
+      assert(!other.data.source_import, `Only pages of known sites are copied: ${other.data.source_import}`);
 
       const { saved, status } = await copyOf(gear.id, url);
       assert(JSON.parse(saved.source_import).status === 'running', `The save answers with the copy running: ${saved.source_import}`);
@@ -3154,6 +3251,84 @@ async function runE2ETests() {
       assert(refused.status.status === 'error' && /refused/.test(refused.status.message), `A refused page fails with a message: ${JSON.stringify(refused.status)}`);
       const viewer = await apiReq(`/api/models/${gear.id}/source-import`, { session: viewerSession });
       assert(viewer.status === 403, `Viewers cannot read the copy status: ${viewer.status}`);
+    });
+
+    await check('Source import: Printables without a token; Thingiverse with the token of the user, checked, never shown, refused tokens flagged', async () => {
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      put('Cable Clip/clip.stl', stl);
+      put('Desk Box/box.stl', stl);
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const s = await apiReq('/api/library/scan/status', { session: adminSession });
+        if (s.status === 200 && !s.data.isScanning) break;
+      }
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const copyOf = async (id, url) => {
+        const saved = await apiReq(`/api/models/${id}`, { method: 'PUT', session: adminSession, body: { source_url: url } });
+        assert(saved.status === 200, `Saving the Source URL failed: ${JSON.stringify(saved.data)}`);
+        for (let i = 0; i < 200; i++) {
+          const s = await apiReq(`/api/models/${id}/source-import`, { session: adminSession });
+          if (s.status === 200 && !s.data.running) return s.data;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        throw new Error('The source import did not finish within 10 s');
+      };
+
+      // Printables: the description, the settings, the picture, the PDF of the other files and the page PDF
+      const clip = await byName('Cable Clip');
+      const pst = await copyOf(clip.id, 'https://www.printables.com/pl/model/777-cable-clip/files');
+      assert(pst.status === 'done' && pst.site === 'Printables' && pst.message.includes('2 documents') && pst.message.includes('1 gallery picture'), `Printables copy: ${JSON.stringify(pst)}`);
+      for (const rel of ['README.md', 'images/clip.jpg', 'Assembly.pdf', 'Printables page.pdf']) assert(fs.existsSync(lib(`Cable Clip/${rel}`)), `Printables copy must write ${rel}`);
+      assert(!fs.existsSync(lib('Cable Clip/Body.step')), 'Model files of the page are not downloaded');
+      const preadme = fs.readFileSync(lib('Cable Clip/README.md'), 'utf8');
+      assert(preadme.includes('By **Clipper** on [Printables](https://www.printables.com/model/777)') && preadme.includes('Print **flat**.') && preadme.includes('- Materials: PETG'), `Printables README:\n${preadme}`);
+
+      // Thingiverse without a token: the copy says what is missing
+      const box = await byName('Desk Box');
+      const turl = 'https://www.thingiverse.com/thing:888';
+      let tst = await copyOf(box.id, turl);
+      assert(tst.status === 'error' && tst.code === 'token_missing' && /Profile/.test(tst.message), `Without a token: ${JSON.stringify(tst)}`);
+      let me = (await apiReq('/api/auth/me', { session: adminSession })).data;
+      assert(me.thingiverse && me.thingiverse.set === false, `No token yet: ${JSON.stringify(me.thingiverse)}`);
+
+      // A token Thingiverse refuses is not kept; a good one is, and only its end is ever shown
+      const bad = await apiReq('/api/auth/thingiverse-token', { method: 'PUT', session: adminSession, body: { token: 'wrong-token' } });
+      assert(bad.status === 400 && /refused/.test(bad.data.error), `A refused token: ${JSON.stringify(bad)}`);
+      const good = await apiReq('/api/auth/thingiverse-token', { method: 'PUT', session: adminSession, body: { token: 'good-token' } });
+      assert(good.status === 200 && good.data.thingiverse.set && good.data.thingiverse.hint === 'oken' && good.data.thingiverse.status === 'ok', `A good token: ${JSON.stringify(good.data)}`);
+      me = (await apiReq('/api/auth/me', { session: adminSession })).data;
+      assert(!JSON.stringify(me).includes('good-token') && me.thingiverse.hint === 'oken', `/me never sends the token: ${JSON.stringify(me)}`);
+
+      // With the token: the copy runs; the token reaches the API, never the CDN
+      tst = await copyOf(box.id, turl);
+      assert(tst.status === 'done' && tst.message.includes('1 gallery picture') && tst.message.includes('1 document'), `Thingiverse copy: ${JSON.stringify(tst)}`);
+      assert(fs.existsSync(lib('Desk Box/images/box.jpg')) && fs.existsSync(lib('Desk Box/Guide.pdf')) && !fs.existsSync(lib('Desk Box/box.stl.part')), 'Thingiverse picture and PDF (through the API download link)');
+      assert(fs.readFileSync(lib('Desk Box/Guide.pdf'), 'utf8') === 'file /cdn.thingiverse.com/assets/guide.pdf', 'The download link leads to the CDN file');
+      assert(fs.readFileSync(lib('Desk Box/README.md'), 'utf8').includes('A box for the desk.'), 'Thingiverse README');
+
+      // The token of another user is theirs: maker_user has none
+      const maker = await makerSession();
+      const makerMe = (await apiReq('/api/auth/me', { session: maker })).data;
+      assert(makerMe.thingiverse && makerMe.thingiverse.set === false, 'Tokens are per user');
+
+      assert(cdnAuth.length && cdnAuth.every(a => !a), `The token never reaches a CDN: ${JSON.stringify(cdnAuth)}`);
+
+      // Thingiverse stops accepting it (revoked): the copy fails with token_invalid and the account
+      // is flagged for the notice above every page
+      thingiverseRevoked.on = true;
+      tst = await copyOf(box.id, `${turl}/files`);
+      thingiverseRevoked.on = false;
+      assert(tst.status === 'error' && tst.code === 'token_invalid' && /refused/.test(tst.message), `A revoked token: ${JSON.stringify(tst)}`);
+      me = (await apiReq('/api/auth/me', { session: adminSession })).data;
+      assert(me.thingiverse.status === 'invalid' && me.thingiverse.checked_at, `The account is flagged for the notice: ${JSON.stringify(me.thingiverse)}`);
+      // A new token clears the flag
+      assert((await apiReq('/api/auth/thingiverse-token', { method: 'PUT', session: adminSession, body: { token: 'good-token' } })).data.thingiverse.status === 'ok', 'A new token clears the flag');
+
+      const del = await apiReq('/api/auth/thingiverse-token', { method: 'DELETE', session: adminSession });
+      assert(del.status === 200 && del.data.thingiverse.set === false, 'The token can be removed');
     });
 
   } finally {

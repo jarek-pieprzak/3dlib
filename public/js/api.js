@@ -99,6 +99,8 @@ const API = {
   // inTrash: a model in the Trash opens only with ?trash=1
   getModel(id, inTrash = false) { return this.request(`/api/models/${id}${inTrash ? '?trash=1' : ''}`); },
   getSourceImport(id) { return this.request(`/api/models/${id}/source-import`); },
+  saveThingiverseToken(token) { return this.request('/api/auth/thingiverse-token', { method: 'PUT', body: JSON.stringify({ token }) }); },
+  deleteThingiverseToken() { return this.request('/api/auth/thingiverse-token', { method: 'DELETE' }); },
   createModel(data) {
     return this.request('/api/models', { method: 'POST', body: JSON.stringify(data) });
   },

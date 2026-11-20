@@ -46,6 +46,8 @@ const App = {
       }
     }
     
+    this.renderAppNotice();
+
     try {
       this.publicConfig = await API.getPublicConfig();
     } catch(e) { this.publicConfig = {}; }
@@ -1243,6 +1245,7 @@ const App = {
       this.toast('Welcome back, ' + res.user.username);
       this.closeModal();
       this.updateUserNav();
+      this.renderAppNotice();
       await this.loadCache();
       this.route();
     } catch(e) { this.toast(e.message, 'error'); }
@@ -1474,9 +1477,78 @@ const App = {
     this.currentUser = null;
     this.toast('Logged out');
     this.updateUserNav();
+    this.renderAppNotice();
     this.route();
   },
-  
+
+  // ─── Notices of the account ─────────────────────────────────────────────
+  // Above every page: the Thingiverse token Thingiverse refused, until a new one is saved (or the
+  // notice is closed for this browser session)
+  renderAppNotice() {
+    const box = document.getElementById('app-notice');
+    if (!box) return;
+    const t = this.currentUser && this.currentUser.thingiverse;
+    let closed = false;
+    try { closed = Boolean(t) && sessionStorage.getItem('3dl_notice_thingiverse') === String(t.checked_at); } catch (e) { /* storage blocked */ }
+    if (!t || t.status !== 'invalid' || closed) { box.hidden = true; box.innerHTML = ''; return; }
+    box.innerHTML = UI.tokenNotice(t);
+    box.hidden = false;
+  },
+
+  closeAppNotice() {
+    const t = this.currentUser && this.currentUser.thingiverse;
+    try { sessionStorage.setItem('3dl_notice_thingiverse', String(t && t.checked_at)); } catch (e) { /* storage blocked */ }
+    this.renderAppNotice();
+  },
+
+  // The account as the server has it now (a copy may have found the token refused)
+  async refreshUser() {
+    const me = await API.getMe().catch(() => null);
+    if (me && me.csrfToken) {
+      this.currentUser = me;
+      localStorage.setItem('3dl_user', JSON.stringify(me));
+    }
+    this.renderAppNotice();
+  },
+
+  // Profile -> API & Integrations, where the Thingiverse token is pasted
+  openTokenSettings() {
+    try { localStorage.setItem('3dl_profile_tab', 'api'); } catch (e) { /* storage blocked */ }
+    if (location.hash === '#/profile') this.renderProfile();
+    else this.navigate('/profile');
+  },
+
+  async saveThingiverseToken(e) {
+    e.preventDefault();
+    const form = e.target;
+    const input = form.querySelector('[name="token"]');
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking with Thingiverse...'; }
+    try {
+      const res = await API.saveThingiverseToken(input.value.trim());
+      this.currentUser = { ...this.currentUser, thingiverse: res.thingiverse };
+      localStorage.setItem('3dl_user', JSON.stringify(this.currentUser));
+      this.toast('Thingiverse accepted the token: Thingiverse pages are copied from now on');
+      this.renderAppNotice();
+      this.renderProfile();
+    } catch (err) {
+      this.toast(err.message || 'The token could not be saved', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Check and save'; }
+    }
+  },
+
+  async removeThingiverseToken() {
+    if (!confirm('Remove your Thingiverse token? Thingiverse pages will not be copied until you paste one again.')) return;
+    try {
+      const res = await API.deleteThingiverseToken();
+      this.currentUser = { ...this.currentUser, thingiverse: res.thingiverse };
+      localStorage.setItem('3dl_user', JSON.stringify(this.currentUser));
+      this.toast('Thingiverse token removed');
+      this.renderAppNotice();
+      this.renderProfile();
+    } catch (err) { this.toast(err.message || 'The token could not be removed', 'error'); }
+  },
+
   updateUserNav() {
     this.renderSlicerPicker();
     this.renderFitPicker();
@@ -1631,6 +1703,7 @@ const App = {
               </div>
             </div>
           </div>
+          ${UI.thingiverseTokenPanel(user.thingiverse || { set: false })}
         `;
       }
     };
@@ -3391,6 +3464,8 @@ const App = {
         const now = await API.getSourceImport(model.id);
         if (now.running) return this.sourceImportPoll(model);
         if (now.status === 'done' || now.status === 'error') this.toast(now.message || 'Copy finished', now.status === 'error' ? 'error' : 'success');
+        // A token the site refused: the notice above every page
+        if (now.code) await this.refreshUser();
         this.renderModelDetail(model.id, this.currentModelOpts || {});
       } catch (e) {}
     }, 3000);
@@ -4971,7 +5046,7 @@ const App = {
       if (id) {
         const saved = await API.updateModel(id, data);
         const copy = UI.sourceImportOf(saved);
-        this.toast(copy && copy.status === 'running' ? 'Model updated. Copying the documentation from MakerWorld...' : 'Model updated');
+        this.toast(copy && copy.status === 'running' ? `Model updated. Copying the documentation from ${copy.site || 'the source page'}...` : 'Model updated');
         this.closeModal();
         this.renderModelDetail(id);
       } else {

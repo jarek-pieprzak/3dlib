@@ -92,7 +92,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
     
     // The preferred slicer and printer too: the top bar and "Open in slicer" need them at once
-    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null } });
+    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null, thingiverse: thingiverseOf(user) } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Login failed' }); }
 });
 
@@ -102,9 +102,42 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', authenticate, (req, res) => {
-  const user = get('SELECT id, username, email, role, preferred_slicer, preferred_printer FROM users WHERE id=?', [req.user.id]);
-  if (user) user.csrfToken = req.user.csrfToken;
+  const row = get('SELECT id, username, email, role, preferred_slicer, preferred_printer, thingiverse_token, thingiverse_token_status, thingiverse_token_checked_at FROM users WHERE id=?', [req.user.id]);
+  if (!row) return res.json(null);
+  const { thingiverse_token, thingiverse_token_status, thingiverse_token_checked_at, ...user } = row;
+  user.thingiverse = thingiverseOf(row);
+  user.csrfToken = req.user.csrfToken;
   res.json(user);
+});
+
+// ─── The user's Thingiverse token (source import of Thingiverse pages) ──────
+// The browser only learns whether there is one, its last 4 characters and what Thingiverse said
+// about it last ('ok' / 'invalid'), never the token itself.
+function thingiverseOf(user) {
+  const token = user && user.thingiverse_token;
+  if (!token) return { set: false };
+  return { set: true, hint: token.slice(-4), status: user.thingiverse_token_status || null, checked_at: user.thingiverse_token_checked_at || null };
+}
+
+// PUT { token }: checked with Thingiverse first; a token it refuses is not kept
+router.put('/thingiverse-token', authenticate, async (req, res) => {
+  const token = String((req.body && req.body.token) || '').trim();
+  if (!token || token.length > 200 || /\s/.test(token)) return res.status(400).json({ error: 'Paste the App Token of your Thingiverse app' });
+  const thingiverse = require('../utils/sources/thingiverse');
+  let status;
+  try {
+    status = await thingiverse.checkToken(token, require('../utils/sources/http'));
+  } catch (e) {
+    return res.status(502).json({ error: `Thingiverse could not be reached (${e.message}); try again later` });
+  }
+  if (status !== 'ok') return res.status(400).json({ error: 'Thingiverse refused this token: copy the App Token of your app (not the Client ID or Secret)' });
+  run("UPDATE users SET thingiverse_token = ?, thingiverse_token_status = 'ok', thingiverse_token_checked_at = datetime('now') WHERE id = ?", [token, req.user.id]);
+  res.json({ thingiverse: thingiverseOf(get('SELECT thingiverse_token, thingiverse_token_status, thingiverse_token_checked_at FROM users WHERE id = ?', [req.user.id])) });
+});
+
+router.delete('/thingiverse-token', authenticate, (req, res) => {
+  run('UPDATE users SET thingiverse_token = NULL, thingiverse_token_status = NULL, thingiverse_token_checked_at = NULL WHERE id = ?', [req.user.id]);
+  res.json({ thingiverse: { set: false } });
 });
 
 // The slicers "Open in slicer" links open (public/js/components.js UI.slicerLinks)

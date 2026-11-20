@@ -211,6 +211,7 @@ app.use((err, req, res, next) => {
   setUploadsDir(UPLOADS_DIR);
   // Kit archives scanned before archives were recognised on the server become read-only
   require('./utils/kits').refreshArchives();
+  require('./services/sourceImport').resetInterrupted();
 
   // Graceful shutdown handling
   const shutdown = () => {

@@ -2157,8 +2157,11 @@ const App = {
       // initKit sets them before its first await)
       if (view === 'configure') { const ready = this.initKit(model, opts); this.fitPoll(model.id); return ready; }
       this.fitPoll(model.id);
+      this.sourceImportPoll(model);
       this.kit = null;
       this.fitFileTree(document.getElementById('tab-content-files'));
+      // STL / 3MF rows without a thumbnail: rendered once on screen, then stored (UI.fileIcon)
+      if (typeof Viewer !== 'undefined' && Viewer.generateThumbnails) setTimeout(() => Viewer.generateThumbnails(), 50);
       // Coming from the Trash page: open the model's Trash tab
       if (this.pendingFilesTab) {
         this.selectFilesTab(this.pendingFilesTab);
@@ -3376,6 +3379,32 @@ const App = {
     } catch (e) {}
   },
 
+  // While the source page is copied into the project folder: ask every 3 s, then show the page
+  // again with its README and pictures
+  sourceImportPoll(model) {
+    clearTimeout(this.sourceImportTimer);
+    const copy = UI.sourceImportOf(model);
+    if (!copy || copy.status !== 'running') return;
+    this.sourceImportTimer = setTimeout(async () => {
+      if (!this.currentModel || this.currentModel.id !== model.id || !location.hash.startsWith(`#/models/${model.id}`)) return;
+      try {
+        const now = await API.getSourceImport(model.id);
+        if (now.running) return this.sourceImportPoll(model);
+        if (now.status === 'done' || now.status === 'error') this.toast(now.message || 'Copy finished', now.status === 'error' ? 'error' : 'success');
+        this.renderModelDetail(model.id, this.currentModelOpts || {});
+      } catch (e) {}
+    }, 3000);
+  },
+
+  // "Copy failed · retry": saving the same Source URL again starts the copy again
+  async retrySourceImport(id) {
+    try {
+      const model = this.currentModel && this.currentModel.id === id ? this.currentModel : await API.getModel(id);
+      await API.updateModel(id, { source_url: model.source_url });
+      this.renderModelDetail(id, this.currentModelOpts || {});
+    } catch (e) { this.toast(e.message || 'Could not start the copy', 'error'); }
+  },
+
   // Settings -> Printers: the build volumes
   addPrinterBedRow() {
     const rows = document.getElementById('bed-rows');
@@ -3937,11 +3966,13 @@ const App = {
     if (!box) return;
     const name = readme.original_name || '';
     if (readme.file_size > 1024 * 1024) { box.textContent = 'README is too large to show here. Use Download to open it.'; return; }
-    fetch(readme.url || '/uploads/' + readme.filename, { credentials: 'same-origin' })
+    const url = readme.url || '/uploads/' + readme.filename;
+    fetch(url, { credentials: 'same-origin' })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
       .then(text => {
         if (/\.(md|markdown)$/i.test(name) || !/\.txt$/i.test(name)) {
-          box.innerHTML = UI.renderMarkdown(text); // escapes the source, links are protocol-checked
+          // escapes the source, links are protocol-checked; "images/x.jpg" is next to the README
+          box.innerHTML = UI.renderMarkdown(text, { base: url.replace(/[^/]*$/, '') });
         } else {
           box.innerHTML = '';
           const pre = document.createElement('pre');
@@ -4938,8 +4969,9 @@ const App = {
 
     try {
       if (id) {
-        await API.updateModel(id, data);
-        this.toast('Model updated');
+        const saved = await API.updateModel(id, data);
+        const copy = UI.sourceImportOf(saved);
+        this.toast(copy && copy.status === 'running' ? 'Model updated. Copying the documentation from MakerWorld...' : 'Model updated');
         this.closeModal();
         this.renderModelDetail(id);
       } else {

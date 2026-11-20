@@ -248,6 +248,102 @@ async function runStaticAndUiChecks() {
     assert(code.includes('<code>*f*</code>') && code.includes('<pre><code># size<br>- 2*3*4</code></pre>'), `Code must stay as written: ${code}`);
   });
 
+  await check('Markdown of a README: pictures and links next to it, small photos that open full size, comment lines hidden', () => {
+    const base = '/library-files/Gear%20Clock/';
+    const html = UI.renderMarkdown('<!-- 3dlib-source: https://makerworld.com/en/models/1 -->\n# Clock\n![a & b](images/front%20view.jpg) ![](images/play.gif)\n[Manual](Manual%20%28v2%29.pdf) [site](https://example.com/?a=1&b=2) ![x](javascript:alert(1))', { base });
+    assert(!html.includes('3dlib-source') && !html.includes('&lt;!--'), `A comment line must not show: ${html}`);
+    assert(html.includes(`<a href="${base}images/front%20view.jpg" target="_blank" rel="noopener" class="markdown-image-link"><img src="/thumbs?w=960&amp;u=${encodeURIComponent(`${base}images/front%20view.jpg`)}" alt="a &amp; b"`), `A photo next to the README is shown small and links to the original: ${html}`);
+    assert(html.includes(`<img src="${base}images/play.gif"`), `A GIF stays as it is: ${html}`);
+    assert(html.includes(`href="${base}Manual%20%28v2%29.pdf"`) && html.includes('href="https://example.com/?a=1&amp;b=2"'), `Links: relative ones next to the README, "&" kept once: ${html}`);
+    assert(!html.includes('javascript:'), `Unsafe targets are dropped: ${html}`);
+    assert(UI.renderMarkdown('![p](images/x.jpg)').includes('<img') === false, 'Without a base a relative picture is not shown (it would point at the page)');
+  });
+
+  await check('File list: each kind of file its own icon; images, 3MF plates and stored renders as small pictures', () => {
+    const kinds = {
+      'a.pdf': 'pdf', 'README.md': 'md', 'notes.txt': 'txt', 'a.stl': 'stl', 'b.3mf': '3mf', 'c.obj': 'obj', 'd.step': 'step', 'e.gcode': 'gcode',
+      'f.zip': 'zip', 'g.7z': 'zip', 'h.scad': 'scad', 'i.f3d': 'f3d', 'j.csv': 'sheet', 'k.docx': 'doc', 'l.json': 'code', 'm.svg': 'vector', 'n.url': 'link', 'o.ctb': 'ctb', 'p': 'other'
+    };
+    const typeOf = (n) => ({ pdf: 'document', md: 'document', txt: 'document', stl: 'stl', '3mf': '3mf', obj: 'obj', step: 'step', gcode: 'gcode', zip: 'zip', '7z': 'zip', scad: 'scad', f3d: 'f3d' })[(n.match(/\.([^.]+)$/) || [])[1]] || 'other';
+    for (const [name, kind] of Object.entries(kinds)) {
+      const got = UI.fileIconType({ original_name: `dir/${name}`, file_type: typeOf(name) });
+      assert(got === kind, `${name}: icon ${got}, expected ${kind}`);
+    }
+    const icons = new Set(['pdf', 'md', 'txt', 'zip', 'sheet', 'code', 'vector', 'link', 'obj', 'scad'].map(k => UI.fileTypeIcon(k).replace(/class="[^"]*"/, '')));
+    assert(icons.size >= 9, 'The kinds of files have icons of their own');
+
+    const photo = UI.fileIcon({ id: 1, file_type: 'image', original_name: 'images/a b.jpg', url: '/library-files/P/images/a%20b.jpg' });
+    assert(photo.includes('has-thumb') && photo.includes(`src="/thumbs?w=160&amp;u=${encodeURIComponent('/library-files/P/images/a%20b.jpg')}"`) && photo.includes('onerror='), `An image shows itself, small: ${photo}`);
+    const plate = UI.fileIcon({ id: 2, file_type: '3mf', original_name: 'b.3mf', thumbnail: '17000-abc.png', url: '/library-files/P/b.3mf', file_size: 10 });
+    assert(plate.includes(`/thumbs?w=160&amp;u=${encodeURIComponent('/uploads/17000-abc.png')}`), `A 3MF shows its plate picture: ${plate}`);
+    const stl = UI.fileIcon({ id: 3, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 1000 }, { render: true });
+    assert(stl.includes('stl-thumb-target') && stl.includes('data-file-id="3"') && stl.includes('data-stl-url="/library-files/P/a.stl"'), `An STL without a picture is rendered on screen: ${stl}`);
+    assert(!UI.fileIcon({ id: 4, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 99 * 1024 * 1024 }, { render: true }).includes('stl-thumb-target'), 'A big STL keeps its icon');
+    assert(!UI.fileIcon({ id: 5, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 10 }).includes('stl-thumb-target'), 'Only the model page renders previews');
+    assert(!UI.fileIcon({ id: 6, file_type: 'image', original_name: 'x.png', url: '/api/files/6/stream' }).includes('<img'), 'An image inside an archive keeps its icon (no small version)');
+  });
+
+  await check('MakerWorld import: page links, the description as Markdown, the files it brings, the README', () => {
+    const mw = require(path.join(ROOT_DIR, 'server/utils/makerworld'));
+    assert(mw.designIdOf('https://makerworld.com/pl/models/786733-vault-assault-unique-fully-printable-board-game?from=recommend#profileId-2709317') === 786733, 'A page link with language, slug, query and hash');
+    assert(mw.designIdOf('https://makerworld.com/models/12') === 12 && mw.designIdOf('https://www.makerworld.com/en/models/5/') === 5, 'Links without a slug');
+    for (const bad of ['https://makerworld.com.evil.com/models/1', 'https://evil.com/makerworld.com/models/1', 'ftp://makerworld.com/models/1', 'https://makerworld.com/en/collections/1', '', null]) {
+      assert(mw.designIdOf(bad) === null, `Not a MakerWorld model page: ${bad}`);
+    }
+    assert(mw.isAssetUrl('https://makerworld.bblmw.com/a.jpg') && !mw.isAssetUrl('http://makerworld.bblmw.com/a.jpg') && !mw.isAssetUrl('https://bblmw.com.evil.io/a.jpg'), 'Only the CDNs over https');
+
+    const md = mw.htmlToMarkdown('<p><span style="color:red"><strong>Update 1 </strong></span>text &amp; more&nbsp;</p><p>&nbsp;</p><h3><strong><u>Design</u></strong></h3>'
+      + '<ul><li><strong>Gears</strong>: many<ul><li>inner</li></ul></li><li>two</li></ul><ol><li>a</li><li>b<br>c</li></ol>'
+      + '<p><img src="https://x.bblmw.com/1.jpg"><img alt="B [2]" src="https://x.bblmw.com/2 (b).jpg"></p>'
+      + '<p><a href="https://x.bblmw.com/1.jpg"><img src="https://x.bblmw.com/1.jpg"></a> <a href="javascript:x()">bad</a> <a href="https://example.com/a(b)">link</a></p>'
+      + '<blockquote><p>quote</p></blockquote><pre>a  *b*\n# c</pre><script>alert(1)</script><boostme><boosttitle>Boost Me</boosttitle></boostme>',
+    { image: src => src.endsWith('1.jpg') ? 'images/one.jpg' : src });
+    const expected = [
+      '**Update 1** text & more', '', '### Design', '',
+      '- **Gears**: many', '  - inner', '- two', '', '1. a', '2. b c', '',
+      '![](images/one.jpg) ![B 2](https://x.bblmw.com/2%20%28b%29.jpg)', '',
+      '![](images/one.jpg) bad [link](https://example.com/a%28b%29)', '', '> quote', '', '```', 'a  *b*', '# c', '```'
+    ].join('\n');
+    assert(md === expected, `htmlToMarkdown:\n${md}\n--- expected:\n${expected}`);
+    assert(UI.renderMarkdown(md).includes('<h3>Design</h3>'), 'The Markdown renders in the app');
+
+    const design = {
+      id: 9, title: 'Clock', createTime: '2024-11-14T12:00:00Z', license: 'Standard Digital File License',
+      designCreator: { uid: 7, name: 'Maker' },
+      summary: '<p><img src="https://a.bblmw.com/d1.jpg"></p><p><img src="https://evil.example/x.jpg"><img src="https://a.bblmw.com/d2.PNG"></p>',
+      instances: [
+        { title: 'Full', prediction: 7200, weight: 99.6, materialColorCnt: 2, needAms: true, summary: '<p>0.2mm</p><p>15% infill</p>', instanceCreator: { uid: 7 }, instanceFilaments: [{ type: 'PLA', color: '#000000', usedG: 90 }] },
+        { title: 'Remix of another user', instanceCreator: { uid: 8 } }
+      ],
+      designExtension: {
+        design_pictures: [{ name: 'Front: view?.jpg', url: 'https://a.bblmw.com/p1.jpg' }, { name: 'Front: view?.jpg', url: 'https://a.bblmw.com/p2.jpg' }, { name: '', url: 'https://a.bblmw.com/p3.webp' }],
+        design_other: [{ name: 'Manual (v2).pdf', url: 'https://a.bblmw.com/m.pdf' }],
+        boms: [{ title: 'M3x10 FHCS Machine Screw (20PCS) - AA188', parentTitle: 'M3 FHCS', quantity: 1 }, { title: '0.4x3x10 mm (10PCS) - BA001', parentTitle: 'Extension Springs', quantity: 2 }],
+        boms_of_other_part_list: [{ name: '12mm_Elastic_Band', quantity: 4, note: '(Only_if_no_springs)' }]
+      }
+    };
+    const assets = mw.assetsOf(design);
+    assert(JSON.stringify(assets.map(a => `${a.kind}:${a.rel}`)) === JSON.stringify([
+      'description:images/description-01.jpg', 'description:images/description-03.png',
+      'gallery:images/Front view.jpg', 'gallery:images/Front view (2).jpg', 'gallery:images/picture-03.webp', 'document:Manual (v2).pdf'
+    ]), `Files of the design: ${JSON.stringify(assets.map(a => a.rel))}`);
+    assert(JSON.stringify(mw.hardwareOf(design)) === JSON.stringify([
+      { name: 'M3x10 FHCS Machine Screw (20PCS)', qty: 1, note: '' },
+      { name: 'Extension Springs 0.4x3x10 mm (10PCS)', qty: 2, note: '' },
+      { name: '12mm Elastic Band', qty: 4, note: 'Only if no springs' }
+    ]), `Hardware: ${JSON.stringify(mw.hardwareOf(design))}`);
+    const local = new Map(assets.map(a => [a.url, a.rel]));
+    const readme = mw.buildReadme(design, { local: u => local.get(u) || null, today: '2026-11-20' });
+    assert(mw.hasMarker(readme) && readme.startsWith('<!-- 3dlib-source: https://makerworld.com/en/models/9 -->\n# Clock\n'), `README starts with its marker and title:\n${readme}`);
+    for (const part of [
+      'By **Maker** on [MakerWorld](https://makerworld.com/en/models/9) · published 2024-11-14 · Standard Digital File License', 'Copied by 3DLib on 2026-11-20.',
+      '![](images/description-01.jpg)', '![](https://evil.example/x.jpg)', '### Full', '2.0 h · 100 g · 2 colours · AMS', '0.2mm\n15% infill', 'Filaments: PLA #000000 90 g',
+      '- 4 × 12mm Elastic Band (Only if no springs)', '- [Manual (v2).pdf](Manual%20%28v2%29.pdf)', '![Front: view?.jpg](images/Front%20view.jpg)'
+    ]) assert(readme.includes(part), `README is missing "${part}":\n${readme}`);
+    assert(!readme.includes('Remix of another user'), 'Only the designer\'s own print profiles');
+    assert(!mw.hasMarker('# My own readme'), 'A README without the marker is not 3DLib\'s');
+  });
+
   await check('Names, descriptions and file metadata never become HTML (cards, forms, model page, share page, settings)', () => {
     const X = '<x-evil a="1">';
     const meta = JSON.stringify({ slicer: X, printerModel: X, filamentType: X, printTime: X, tempNozzle: X, infill: X, infillPattern: X });
@@ -273,8 +369,11 @@ async function runStaticAndUiChecks() {
       settingsPanel: UI.settingsPanel('Categories', named, 'categories'),
       partsTab: UI.partsTab({ ...evilModel, prints: [], parts_list: JSON.stringify({ files: [{ file_id: evilModel.files[0].id, qty: 2 }], hardware: [{ name: X, qty: 3, have: true }], notes: X }) }, true),
       partsEditor: UI.partsEditor({ ...evilModel, parts_list: JSON.stringify({ files: [], hardware: [{ name: X, qty: 1 }], notes: X }) }),
-      modelDetailWithParts: UI.modelDetail({ ...evilModel, parts_list: JSON.stringify({ files: [], hardware: [{ name: X, qty: 1 }], notes: '' }) }, true)
+      modelDetailWithParts: UI.modelDetail({ ...evilModel, parts_list: JSON.stringify({ files: [], hardware: [{ name: X, qty: 1 }], notes: '' }) }, true),
+      modelDetailCopyFailed: UI.modelDetail({ ...evilModel, source_url: 'https://makerworld.com/models/1', source_import: JSON.stringify({ url: 'https://makerworld.com/models/1', status: 'error', message: X, at: X }) }, true),
+      modelDetailCopied: UI.modelDetail({ ...evilModel, source_url: 'https://makerworld.com/models/1', source_import: JSON.stringify({ url: 'https://makerworld.com/models/1', status: 'done', message: X, at: '2026-11-20T10:00:00Z' }) }, true)
     };
+    assert(renders.modelDetailCopyFailed.includes('App.retrySourceImport(') && !renders.modelDetailCopied.includes('App.retrySourceImport('), 'A failed copy of the source page offers a retry');
     assert(renders.modelDetailWithParts.includes('id="tab-content-parts"') && renders.partsTab.includes('0/2'), 'The model page has a Parts tab with counters');
     for (const [label, html] of Object.entries(renders)) assert(!html.includes('<x-evil'), `UI.${label} writes a name as HTML`);
   });
@@ -1132,6 +1231,34 @@ async function runE2ETests() {
   const testPort = 3498;
   const baseUrl = `http://127.0.0.1:${testPort}`;
 
+  // MakerWorld and its CDN for the source import (services/sourceImport.js): the server sends
+  // https://<host>/<path> to <origin>/<host>/<path> under NODE_ENV=test
+  const makerWorldPort = 3499;
+  const makerWorldDesign = {
+    id: 4242, title: 'Gear Clock', createTime: '2024-11-14T12:00:00Z', license: 'Standard Digital File License',
+    designCreator: { uid: 7, name: 'Maker' },
+    summary: '<p><strong>Gear clock</strong> &amp; stand</p><p><img src="https://makerworld.bblmw.com/m/d/a1.jpg"><img src="https://evil.example/x.jpg"></p>'
+      + '<ul><li>Step <em>one</em></li></ul><p><img src="https://makerworld.bblmw.com/m/d/missing.jpg"></p>',
+    tags: ['clock', 'GEAR'],
+    instances: [{ title: 'Full', prediction: 7200, weight: 100, summary: '<p>0.2mm</p>', instanceCreator: { uid: 7 } }],
+    designExtension: {
+      design_pictures: [{ name: 'Front view.jpg', url: 'https://makerworld.bblmw.com/m/p/f.jpg' }],
+      design_other: [{ name: 'Manual (v2).pdf', url: 'https://makerworld.bblmw.com/m/o/manual.pdf' }],
+      boms: [{ title: 'M3x10 FHCS Machine Screw (20PCS) - AA188', parentTitle: 'M3 FHCS', quantity: 1 }],
+      boms_of_other_part_list: [{ name: '12mm_Elastic_Band', quantity: 4, note: '(Only_if_no_springs)' }]
+    }
+  };
+  const makerWorldHits = [];
+  const makerWorld = require('http').createServer((req, res) => {
+    makerWorldHits.push(req.url);
+    const send = (status, body, type = 'application/octet-stream') => { res.writeHead(status, { 'Content-Type': type }); res.end(body); };
+    if (req.url === '/makerworld.com/api/v1/design-service/design/4242') return send(200, JSON.stringify(makerWorldDesign), 'application/json');
+    if (req.url === '/makerworld.com/api/v1/design-service/design/403') return send(403, '<title>Just a moment...</title>', 'text/html');
+    if (req.url.startsWith('/makerworld.bblmw.com/') && !req.url.includes('missing')) return send(200, Buffer.from(`file ${req.url}`));
+    send(404, 'Not found', 'text/plain');
+  });
+  await new Promise(resolve => makerWorld.listen(makerWorldPort, '127.0.0.1', resolve));
+
   const serverStartedAt = Date.now(); // the server syncs the library with the disk 10 s after it starts
   const serverProc = spawn(process.execPath, [path.join(ROOT_DIR, 'server/index.js')], {
     cwd: ROOT_DIR,
@@ -1141,6 +1268,7 @@ async function runE2ETests() {
       DATA_DIR: tmpDataDir,
       LIBRARY_PATH: tmpLibDir,
       NODE_ENV: 'test',
+      SOURCE_IMPORT_TEST_ORIGIN: `http://127.0.0.1:${makerWorldPort}`,
       // No locale, like the Docker image: name order must not depend on it
       LANG: 'C',
       LC_ALL: 'C'
@@ -2937,8 +3065,100 @@ async function runE2ETests() {
       assert(bulkDel.status === 200, `Bulk delete failed: ${JSON.stringify(bulkDel.data)}`);
     });
 
+    await check('Source import: a MakerWorld link copies the description, pictures and PDFs into the project folder', async () => {
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
+      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
+      const scanLibrary = async () => {
+        await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+        for (let i = 0; i < 300; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const s = await apiReq('/api/library/scan/status', { session: adminSession });
+          if (s.status === 200 && !s.data.isScanning) return;
+        }
+        throw new Error('Library scanner did not complete within 30s');
+      };
+      const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
+      const detail = async (id) => (await apiReq(`/api/models/${id}`, { session: adminSession })).data;
+      const copyOf = async (id, url) => {
+        const saved = await apiReq(`/api/models/${id}`, { method: 'PUT', session: adminSession, body: { source_url: url } });
+        assert(saved.status === 200, `Saving the Source URL failed: ${JSON.stringify(saved.data)}`);
+        for (let i = 0; i < 200; i++) {
+          const s = await apiReq(`/api/models/${id}/source-import`, { session: adminSession });
+          if (s.status === 200 && !s.data.running) return { saved: saved.data, status: s.data };
+          await new Promise(r => setTimeout(r, 50));
+        }
+        throw new Error('The source import did not finish within 10 s');
+      };
+      const url = 'https://makerworld.com/pl/models/4242-gear-clock?from=recommend#profileId-1';
+
+      put('Gear Clock/gear.stl', stl);
+      put('Gear Clock/docs/My manual.pdf', 'file /makerworld.bblmw.com/m/o/manual.pdf'); // the manual, saved by hand
+      put('Own Readme/part.stl', stl);
+      put('Own Readme/README.md', '# Mine\n');
+      put('Loose Lamp.stl', stl);
+      put('Locked Box/box.stl', stl);
+      await scanLibrary();
+      const gear = await byName('Gear Clock');
+
+      // Not a known page: nothing starts
+      const other = await apiReq(`/api/models/${gear.id}`, { method: 'PUT', session: adminSession, body: { source_url: 'https://www.printables.com/model/1' } });
+      assert(!other.data.source_import, `Only MakerWorld pages are copied: ${other.data.source_import}`);
+
+      const { saved, status } = await copyOf(gear.id, url);
+      assert(JSON.parse(saved.source_import).status === 'running', `The save answers with the copy running: ${saved.source_import}`);
+      assert(status.status === 'done' && status.url === url, `The copy must finish: ${JSON.stringify(status)}`);
+      assert(/2 pictures? of it|1 picture of it/.test(status.message) && status.message.includes('1 gallery picture') && status.message.includes('1 document')
+        && status.message.includes('2 tags added') && status.message.includes('Parts tab') && status.message.includes('Not downloaded: images/description-03.jpg (HTTP 404)')
+        && status.message.includes('Already in the project: docs/My manual.pdf'), `Copy summary: ${status.message}`);
+      for (const rel of ['README.md', 'images/description-01.jpg', 'images/Front view.jpg']) {
+        assert(fs.existsSync(lib(`Gear Clock/${rel}`)), `The copy must write ${rel}`);
+      }
+      assert(!fs.existsSync(lib('Gear Clock/Manual (v2).pdf')) && !fs.readdirSync(lib('Gear Clock')).some(n => n.endsWith('.part')), 'A document the project has under another name is not added twice');
+      assert(fs.readFileSync(lib('Gear Clock/images/description-01.jpg'), 'utf8') === 'file /makerworld.bblmw.com/m/d/a1.jpg', 'A picture holds what the CDN sent');
+      assert(!fs.readdirSync(lib('Gear Clock/images')).some(n => n.endsWith('.part')) && !makerWorldHits.some(h => h.includes('evil')), 'No part files left, nothing fetched from other hosts');
+      const readme = fs.readFileSync(lib('Gear Clock/README.md'), 'utf8');
+      for (const part of ['<!-- 3dlib-source: https://makerworld.com/en/models/4242 -->', '**Gear clock** & stand', '![](images/description-01.jpg)', '![](https://evil.example/x.jpg)',
+        '![](https://makerworld.bblmw.com/m/d/missing.jpg)', '- Step *one*', '[Manual (v2).pdf](docs/My%20manual.pdf)', '- 4 × 12mm Elastic Band (Only if no springs)']) {
+        assert(readme.includes(part), `README is missing "${part}":\n${readme}`);
+      }
+      let d = await detail(gear.id);
+      const names = d.files.map(f => f.original_name).sort();
+      assert(JSON.stringify(names) === JSON.stringify(['README.md', 'docs/My manual.pdf', 'gear.stl', 'images/Front view.jpg', 'images/description-01.jpg']), `The new files are indexed: ${names}`);
+      assert(['clock', 'gear'].every(t => d.tags.some(x => x.name.toLowerCase() === t)), `The page's tags are added: ${JSON.stringify(d.tags)}`);
+      const parts = JSON.parse(d.parts_list);
+      assert(parts.hardware.length === 2 && parts.hardware[1].name === '12mm Elastic Band' && parts.hardware[1].qty === 4 && parts.notes.includes('12mm Elastic Band: Only if no springs'), `Hardware in the Parts tab: ${d.parts_list}`);
+
+      // A scan keeps one row per file; saving the same URL again does not copy again
+      await scanLibrary();
+      d = await detail(gear.id);
+      assert(d.files.filter(f => f.original_name === 'README.md').length === 1, 'A scan after the copy must not index a file twice');
+      const hits = makerWorldHits.length;
+      const again = await apiReq(`/api/models/${gear.id}`, { method: 'PUT', session: adminSession, body: { source_url: url, description: 'mine' } });
+      assert(JSON.parse(again.data.source_import).status === 'done' && makerWorldHits.length === hits, 'A save with the same URL does not copy again');
+
+      // A README of the project's own stays; a loose file becomes a folder
+      const own = await byName('Own Readme');
+      assert((await copyOf(own.id, url)).status.status === 'done', 'The copy works next to a README of its own');
+      assert(fs.readFileSync(lib('Own Readme/README.md'), 'utf8') === '# Mine\n' && fs.existsSync(lib('Own Readme/MakerWorld.md')), 'A README 3DLib did not write is kept; the copy is MakerWorld.md');
+      const loose = await byName('Loose Lamp');
+      assert((await copyOf(loose.id, url)).status.status === 'done', 'The copy works for a loose file');
+      assert(fs.existsSync(lib('Loose Lamp/Loose Lamp.stl')) && fs.existsSync(lib('Loose Lamp/README.md')) && !fs.existsSync(lib('Loose Lamp.stl')), 'A loose file becomes a folder with the copy');
+
+      // Read-only projects and refused pages: the error is kept; viewers do not see it
+      const locked = await byName('Locked Box');
+      await apiReq(`/api/models/${locked.id}`, { method: 'PUT', session: adminSession, body: { is_readonly: true } });
+      const ro = await copyOf(locked.id, url);
+      assert(ro.status.status === 'error' && /read-only/.test(ro.status.message) && !fs.existsSync(lib('Locked Box/README.md')), `A read-only project is not changed: ${JSON.stringify(ro.status)}`);
+      const refused = await copyOf(gear.id, 'https://makerworld.com/en/models/403');
+      assert(refused.status.status === 'error' && /refused/.test(refused.status.message), `A refused page fails with a message: ${JSON.stringify(refused.status)}`);
+      const viewer = await apiReq(`/api/models/${gear.id}/source-import`, { session: viewerSession });
+      assert(viewer.status === 403, `Viewers cannot read the copy status: ${viewer.status}`);
+    });
+
   } finally {
     serverProc.kill();
+    makerWorld.close();
     await new Promise(r => setTimeout(r, 300));
     try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch (e) {}
   }

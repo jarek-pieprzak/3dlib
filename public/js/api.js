@@ -98,6 +98,7 @@ const API = {
   },
   // inTrash: a model in the Trash opens only with ?trash=1
   getModel(id, inTrash = false) { return this.request(`/api/models/${id}${inTrash ? '?trash=1' : ''}`); },
+  getSourceImport(id) { return this.request(`/api/models/${id}/source-import`); },
   createModel(data) {
     return this.request('/api/models', { method: 'POST', body: JSON.stringify(data) });
   },

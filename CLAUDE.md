@@ -107,6 +107,26 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
+- Source import (`server/services/sourceImport.js`, `server/utils/makerworld.js`): saving a model
+  with a MakerWorld Source URL (new, or its last copy failed) copies the page into the project
+  folder in the background: `README.md` (marker line `<!-- 3dlib-source: ... -->`, title, author,
+  licence, the description as Markdown, the designer's print profiles, hardware, documents,
+  gallery), pictures in `images/` (`description-NN.<ext>` by position, gallery names kept), the
+  PDFs in the folder. Data from `GET makerworld.com/api/v1/design-service/design/<id>` (the page
+  itself sits behind a bot check, the API does not; plain `https.get`, `3DLib/<version>` user
+  agent; Node's `fetch` gets 403). Files only from Bambu's CDNs. Files at their place stay; a
+  download whose content the project has elsewhere is dropped and the README links that file;
+  a README without the marker stays (copy goes to `MakerWorld.md`); a loose file becomes a
+  folder; read-only projects fail. Tags of the page are added; hardware fills an empty Parts
+  list. `models.source_import` = { url, status running/done/error, at, message } (a restart marks
+  a running one failed); the model page polls `GET /api/models/:id/source-import` and offers
+  "Copy failed · retry". Tests: a local fake MakerWorld (`SOURCE_IMPORT_TEST_ORIGIN`, only with
+  `NODE_ENV=test`). `UI.renderMarkdown(text, { base })` resolves a README's relative pictures and
+  links next to it; its photos go through `/thumbs` and open full size.
+- File list icons (`UI.fileIcon` / `fileIconType`): each kind of file has its icon (PDF, MD, text,
+  archive, sheet, code, vector, link, OBJ, SCAD...); images, 3MF plates and stored renders show
+  as small pictures; STL / 3MF up to 20 MB without one are rendered by the viewer once on screen
+  (`stl-thumb-target`, stored as the file's thumbnail).
 - Hero Me Gen7 configurator (`public/js/kits/hero-me-gen7.js`, `window.HeroMeKit`; pure functions,
   the tests load it too). Kits are a registry now: `server/utils/kits.js` `KITS` / `kitIdOf`
   (`models.kit_archive` holds the kit id, `kit_source.kit` on a configuration's page), in the

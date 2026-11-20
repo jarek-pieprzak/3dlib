@@ -16,6 +16,7 @@ const protection = require('../utils/protection');
 const printFit = require('../utils/printFit');
 const trashUtil = require('../utils/trash');
 const projectFiles = require('../utils/projectFiles');
+const sourceImport = require('../services/sourceImport');
 const { ensureTokens } = require('../utils/slicerToken');
 const bcrypt = require('bcryptjs');
 const { authLimiter } = require('../middleware/rateLimit');
@@ -583,9 +584,10 @@ router.post('/', authenticate, requireUploader, (req, res) => {
           if (!cleanTag) continue;
           tagId = tagIdFor(cleanTag);
         }
-        run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [r.lastId, tagId]); 
+        run('INSERT OR IGNORE INTO model_tags (model_id,tag_id) VALUES (?,?)', [r.lastId, tagId]);
       }
     }
+    sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [r.lastId]), null);
     res.status(201).json(get('SELECT * FROM models WHERE id=?', [r.lastId]));
   } catch (e) {
     console.error('Failed to create model:', e);
@@ -642,8 +644,19 @@ router.put('/:id', authenticate, (req, res) => {
         }
       }
     }
+    // A MakerWorld page as the source: its documentation is copied into the project folder
+    sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [id]), model.source_url);
     res.json(get('SELECT * FROM models WHERE id=?', [id]));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to update model' }); }
+});
+
+// ─── GET /api/models/:id/source-import ────────────────────────────────────────
+// Where the copy of the source page's documentation stands (services/sourceImport.js)
+router.get('/:id/source-import', authenticate, (req, res) => {
+  const model = get('SELECT id, user_id, source_import FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
+  if (!model) return res.status(404).json({ error: 'Model not found' });
+  if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
+  res.json({ ...(sourceImport.statusOf(model) || {}), running: sourceImport.isRunning(model.id) });
 });
 
 // ─── DELETE /api/models/:id ───────────────────────────────────────────────────

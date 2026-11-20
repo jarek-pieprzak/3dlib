@@ -217,10 +217,56 @@ const UI = {
     return `/thumbs?w=${width}&u=${encodeURIComponent(plain)}`;
   },
 
-  // Icon of a file row: unknown and archive types show their extension
+  // Icon of a file row: every kind of file its own (PDF, Markdown, text, archive, sheet, code,
+  // vector drawing, link...); unknown types show their extension
+  ICON_GROUPS: {
+    md: ['md', 'markdown'],
+    zip: ['zip', '7z', 'rar', 'gz', 'tgz', 'tar', 'bz2', 'xz'],
+    sheet: ['csv', 'tsv', 'xls', 'xlsx', 'ods', 'numbers'],
+    doc: ['doc', 'docx', 'odt', 'rtf', 'pages'],
+    code: ['json', 'ini', 'cfg', 'conf', 'config', 'yaml', 'yml', 'xml', 'toml', 'py', 'js', 'sh', 'lua'],
+    vector: ['svg', 'dxf', 'dwg', 'ai', 'eps', 'cdr'],
+    link: ['url', 'webloc', 'html', 'htm', 'lnk', 'desktop']
+  },
   fileIconType(f) {
-    const ext = (String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '';
-    return ['other', 'zip', 'f3d', 'scad'].includes(f.file_type) ? (ext.toLowerCase() || f.file_type) : f.file_type;
+    const ext = ((String(f.original_name || f.filename || '').match(/\.([^./]+)$/) || [])[1] || '').toLowerCase();
+    if (f.file_type === 'document') return ext === 'pdf' ? 'pdf' : this.ICON_GROUPS.md.includes(ext) ? 'md' : 'txt';
+    if (f.file_type && !['other', 'zip'].includes(f.file_type)) return f.file_type;
+    for (const [kind, exts] of Object.entries(this.ICON_GROUPS)) if (exts.includes(ext)) return kind;
+    return ext || f.file_type || 'other';
+  },
+
+  // The small picture of a file for its row, or null: the image itself, or the thumbnail its file
+  // carries (a 3MF plate, a G-code preview, a render stored before)
+  fileThumbUrl(f) {
+    if (!f) return null;
+    if (f.file_type === 'image') {
+      const url = String(f.url || '');
+      return /^\/(library-files|uploads)\//.test(url) && /\.(png|jpe?g|webp|gif)$/i.test(url.split('?')[0]) ? this.imgSrc(url, 160) : null;
+    }
+    const t = String(f.thumbnail || '');
+    if (t && t !== f.original_name && !/[/\\]/.test(t) && /\.(png|jpe?g|webp)$/i.test(t)) return this.imgSrc(`/uploads/${encodeURIComponent(t)}`, 160);
+    return null;
+  },
+
+  // STL / 3MF files up to this size without a thumbnail are rendered when their row is on screen
+  ROW_PREVIEW_MAX_BYTES: 20 * 1024 * 1024,
+
+  // The icon of a file row: its picture when it has one; with opts.render an STL / 3MF without
+  // one is rendered by the viewer once its row is on screen (Viewer.generateThumbnails stores the
+  // render as the file's thumbnail); otherwise the icon of its type
+  fileIcon(f, opts = {}) {
+    const type = this.fileIconType(f);
+    const thumb = this.fileThumbUrl(f);
+    if (thumb) {
+      return this.fileTypeIcon(type, { cls: 'has-thumb', img: `<img src="${this.escapeHtml(thumb)}" alt="" loading="lazy" decoding="async" onerror="this.parentElement.classList.remove('has-thumb');this.remove()">` });
+    }
+    const url = String(f.url || '');
+    const size = Number(f.file_size) || 0;
+    if (opts.render && ['stl', '3mf'].includes(f.file_type) && /^\/library-files\//.test(url) && size > 0 && size <= this.ROW_PREVIEW_MAX_BYTES) {
+      return this.fileTypeIcon(type, { cls: 'stl-thumb-target', attrs: ` data-stl-url="${this.escapeHtml(url)}" data-file-id="${Number(f.id)}" data-size="${size}"` });
+    }
+    return this.fileTypeIcon(type);
   },
 
   // SQLite datetime('now') values are UTC without a zone
@@ -616,6 +662,26 @@ const UI = {
   },
 
   // Safe URL protocol validator (only http, https, mailto allowed)
+  // The copy of the source page's documentation (server/services/sourceImport.js):
+  // { url, status: 'running' | 'done' | 'error', at, message } for the current Source URL, or null
+  sourceImportOf(model) {
+    let s = null;
+    try { s = model && model.source_import ? JSON.parse(model.source_import) : null; } catch (e) { return null; }
+    return s && s.url === model.source_url ? s : null;
+  },
+
+  // Next to the Source link: the copy running, or failed (a click tries again)
+  sourceImportBadge(model, copy = this.sourceImportOf(model)) {
+    if (!copy) return '';
+    if (copy.status === 'running') {
+      return `<span class="badge badge-source-import" title="${this.escapeHtml(copy.message || '')}"><span class="source-import-spin"></span>Copying the page...</span>`;
+    }
+    if (copy.status === 'error') {
+      return `<button type="button" class="badge badge-source-import is-error" onclick="App.retrySourceImport(${model.id})" title="${this.escapeHtml(`${copy.message || 'The copy failed'}. Click to try again.`)}">Copy failed · retry</button>`;
+    }
+    return '';
+  },
+
   safeUrl(url) {
     if (!url || typeof url !== 'string') return '';
     const trimmed = url.trim();
@@ -653,7 +719,7 @@ const UI = {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   },
 
-  fileTypeIcon(type) {
+  fileTypeIcon(type, opts = {}) {
     const icons = {
       stl: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>',
       gcode: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14"></path><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"></path><path d="M18 12H9"></path><path d="M15 9H9"></path><path d="M12 15H9"></path></svg>',
@@ -666,9 +732,27 @@ const UI = {
       video: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2"></rect><polygon points="22 7 17 11 17 13 22 17 22 7"></polygon></svg>',
       document: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>'
     };
+    // A page with a word on it (PDF, MD)
+    const page = (word) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><text x="12" y="18.5" text-anchor="middle" font-size="${word.length > 2 ? 6.2 : 7}" font-weight="800" font-family="system-ui,sans-serif" fill="currentColor" stroke="none">${word}</text></svg>`;
+    const svg = (body) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+    Object.assign(icons, {
+      pdf: page('PDF'),
+      md: page('MD'),
+      txt: icons.document,
+      doc: icons.document,
+      obj: svg('<polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"></polygon><line x1="12" y1="22" x2="12" y2="15.5"></line><polyline points="22 8.5 12 15.5 2 8.5"></polyline><line x1="12" y1="2" x2="12" y2="15.5"></line>'),
+      zip: svg('<rect x="2" y="3" width="20" height="5" rx="1"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path><path d="M10 12h4"></path>'),
+      scad: svg('<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline>'),
+      code: svg('<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"></path><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path>'),
+      sheet: svg('<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M3 15h18M9 3v18"></path>'),
+      vector: svg('<path d="m12 19 7-7 3 3-7 7-3-3z"></path><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="m2 2 7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle>'),
+      link: svg('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>')
+    });
     const label = String(type || '').replace(/[^a-z0-9]/gi, '').toUpperCase().substring(0, 4) || '?';
     const icon = icons[type] || `<span style="font-size:.6rem;font-weight:700">${label}</span>`;
-    return `<div class="file-icon ${String(type).replace(/[^a-z0-9]/gi, '')}">${icon}</div>`;
+    // opts.img: a picture over the icon (the icon shows if it fails); opts.cls / opts.attrs: more
+    // classes and attributes of the box
+    return `<div class="file-icon ${String(type).replace(/[^a-z0-9]/gi, '')}${opts.cls ? ` ${opts.cls}` : ''}"${opts.attrs || ''}>${icon}${opts.img || ''}</div>`;
   },
 
   // dashboard stats 
@@ -1169,8 +1253,10 @@ const UI = {
       ? '<span class="badge badge-printed">✓ Printed</span>'
       : '<span class="badge badge-not-printed">Not printed</span>';
     const cleanSourceUrl = this.safeUrl(model.source_url);
+    const copy = this.sourceImportOf(model);
+    const copied = copy && copy.status === 'done' ? ` title="${this.escapeHtml(`${copy.message || 'Copied'} (${this.formatDateShort(copy.at)})`)}"` : '';
     const sourceLink = cleanSourceUrl
-      ? `<a href="${this.escapeHtml(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer" class="badge badge-category" style="background:var(--bg-tertiary);color:var(--accent-cyan);text-decoration:none;border:1px solid var(--border)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Source</a>`
+      ? `<a href="${this.escapeHtml(cleanSourceUrl)}"${copied} target="_blank" rel="noopener noreferrer" class="badge badge-category" style="background:var(--bg-tertiary);color:var(--accent-cyan);text-decoration:none;border:1px solid var(--border)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Source</a>${this.sourceImportBadge(model, copy)}`
       : '';
 
     // A README in the project folder is shown in the description section
@@ -1342,7 +1428,6 @@ const UI = {
       const openAttrs = canOpen
         ? ` data-file-id="${f.id}" role="button" tabindex="0" title="Show in preview" onclick="App.previewFile(${model.id}, ${f.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.previewFile(${model.id}, ${f.id})}"`
         : ` data-file-id="${f.id}" title="No preview for this file type"`;
-      const iconType = this.fileIconType(f);
       // The history of a read-only file holds slicer projects: shown in the slicer chooser
       const historyItem = !f.version_count ? []
         : [{ action: readOnly ? 'showSlicerVersions' : 'showFileHistory', icon: 'history', label: `${readOnly ? 'Slicer versions' : 'History'} (${f.version_count})` }];
@@ -1360,7 +1445,7 @@ const UI = {
         <!-- Top Row: Icon, File Details, Quick Action Buttons -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
-            ${this.fileTypeIcon(iconType)}
+            ${this.fileIcon(f, { render: true })}
             <div style="min-width:0;flex:1">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <span class="file-name" style="font-weight:600;font-size:0.85rem;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%" title="${this.escapeHtml(f.original_name)}">${this.escapeHtml(displayName)}</span>
@@ -1417,7 +1502,7 @@ const UI = {
       <div class="file-item-card is-trashed${canOpen ? ' is-openable' : ' is-info'}" data-file-id="${f.id}"${openAttrs}>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
-            ${this.fileTypeIcon(this.fileIconType(f))}
+            ${this.fileIcon(f)}
             <div style="min-width:0;flex:1">
               <span class="file-name" title="${this.escapeHtml(f.original_name)}">${this.escapeHtml(displayName)}</span>
               <div class="file-meta">
@@ -2362,6 +2447,7 @@ const UI = {
         <div class="form-group">
           <label class="form-label">Source URL (optional)</label>
           <input class="form-input" type="url" name="source_url" value="${this.escapeHtml(model?.source_url || '')}" placeholder="e.g. https://www.printables.com/...">
+          <div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">A MakerWorld link: on save, its description, pictures and PDFs are copied into the project folder (README.md, images/).</div>
         </div>
         <div class="form-group">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -3432,10 +3518,18 @@ const UI = {
       </div>`;
   },
 
-  renderMarkdown(text) {
+  // opts.base: the folder URL (ending in "/") that relative image and link targets are in, for a
+  // README in a project folder ("images/x.jpg" next to it)
+  renderMarkdown(text, opts = {}) {
     if (!text) return '';
+    const resolve = (target) => {
+      const t = String(target).trim();
+      if (!opts.base || !t || /^([a-z][a-z0-9+.-]*:|\/|#)/i.test(t)) return t;
+      return opts.base + t.replace(/^\.\//, '');
+    };
     let escaped = String(text)
       .replace(/\u0000/g, '')
+      .replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*(\n|$)/gm, '') // comment lines stay hidden, like on GitHub
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -3482,15 +3576,22 @@ const UI = {
     escaped = escaped.replace(/^---$/gim, '<hr>');
 
     // Images: enforce safe protocol on src and safe alt text
+    // (the source is escaped: "&amp;" in a URL is "&")
     escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, alt, src) => {
-      const cleanSrc = this.safeUrl(src);
+      const cleanSrc = this.safeUrl(resolve(src.replace(/&amp;/g, '&')));
       if (!cleanSrc) return '';
-      return `<img src="${this.escapeHtml(cleanSrc)}" alt="${this.escapeHtml(alt)}" loading="lazy">`;
+      // A photo of the library is shown small (/thumbs, a 12 MP photo decodes into ~48 MB) and opens
+      // full size on a click; GIFs stay as they are (the small version would not move)
+      if (/^\/library-files\//.test(cleanSrc) && /\.(jpe?g|png|webp)$/i.test(cleanSrc.split('?')[0])) {
+        const small = `/thumbs?w=960&u=${encodeURIComponent(cleanSrc)}`;
+        return `<a href="${this.escapeHtml(cleanSrc)}" target="_blank" rel="noopener" class="markdown-image-link"><img src="${this.escapeHtml(small)}" alt="${alt}" loading="lazy"></a>`;
+      }
+      return `<img src="${this.escapeHtml(cleanSrc)}" alt="${alt}" loading="lazy">`;
     });
 
     // Links: enforce safe protocol on href
     escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, href) => {
-      const cleanHref = this.safeUrl(href);
+      const cleanHref = this.safeUrl(resolve(href.replace(/&amp;/g, '&')));
       if (!cleanHref) return label;
       return `<a href="${this.escapeHtml(cleanHref)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
     });

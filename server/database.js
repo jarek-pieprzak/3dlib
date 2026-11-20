@@ -324,6 +324,9 @@ async function initDatabase() {
     
     if (!mCols.some(c => c.name === 'parent_id')) db.run('ALTER TABLE models ADD COLUMN parent_id INTEGER');
     if (!mCols.some(c => c.name === 'source_url')) db.run('ALTER TABLE models ADD COLUMN source_url TEXT');
+    // The copy of the source page's documentation (services/sourceImport.js), JSON:
+    // { url, status: 'running' | 'done' | 'error', at, message }
+    if (!mCols.some(c => c.name === 'source_import')) db.run('ALTER TABLE models ADD COLUMN source_import TEXT');
     if (!mCols.some(c => c.name === 'preview_file_id')) db.run('ALTER TABLE models ADD COLUMN preview_file_id INTEGER');
     // Password-protected models (the password is set in Settings > Security). Older databases
     // call the column is_adult and the password adult_password_hash.

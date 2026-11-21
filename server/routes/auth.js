@@ -94,7 +94,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
     
     // The preferred slicer and printer too: the top bar and "Open in slicer" need them at once
-    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null, bambu: bambuAccount.accountOf(user) } });
+    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null, source_language: user.source_language || 'en', bambu: bambuAccount.accountOf(user) } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Login failed' }); }
 });
 
@@ -107,7 +107,7 @@ router.get('/me', authenticate, (req, res) => {
   const row = get('SELECT * FROM users WHERE id=?', [req.user.id]);
   if (!row) return res.json(null);
   const { id, username, email, role, preferred_slicer, preferred_printer } = row;
-  res.json({ id, username, email, role, preferred_slicer, preferred_printer, bambu: bambuAccount.accountOf(row), csrfToken: req.user.csrfToken });
+  res.json({ id, username, email, role, preferred_slicer, preferred_printer, source_language: row.source_language || 'en', bambu: bambuAccount.accountOf(row), csrfToken: req.user.csrfToken });
 });
 
 // ─── The user's Bambu Lab account (MakerWorld files of the source import) ────
@@ -157,16 +157,23 @@ router.delete('/bambu', authenticate, (req, res) => {
 
 // The slicers "Open in slicer" links open (public/js/components.js UI.slicerLinks)
 const SLICERS = ['bambustudio', 'orcaslicer', 'elegooslicer', 'cura'];
+// Languages of copied pages (Profile): MakerWorld's own translations
+const SOURCE_LANGUAGES = ['en', 'pl', 'de', 'fr', 'es', 'it', 'original'];
 
 router.put('/profile', authenticate, async (req, res) => {
   try {
-    const { username, email, password, preferred_slicer, preferred_printer } = req.body;
+    const { username, email, password, preferred_slicer, preferred_printer, source_language } = req.body;
     const updates = [], params = [];
     if (username) { updates.push('username=?'); params.push(username); }
     if (email) { updates.push('email=?'); params.push(email); }
     if (preferred_slicer !== undefined) {
       if (preferred_slicer && !SLICERS.includes(preferred_slicer)) return res.status(400).json({ error: 'Unknown slicer' });
       updates.push('preferred_slicer=?'); params.push(preferred_slicer || null);
+    }
+    // The language of copied pages (MakerWorld translates them; 'original' as written)
+    if (source_language !== undefined) {
+      if (!SOURCE_LANGUAGES.includes(source_language)) return res.status(400).json({ error: 'Unknown language' });
+      updates.push('source_language=?'); params.push(source_language);
     }
     if (preferred_printer !== undefined) {
       if (preferred_printer !== null && (typeof preferred_printer !== 'string' || preferred_printer.length > 80)) return res.status(400).json({ error: 'Unknown printer' });

@@ -694,7 +694,7 @@ const UI = {
       out += `<button type="button" class="badge badge-source-import is-error" onclick="App.checkSourceUpdates(${model.id})" title="${this.escapeHtml(`${copy.message || 'The copy failed'}. Click to try again.`)}">Copy failed · retry</button>`;
     } else {
       const last = copy && copy.status === 'done' ? ` Last copy: ${copy.message || ''}` : '';
-      out += `<button type="button" class="badge badge-source-import" onclick="App.checkSourceUpdates(${model.id})" title="${this.escapeHtml(`Copy the ${site} page again: new files come in, changed model files are updated (the old ones stay in their history).${last}`)}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><polyline points="21 3 21 8 16 8"/></svg>Check for updates</button>`;
+      out += `<button type="button" class="badge badge-source-import" onclick="App.checkSourceUpdates(${model.id})" title="${this.escapeHtml(`Compare the ${site} page with this project: new or changed model files are copied as a new version of the model; when nothing changed, only new pictures and documents come in.${last}`)}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><polyline points="21 3 21 8 16 8"/></svg>Check for updates</button>`;
     }
     if (copy && (copy.files === 'login_needed' || copy.files === 'login_refused')) {
       const label = copy.files === 'login_refused' ? `${site} login expired` : `Log in to ${site} for the files`;
@@ -2504,11 +2504,19 @@ const UI = {
       </label>`
     ).join('');
 
+    // A new model can come from a link alone: the name is the page's title, the rest is copied
+    const fromLink = isEdit ? '' : `
+        <div class="form-group">
+          <label class="form-label">From a MakerWorld or Printables link</label>
+          <input class="form-input" type="url" id="model-link-input" placeholder="Paste a link: the name comes from the page, its description, pictures and files are copied" oninput="App.modelLinkInput(this)">
+          <div class="form-hint" id="model-link-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)"></div>
+        </div>`;
     return `
       <form id="model-form" onsubmit="App.handleModelSubmit(event,${model?.id || 'null'})">
+        ${fromLink}
         <div class="form-group">
           <label class="form-label">Name *</label>
-          <input class="form-input" name="name" required value="${this.escapeHtml(model?.name || '')}" placeholder="e.g. Phone Stand v2" id="model-name-input">
+          <input class="form-input" name="name" ${isEdit ? 'required ' : ''}value="${this.escapeHtml(model?.name || '')}" placeholder="e.g. Phone Stand v2" id="model-name-input">
         </div>
         <div class="form-group">
           <label class="form-label">Category</label>
@@ -2518,7 +2526,7 @@ const UI = {
         </div>
         <div class="form-group">
           <label class="form-label">Source URL (optional)</label>
-          <input class="form-input" type="url" name="source_url" value="${this.escapeHtml(model?.source_url || '')}" placeholder="e.g. https://www.printables.com/...">
+          <input class="form-input" type="url" name="source_url" id="model-source-input" value="${this.escapeHtml(model?.source_url || '')}" placeholder="e.g. https://www.printables.com/...">
           <div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">A MakerWorld or Printables link: on save, its description, pictures, PDFs and model files are copied into the project folder (README.md, images/). MakerWorld files need your Bambu Lab login (Profile → API &amp; Integrations).</div>
         </div>
         <div class="form-group">

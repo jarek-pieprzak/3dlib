@@ -5,18 +5,21 @@
 // MakerWorld gives its files only to a logged-in user: the Bambu Lab login of the user who saved
 // the model (utils/bambuAccount.js); without it the page's documentation is copied, not its files.
 //
+// Texts come in the language the user chose in Profile (MakerWorld translates them; English by
+// default).
+//
 // It starts by itself when a model is saved with such a Source URL (a new URL, or one whose last
-// copy failed) and runs in the background; "Check for updates" on the model page runs it again
-// (POST /api/models/:id/source-import). models.source_import keeps the outcome for the model page:
-// { url, site, status: 'running' | 'done' | 'error', at, message, files: 'login_needed' |
-// 'login_refused' }.
-//  * Pictures and documents already in the folder stay; a download the project already has under
-//    another name or folder (same content) is dropped and the README links that file.
-//  * The first copy never replaces a file already in the folder (it may be the user's own).
-//    "Check for updates" replaces a model file whose size on the site differs from the one in the
-//    folder (or, when the site does not say, whose content differs); the old content goes to the
-//    file's history (.versions), like a slicer save. A ZIP of raw files is unpacked the same way,
-//    entry by entry.
+// copy failed) and runs in the background. models.source_import keeps the outcome for the model
+// page: { url, site, status: 'running' | 'done' | 'error', at, message, files: 'login_needed' |
+// 'login_refused', version: id of a new version }.
+//  * Files already in the folder stay, never replaced (they may be the user's own); a download the
+//    project already has under another name or folder (same content) is dropped and the README
+//    links that file.
+//  * "Check for updates" (POST /api/models/:id/source-import) compares the site's model files with
+//    the folder (missing, or another size). Nothing changed: new pictures and documents come in, the
+//    README is written again. Something changed: the page is copied as a new version of the model
+//    ("<name> (v2)", its own folder next to the project, models.parent_id), the project stays as it
+//    is. A model never copied yet gets its first copy instead.
 //  * A README that 3DLib did not write is kept: the copy goes to "<Site>.md" next to it.
 //  * A project made of one loose file becomes a folder first; read-only projects are left alone.
 //  * Tags of the page are added; hardware fills the Parts tab when it has no list yet.
@@ -92,10 +95,6 @@ function indexFile(model, root, abs) {
     try { fileVersions.refreshFileInfo(model, file); } catch (e) { /* the scanner reads it later */ }
   }
   return r.lastId;
-}
-
-async function sameFile(a, b) {
-  return fs.statSync(a).size === fs.statSync(b).size && (await hashFileStream(a)) === (await hashFileStream(b));
 }
 
 // A file of the project with the same content (the manual saved by hand under another name or in
@@ -183,11 +182,17 @@ function zipEntries(zipPath) {
   });
 }
 
+// The language the user wants copied pages in (Profile; MakerWorld translates them)
+function languageOf(userId) {
+  const u = userId ? get('SELECT source_language FROM users WHERE id = ?', [userId]) : null;
+  return (u && u.source_language) || 'en';
+}
+
 // The page of the site, with errors in words for the model page
 async function loadPage(source, id, userId) {
   const token = source.usesBambuLogin ? await bambuAccount.tokenFor(userId) : null;
   try {
-    const page = await source.load(id, http, { token });
+    const page = await source.load(id, http, { token, lang: languageOf(userId) });
     if (token && page.filesNote === 'login_refused') { bambuAccount.mark(userId, 'invalid'); saveDb(); }
     else if (token && page.files && page.files.length) bambuAccount.mark(userId, 'ok');
     return page;
@@ -199,10 +204,17 @@ async function loadPage(source, id, userId) {
   }
 }
 
-async function importPage(modelId, found, userId, force) {
-  const { source, id } = found;
-  const page = await loadPage(source, id, userId);
+// The title of a page (for a model made from a link), in the user's language
+async function titleOf(url, userId) {
+  const found = sourceOf(url);
+  if (!found) return null;
+  const page = await loadPage({ ...found.source, usesBambuLogin: false }, found.id, userId);
+  return { site: found.source.site, title: String(page.title || '').trim() };
+}
 
+// Copies the page (loaded already) into the model's folder
+async function importPage(modelId, found, page) {
+  const { source } = found;
   await waitForScan();
   const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [modelId]);
   if (!model) throw new Error('The model is gone');
@@ -213,27 +225,14 @@ async function importPage(modelId, found, userId, force) {
   const failed = [];
   const reused = [];
   const counts = { description: 0, gallery: 0, document: 0, model: 0, archive: 0 };
-  let updated = 0;
   const touched = [];
   const own = all("SELECT library_path FROM files WHERE model_id = ? AND deleted_at IS NULL AND library_path IS NOT NULL AND library_path NOT LIKE '%::%'", [modelId])
     .map(f => f.library_path);
 
-  // A downloaded file (at `part`) for `dest`: kept when the project has its content, put in place
-  // when new; replace: a different file at `dest` is replaced (its old content to the history),
-  // else it stays
-  const place = async (part, dest, replace) => {
-    if (projectFiles.exists(dest)) {
-      if (!replace || await sameFile(part, dest)) { fs.unlinkSync(part); return { rel: projectFiles.relOf(root, dest) }; }
-      const row = get('SELECT * FROM files WHERE library_path = ? AND model_id = ?', [dest, modelId]);
-      if (row) {
-        try { fileVersions.replaceWithVersion(model, row, part, source.site); } finally { try { fs.unlinkSync(part); } catch (e) { /* moved */ } }
-      } else {
-        fs.renameSync(part, dest);
-      }
-      updated++;
-      touched.push(dest);
-      return { rel: projectFiles.relOf(root, dest) };
-    }
+  // A downloaded file (at `part`) for `dest`: a file already at `dest` stays; content the project
+  // has elsewhere is not added twice; otherwise it is put in place
+  const place = async (part, dest) => {
+    if (projectFiles.exists(dest)) { fs.unlinkSync(part); return { rel: projectFiles.relOf(root, dest) }; }
     const twin = await sameContent(part, own);
     if (twin) {
       fs.unlinkSync(part);
@@ -263,8 +262,9 @@ async function importPage(modelId, found, userId, force) {
               const out = path.join(root, ...e.rel.split('/'));
               const ep = partOf(out);
               try {
+                if (projectFiles.exists(out)) { touched.push(out); counts.archive++; continue; }
                 await e.read(ep);
-                await place(ep, out, force);
+                await place(ep, out);
                 counts.archive++;
               } catch (er) {
                 try { fs.unlinkSync(ep); } catch (x) { /* none */ }
@@ -276,22 +276,14 @@ async function importPage(modelId, found, userId, force) {
         local.set(asset.url, '.');
         continue;
       }
-      const isModel = asset.kind === 'model';
       if (projectFiles.exists(dest)) {
-        // A picture or document in place stays, and so does every file on the first copy (it may
-        // be the user's own); "Check for updates" fetches a model file again when it may have
-        // changed: another size on the site, or no size given
-        const size = fs.statSync(dest).size;
-        const changed = isModel && force && (asset.size ? asset.size !== size : true);
-        if (!changed) {
-          local.set(asset.url, asset.rel);
-          touched.push(dest);
-          counts[asset.kind]++;
-          continue;
-        }
+        local.set(asset.url, asset.rel);
+        touched.push(dest);
+        counts[asset.kind]++;
+        continue;
       }
       await download(asset.url, part, opts);
-      const r = await place(part, dest, isModel && force);
+      const r = await place(part, dest);
       local.set(asset.url, r.rel);
       counts[asset.kind]++;
     } catch (e) {
@@ -324,7 +316,6 @@ async function importPage(modelId, found, userId, force) {
     n('description', 'picture of it', 'pictures of it'), n('gallery', 'gallery picture', 'gallery pictures'), n('document', 'document', 'documents')];
   if (counts.model || counts.archive) bits.push(`${counts.model + counts.archive} model file${counts.model + counts.archive === 1 ? '' : 's'}`);
   let message = `Copied ${bits.join(', ')} from ${source.site}`;
-  if (updated) message += `; ${updated} changed file${updated === 1 ? '' : 's'} updated (old versions in their history)`;
   if (tags) message += `; ${tags} tag${tags === 1 ? '' : 's'} added`;
   if (parts) message += '; hardware in the Parts tab';
   if (page.filesNote === 'login_needed') message += `. Model files: log in to ${source.site} in Profile -> API & Integrations`;
@@ -334,13 +325,61 @@ async function importPage(modelId, found, userId, force) {
   return { message, failed: failed.length, files: page.filesNote };
 }
 
-async function runImport(modelId, url, userId, force) {
+// The site's model files against the project: { changed: missing or of another size, present:
+// in the folder } ([{ rel, size }]; the raw files of a ZIP by the list the site gives of them)
+function compareFiles(model, page, source) {
+  const info = projectFiles.projectInfo(model);
+  if (!info || !info.isFolder) return { changed: [], present: [] };
+  const expected = [
+    ...assetsOf(page, source.isAsset).filter(a => a.kind === 'model').map(a => ({ rel: a.rel, size: a.size })),
+    ...(page.archiveEntries || [])
+  ];
+  // A file of the same size under another name is the same file (a profile 3MF is named in the
+  // user's language: another language renames it)
+  const sizes = new Set(all('SELECT file_size FROM files WHERE model_id = ? AND deleted_at IS NULL', [model.id]).map(f => Number(f.file_size)));
+  const changed = [];
+  const present = [];
+  for (const e of expected) {
+    let st = null;
+    try { st = fs.statSync(path.join(info.root, ...e.rel.split('/'))); } catch (x) { /* missing */ }
+    if (!st && e.size && sizes.has(e.size)) { present.push(e); continue; }
+    if (st) present.push(e);
+    if (!st || (e.size && st.size !== e.size)) changed.push(e);
+  }
+  return { changed, present };
+}
+
+// A new version of the model for a changed page: "<name> (vN)" in a folder next to the project,
+// linked to the first model of its family (models.parent_id), with its tags
+function createVersion(model, userId) {
+  const head = (model.parent_id && get('SELECT * FROM models WHERE id = ?', [model.parent_id])) || model;
+  const family = all('SELECT id FROM models WHERE (id = ? OR parent_id = ?) AND deleted_at IS NULL', [head.id, head.id]).length;
+  const info = projectFiles.projectInfo(model);
+  const parentDir = path.dirname(info.root);
+  for (let n = family + 1; n < 1000; n++) {
+    const name = `${head.name} (v${n})`;
+    const folder = path.join(parentDir, name.replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim());
+    if (get('SELECT id FROM models WHERE ulower(name) = ulower(?) OR library_path = ?', [name, folder]) || projectFiles.exists(folder)) continue;
+    fs.mkdirSync(folder);
+    const r = run('INSERT INTO models (name, description, print_tips, source_url, category_id, custom_meta, user_id, parent_id, library_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, model.description || '', model.print_tips || '', model.source_url, model.category_id || null, model.custom_meta || '{}', userId || model.user_id, head.id, folder]);
+    for (const t of all('SELECT tag_id FROM model_tags WHERE model_id = ?', [model.id])) {
+      run('INSERT OR IGNORE INTO model_tags (model_id, tag_id) VALUES (?, ?)', [r.lastId, t.tag_id], true);
+    }
+    saveDb();
+    return { id: r.lastId, name };
+  }
+  throw new Error('No free name for a new version');
+}
+
+async function runImport(modelId, url, userId) {
   const found = sourceOf(url);
   const site = found.source.site;
   running.add(modelId);
   setStatus(modelId, { url, site, status: 'running', message: `Copying ${site}...` });
   try {
-    const r = await importPage(modelId, found, userId, force);
+    const page = await loadPage(found.source, found.id, userId);
+    const r = await importPage(modelId, found, page);
     setStatus(modelId, { url, site, status: 'done', message: r.message, files: r.files });
     logEvent(r.failed ? 'warning' : 'info', `Source import, model ${modelId}: ${r.message}`);
   } catch (e) {
@@ -352,18 +391,71 @@ async function runImport(modelId, url, userId, force) {
   }
 }
 
+async function runCheck(modelId, url, userId) {
+  const found = sourceOf(url);
+  const site = found.source.site;
+  running.add(modelId);
+  setStatus(modelId, { url, site, status: 'running', message: `Checking ${site} for updates...` });
+  try {
+    const page = await loadPage(found.source, found.id, userId);
+    const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [modelId]);
+    if (!model) throw new Error('The model is gone');
+    const { changed, present } = compareFiles(model, page, found.source);
+    // Nothing changed, or the project has none of the site's files yet (copied without a login
+    // before): this model gets what is new
+    if (!changed.length || !present.length) {
+      const r = await importPage(modelId, found, page);
+      const message = changed.length ? r.message : `No new or changed model files on ${site}. ${r.message}`;
+      setStatus(modelId, { url, site, status: 'done', message, files: r.files });
+      logEvent('info', `Source update check, model ${modelId}: ${message}`);
+      return;
+    }
+    // Something changed: a new version gets the page, this model stays as it is
+    await waitForScan();
+    const version = createVersion(model, userId);
+    running.add(version.id);
+    setStatus(version.id, { url, site, status: 'running', message: `Copying ${site}...` });
+    try {
+      const r = await importPage(version.id, found, page);
+      setStatus(version.id, { url, site, status: 'done', message: r.message, files: r.files });
+    } finally { running.delete(version.id); }
+    const list = changed.slice(0, 5).map(c => c.rel).join(', ') + (changed.length > 5 ? ` and ${changed.length - 5} more` : '');
+    const message = `${changed.length} new or changed file${changed.length === 1 ? '' : 's'} on ${site} (${list}): copied as the new version "${version.name}"`;
+    setStatus(modelId, { url, site, status: 'done', message, version: version.id, files: page.filesNote });
+    logEvent('info', `Source update check, model ${modelId}: ${message}`);
+  } catch (e) {
+    const message = e.message || 'The check failed';
+    if (get('SELECT id FROM models WHERE id = ?', [modelId])) setStatus(modelId, { url, site, status: 'error', message });
+    logEvent('warning', `Source update check, model ${modelId} (${url}): ${message}`);
+  } finally {
+    running.delete(modelId);
+  }
+}
+
 // After a model is saved by userId: copies its source page when the URL is new or its last copy
-// failed; opts.force ("Check for updates") copies it again. True when a copy started.
-function maybeStart(model, previousUrl, userId, opts = {}) {
+// failed. True when a copy started.
+function maybeStart(model, previousUrl, userId) {
   const url = model && model.source_url;
   if (!url || !sourceOf(url) || running.has(model.id) || model.kit_source_id) return false;
   const last = statusOf(model);
-  if (!opts.force && url === previousUrl && last && last.url === url && last.status === 'done') return false;
-  runImport(model.id, url, userId, Boolean(opts.force)).catch(() => {});
+  if (url === previousUrl && last && last.url === url && last.status === 'done') return false;
+  runImport(model.id, url, userId).catch(() => {});
   return true;
 }
 
-// At start: a copy cut off by a restart is marked failed (saving the model again retries it)
+// "Check for updates": a model copied already from its Source URL is compared with the site
+// (runCheck); one never copied gets its first copy
+function checkForUpdates(model, userId) {
+  const url = model && model.source_url;
+  if (!url || !sourceOf(url) || running.has(model.id) || model.kit_source_id) return false;
+  const last = statusOf(model);
+  const copied = last && last.url === url && last.status === 'done';
+  if (copied) runCheck(model.id, url, userId).catch(() => {});
+  else runImport(model.id, url, userId).catch(() => {});
+  return true;
+}
+
+// At start: a copy cut off by a restart is marked failed (Check for updates retries it)
 function resetInterrupted() {
   for (const m of all("SELECT id, source_import FROM models WHERE source_import LIKE '%\"running\"%'")) {
     const s = statusOf(m);
@@ -371,4 +463,4 @@ function resetInterrupted() {
   }
 }
 
-module.exports = { maybeStart, statusOf, resetInterrupted, sourceOf, isRunning: (id) => running.has(id) };
+module.exports = { maybeStart, checkForUpdates, titleOf, statusOf, resetInterrupted, sourceOf, isRunning: (id) => running.has(id) };

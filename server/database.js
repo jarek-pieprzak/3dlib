@@ -323,6 +323,9 @@ async function initDatabase() {
     for (const col of ['bambu_account TEXT', 'bambu_token TEXT', 'bambu_refresh_token TEXT', 'bambu_expires_at TEXT', 'bambu_status TEXT', 'bambu_checked_at TEXT']) {
       if (!uCols.some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE users ADD COLUMN ${col}`);
     }
+    // The language of the pages the source import copies for this user: MakerWorld translates
+    // them itself ('en' by default, 'pl', or 'original')
+    if (!uCols.some(c => c.name === 'source_language')) db.run("ALTER TABLE users ADD COLUMN source_language TEXT DEFAULT 'en'");
     // The Thingiverse import was dropped: the users' tokens it kept go with their columns
     for (const col of ['thingiverse_token', 'thingiverse_token_status', 'thingiverse_token_checked_at']) {
       if (!uCols.some(c => c.name === col)) continue;

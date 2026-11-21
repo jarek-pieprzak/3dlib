@@ -115,9 +115,13 @@ page and footer credit GyroidVault; keep that.
   `images/` (`description-NN.<ext>` by position, gallery names kept), the PDFs, and the model
   files (Printables: STLs, G-codes, SLA and other files in their Printables folders; MakerWorld:
   the designer's profile 3MFs and the raw files' ZIP, unpacked into the folder, with the user's
-  Bambu Lab login only). "Check for updates" next to the Source link (`POST
-  /api/models/:id/source-import`) copies it again. Thingiverse was dropped (its API wants a token
-  per user); the migration drops the `users.thingiverse_token*` columns.
+  Bambu Lab login only). A new model can come from a link alone (New Model: "From a MakerWorld or
+  Printables link"; `GET /api/models/source-preview?url=` gives the title, `POST /api/models`
+  without a name takes it). Texts come in the user's language (`users.source_language`, Profile;
+  English by default, 'original' as written): MakerWorld translates title, description, profile
+  names and tags itself (request header `x-bbl-language`; `titleTranslated`, `summaryTranslated`,
+  `tagsTranslated`); Printables has no translations. Thingiverse was dropped (its API wants a
+  token per user); the migration drops the `users.thingiverse_token*` columns.
   - Sites are modules of `sources/index.js` (`idOf`, `isAsset`, `load(id, http, { token })` -> a
     page of `sources/common.js`, which has HTML -> Markdown, `assetsOf`, `buildReadme`; page.files
     = { url, name, folder, size, unzip, trusted }). HTTP: `sources/http.js` (Node `https`,
@@ -138,13 +142,19 @@ page and footer credit GyroidVault; keep that.
     too), refreshed a day before they expire; the browser gets only `user.bambu` = { set, account,
     status, expires_at }. A refused login: `#app-notice` above every page (`App.renderAppNotice`)
     until the next login.
-  - The first copy never replaces a file already in the folder; a download whose content the
-    project has elsewhere is dropped and the README links that file. "Check for updates" replaces
-    a model file whose size on the site differs (or, without a size, whose content differs) with
-    `fileVersions.replaceWithVersion` (the old one in its history, source = the site). A README
-    without the marker stays (copy goes to `<Site>.md`); a loose file becomes a folder; read-only
-    projects fail. Tags of the page are added; hardware fills an empty Parts list.
-  - `models.source_import` = { url, site, status running/done/error, at, message, files } (a
+  - A copy never replaces a file already in the folder; a download whose content the project has
+    elsewhere is dropped and the README links that file. A README without the marker stays (copy
+    goes to `<Site>.md`); a loose file becomes a folder; read-only projects fail. Tags of the page
+    are added; hardware fills an empty Parts list.
+  - "Check for updates" next to the Source link (`POST /api/models/:id/source-import`,
+    `checkForUpdates`): a model never copied gets its first copy. Otherwise the site's model files
+    (`assetsOf` models with their sizes + `page.archiveEntries`, the raw files MakerWorld's
+    `model_files` lists) are compared with the folder (missing, or another size; a file of the
+    same size under another name counts as there). Nothing changed, or none of them in the folder
+    yet: the project gets what is new and its README again. Something changed: a new version of the
+    model (`createVersion`: "<name> (vN)", its own folder next to the project, `parent_id` = the
+    first model of the family, its tags) gets the whole copy; the project stays as it is.
+  - `models.source_import` = { url, site, status running/done/error, at, message, files, version } (a
     restart marks a running one failed); the model page polls `GET .../source-import` and shows
     "Check for updates" / "Copy failed · retry" and "Log in to MakerWorld for the files".
   - Tests: a local fake of both sites and Bambu Lab's login (`SOURCE_IMPORT_TEST_ORIGIN`, only with

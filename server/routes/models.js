@@ -213,6 +213,17 @@ router.get('/', (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to fetch models' }); }
 });
 
+// ─── GET /api/models/source-preview?url= ──────────────────────────────────────
+// The site and title of a MakerWorld / Printables link (in the user's language): the New Model
+// form names a model after it
+router.get('/source-preview', authenticate, requireUploader, async (req, res) => {
+  const url = String(req.query.url || '');
+  if (!sourceImport.sourceOf(url)) return res.status(400).json({ error: 'Not a MakerWorld or Printables model page' });
+  try {
+    res.json(await sourceImport.titleOf(url, req.user.id));
+  } catch (e) { res.status(502).json({ error: e.message || 'The page could not be read' }); }
+});
+
 // ─── GET /api/models/:id ──────────────────────────────────────────────────────
 router.get('/:id', (req, res) => {
   try {
@@ -468,6 +479,16 @@ router.post('/:id/versions', authenticate, (req, res) => {
 });
 
 // ─── POST /api/models ─────────────────────────────────────────────────────────
+// Without a name but with a MakerWorld / Printables Source URL the model is named after the page
+router.post('/', authenticate, requireUploader, async (req, res, next) => {
+  if (req.body && !String(req.body.name || '').trim() && sourceImport.sourceOf(req.body.source_url)) {
+    try {
+      const p = await sourceImport.titleOf(req.body.source_url, req.user.id);
+      if (p && p.title) req.body.name = p.title;
+    } catch (e) { return res.status(502).json({ error: e.message || 'The page could not be read' }); }
+  }
+  next();
+});
 router.post('/', authenticate, requireUploader, (req, res) => {
   const userId = req.user.id;
   try {
@@ -661,15 +682,16 @@ router.get('/:id/source-import', authenticate, (req, res) => {
 });
 
 // ─── POST /api/models/:id/source-import ───────────────────────────────────────
-// "Check for updates": the source page is copied again; new files come in, changed model files
-// replace the old ones (kept in their history)
+// "Check for updates": the site is compared with the project; changed or new model files make a
+// new version of the model with a fresh copy, otherwise new pictures and documents come in
+// (services/sourceImport.js)
 router.post('/:id/source-import', authenticate, (req, res) => {
   const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
   if (!model) return res.status(404).json({ error: 'Model not found' });
   if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
   if (!sourceImport.sourceOf(model.source_url)) return res.status(400).json({ error: 'The Source URL is not a MakerWorld or Printables page' });
   if (sourceImport.isRunning(model.id)) return res.status(409).json({ error: 'The copy is running already' });
-  sourceImport.maybeStart(model, model.source_url, req.user.id, { force: true });
+  sourceImport.checkForUpdates(model, req.user.id);
   const fresh = get('SELECT source_import FROM models WHERE id=?', [model.id]);
   res.json({ ...(sourceImport.statusOf(fresh) || {}), running: sourceImport.isRunning(model.id) });
 });

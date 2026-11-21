@@ -43,13 +43,19 @@ function hardwareOf(design) {
   return out;
 }
 
+// A text in the user's language: MakerWorld translates titles, descriptions, profile names and tags
+// itself (the request header x-bbl-language: en / pl...); 'original' keeps the designer's own
+function pick(original, translated, lang) {
+  return lang && lang !== 'original' && translated && String(translated).trim() ? translated : original;
+}
+
 // The designer's own print profiles (the others are uploads of other users) as Markdown
-function profilesOf(design) {
+function profilesOf(design, lang) {
   const all = (design.instances || []).filter(i => i && i.title);
   const uid = design.designCreator && design.designCreator.uid;
   const own = all.filter(i => uid && i.instanceCreator && i.instanceCreator.uid === uid);
   return (own.length ? own : all).map(p => {
-    const out = [`### ${String(p.title).trim()}`];
+    const out = [`### ${String(pick(p.title, p.titleTranslated, lang)).trim()}`];
     const facts = [];
     if (Number(p.prediction) > 0) facts.push(`${(Number(p.prediction) / 3600).toFixed(1)} h`);
     if (Number(p.weight) > 0) facts.push(`${Math.round(Number(p.weight))} g`);
@@ -57,7 +63,7 @@ function profilesOf(design) {
     if (p.needAms) facts.push('AMS');
     if (facts.length) out.push(facts.join(' · '));
     // One setting per paragraph: one per line here
-    const settings = htmlToMarkdown(p.summary || '').replace(/\n{2,}/g, '\n');
+    const settings = htmlToMarkdown(pick(p.summary, p.summaryTranslated, lang) || '').replace(/\n{2,}/g, '\n');
     if (settings) out.push(settings);
     const fil = (p.instanceFilaments || []).filter(f => f && (f.type || f.color))
       .map(f => [f.type, f.color, Number(f.usedG) > 0 ? `${Math.round(Number(f.usedG))} g` : ''].filter(Boolean).join(' '));
@@ -66,23 +72,26 @@ function profilesOf(design) {
   }).join('\n\n');
 }
 
-// The design as a page of sources/common.js
-function pageOf(design) {
+// The design as a page of sources/common.js; lang: the language of its texts ('original': as the
+// designer wrote them)
+function pageOf(design, { lang = 'original' } = {}) {
   const ext = design.designExtension || {};
-  const profiles = profilesOf(design);
+  const profiles = profilesOf(design, lang);
+  const tags = design.tags || [];
+  const tagsTr = design.tagsTranslated;
   return {
     site: 'MakerWorld',
     id: Number(design.id),
     url: pageUrl(design.id),
-    title: design.title,
+    title: pick(design.title, design.titleTranslated, lang),
     author: design.designCreator && design.designCreator.name,
     published: design.createTime,
     license: design.license,
-    description: design.summary || '',
+    description: pick(design.summary, design.summaryTranslated, lang) || '',
     sections: profiles ? [{ title: 'Print profiles', markdown: profiles }] : [],
     pictures: (ext.design_pictures || []).filter(p => p && p.url).map(p => ({ url: p.url, name: p.name })),
     documents: [...(ext.design_other || []), ...(ext.design_guide || [])].filter(d => d && d.url).map(d => ({ url: d.url, name: d.name })),
-    tags: design.tags || [],
+    tags: lang !== 'original' && Array.isArray(tagsTr) && tagsTr.length === tags.length && tagsTr.every(t => t && String(t).trim()) ? tagsTr : tags,
     hardware: hardwareOf(design)
   };
 }
@@ -108,7 +117,7 @@ function linkOf(j) {
 // profile 3MF of each of the designer's print profiles and the raw files (a ZIP of the design's
 // folders, unpacked into the project). { files, refused }: refused when MakerWorld does not take
 // the token (401 / 403).
-async function filesOf(design, http, token) {
+async function filesOf(design, http, token, lang) {
   const headers = { authorization: `Bearer ${token}`, cookie: `token=${token}` };
   const files = [];
   let refused = false;
@@ -124,7 +133,9 @@ async function filesOf(design, http, token) {
     const link = await ask(`${SITE}/api/v1/design-service/instance/${p.id}/f3mf?type=download`);
     if (!link) continue;
     const info = (p.extention && p.extention.modelInfo && p.extention.modelInfo.f3mf) || {};
-    const name = /\.3mf$/i.test(link.name) ? link.name : `${String(p.title || `Profile ${p.id}`).trim()}.3mf`;
+    // Named after the profile, in the user's language (a Chinese profile gets an English name)
+    const title = String(pick(p.title, p.titleTranslated, lang) || '').trim();
+    const name = title ? `${title}.3mf` : (/\.3mf$/i.test(link.name) ? link.name : `Profile ${p.id}.3mf`);
     files.push({ url: link.url, name, size: Number(info.size) || 0, trusted: true });
   }
   if (((design.designExtension || {}).model_files || []).length) {
@@ -139,16 +150,35 @@ async function filesOf(design, http, token) {
   return { files, refused };
 }
 
-// The page; with a token (the user's Bambu Lab login) also the model files. page.filesNote says
-// why there are none: 'login_needed' (no login) / 'login_refused' (MakerWorld refused it)
-async function load(id, http, { token } = {}) {
-  const design = await http.json(apiUrl(id));
-  if (!design || Number(design.id) !== id) throw new Error('MakerWorld sent no model data');
-  const page = pageOf(design);
-  if (!hasFiles(design)) return page;
-  if (!token) return { ...page, filesNote: 'login_needed' };
-  const { files, refused } = await filesOf(design, http, token);
-  return { ...page, files, filesNote: refused && !files.length ? 'login_refused' : undefined };
+// The raw files of the design as the "Download all" ZIP holds them: [{ rel: "Case/Case Body.stl", size }]
+function rawFilesOf(design) {
+  const out = [];
+  const walk = (nodes, dir) => {
+    for (const n of nodes || []) {
+      if (!n) continue;
+      if (n.isDir) walk(n.children, dir ? `${dir}/${n.dirName}` : n.dirName);
+      else {
+        const name = n.modelName || n.modelFileName;
+        if (name) out.push({ rel: dir ? `${dir}/${name}` : name, size: Number(n.modelSize) || 0 });
+      }
+    }
+  };
+  walk((design.designExtension || {}).model_files, '');
+  return out;
 }
 
-module.exports = { site: 'MakerWorld', usesBambuLogin: true, idOf, pageUrl, isAsset, load, pageOf, hardwareOf, apiUrl, linkOf };
+// The page in the user's language (lang: 'en', 'pl'... or 'original'); with a token (the user's
+// Bambu Lab login) also the model files. page.filesNote says why there are none: 'login_needed'
+// (no login) / 'login_refused' (MakerWorld refused it). page.archiveEntries: the raw files the ZIP
+// holds ({ rel, size }), so a check for updates can compare them without downloading it.
+async function load(id, http, { token, lang = 'en' } = {}) {
+  const design = await http.json(apiUrl(id), { headers: lang && lang !== 'original' ? { 'x-bbl-language': lang } : undefined });
+  if (!design || Number(design.id) !== id) throw new Error('MakerWorld sent no model data');
+  const page = pageOf(design, { lang });
+  if (!hasFiles(design)) return page;
+  if (!token) return { ...page, filesNote: 'login_needed' };
+  const { files, refused } = await filesOf(design, http, token, lang);
+  return { ...page, files, archiveEntries: files.some(f => f.unzip) ? rawFilesOf(design) : [], filesNote: refused && !files.length ? 'login_refused' : undefined };
+}
+
+module.exports = { site: 'MakerWorld', usesBambuLogin: true, idOf, pageUrl, isAsset, load, pageOf, hardwareOf, apiUrl, linkOf, rawFilesOf };

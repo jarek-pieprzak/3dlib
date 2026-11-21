@@ -1336,6 +1336,7 @@ const App = {
     const data = { username: fd.get('username'), email: fd.get('email') };
     if (fd.get('password')) data.password = fd.get('password');
     if (fd.has('preferred_slicer')) data.preferred_slicer = fd.get('preferred_slicer');
+    if (fd.has('source_language')) data.source_language = fd.get('source_language');
     try {
       await API.updateProfile(data);
       this.toast('Profile updated successfully');
@@ -1582,6 +1583,14 @@ const App = {
                     <option value="cura" ${user.preferred_slicer === 'cura' ? 'selected' : ''}>Ultimaker Cura</option>
                     <option value="bambustudio" ${user.preferred_slicer === 'bambustudio' ? 'selected' : ''}>Bambu Studio</option>
                   </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Language of copied pages</label>
+                  <select name="source_language" class="form-select">
+                    ${[['en', 'English'], ['pl', 'Polski'], ['de', 'Deutsch'], ['fr', 'Français'], ['es', 'Español'], ['it', 'Italiano'], ['original', 'As the designer wrote it']]
+                      .map(([v, label]) => `<option value="${v}" ${(user.source_language || 'en') === v ? 'selected' : ''}>${label}</option>`).join('')}
+                  </select>
+                  <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">MakerWorld pages (a Source URL) are copied in this language: MakerWorld translates their title, description, print profiles and tags.</p>
                 </div>
                 <div style="margin-top:24px; padding-top:20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end;">
                   <button type="submit" class="btn btn-primary">Save Changes</button>
@@ -5047,9 +5056,42 @@ const App = {
     } catch (e) { this.toast('Failed to load model', 'error'); }
   },
 
+  // New Model, "From a MakerWorld or Printables link": the link becomes the Source URL and the
+  // page's title the name (the server names it too when the name is left empty)
+  modelLinkInput(input) {
+    clearTimeout(this.modelLinkTimer);
+    const url = input.value.trim();
+    const hint = document.getElementById('model-link-hint');
+    const site = UI.sourceSite(url);
+    if (!url) { if (hint) hint.textContent = ''; return; }
+    if (!site) { if (hint) hint.textContent = 'Only MakerWorld and Printables model pages can be copied.'; return; }
+    const source = document.getElementById('model-source-input');
+    if (source) source.value = url;
+    if (hint) hint.textContent = `Reading the ${site} page...`;
+    this.modelLinkTimer = setTimeout(async () => {
+      try {
+        const p = await API.sourcePreview(url);
+        if (input.value.trim() !== url) return;
+        const name = document.getElementById('model-name-input');
+        if (name && (!name.value.trim() || name.dataset.fromLink === '1') && p.title) {
+          name.value = p.title;
+          name.dataset.fromLink = '1';
+        }
+        if (hint) hint.textContent = `${p.site}: "${p.title}". After Create its description, pictures and files are copied into the new project.`;
+      } catch (err) {
+        if (input.value.trim() === url && hint) hint.textContent = err.message || 'The page could not be read';
+      }
+    }, 400);
+  },
+
   async handleModelSubmit(e, id) {
     e.preventDefault();
     const form = new FormData(e.target);
+    // A new model needs a name, unless a MakerWorld / Printables link gives it
+    if (!id && !String(form.get('name') || '').trim() && !UI.sourceSite(form.get('source_url'))) {
+      this.toast('Name is required (or paste a MakerWorld or Printables link)', 'error');
+      return;
+    }
     const tags = Array.from(e.target.querySelectorAll('input[name="tags"]:checked')).map(c => {
       if (c.value.startsWith('NEW:')) return c.value.substring(4);
       return parseInt(c.value);

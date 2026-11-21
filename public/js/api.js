@@ -100,6 +100,7 @@ const API = {
   getModel(id, inTrash = false) { return this.request(`/api/models/${id}${inTrash ? '?trash=1' : ''}`); },
   getSourceImport(id) { return this.request(`/api/models/${id}/source-import`); },
   checkSourceUpdates(id) { return this.request(`/api/models/${id}/source-import`, { method: 'POST' }); },
+  sourcePreview(url) { return this.request(`/api/models/source-preview?url=${encodeURIComponent(url)}`); },
   bambuSendCode(account) { return this.request('/api/auth/bambu/send-code', { method: 'POST', body: JSON.stringify({ account }) }); },
   bambuCode(account, code) { return this.request('/api/auth/bambu/code', { method: 'POST', body: JSON.stringify({ account, code }) }); },
   bambuTfa(account, tfaKey, code) { return this.request('/api/auth/bambu/tfa', { method: 'POST', body: JSON.stringify({ account, tfa_key: tfaKey, code }) }); },

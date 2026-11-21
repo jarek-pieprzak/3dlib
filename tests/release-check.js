@@ -398,8 +398,12 @@ async function runStaticAndUiChecks() {
     const asked = [];
     const fake = (refuse) => ({
       json: async (url, opts = {}) => {
-        asked.push({ url, auth: (opts.headers || {}).authorization || '' });
-        if (url.endsWith('/design/51')) return design;
+        asked.push({ url, auth: (opts.headers || {}).authorization || '', lang: (opts.headers || {})['x-bbl-language'] || '' });
+        if (url.endsWith('/design/51')) {
+          return (opts.headers || {})['x-bbl-language'] === 'pl'
+            ? { ...design, titleTranslated: 'Zestaw zębatek', tags: ['齿轮'], tagsTranslated: ['zębatki'], instances: [{ ...design.instances[0], titleTranslated: 'Pełny' }, design.instances[1]] }
+            : design;
+        }
         if (refuse) throw Object.assign(new Error('HTTP 403'), { status: 403 });
         if (url.includes('/instance/901/f3mf')) return { name: 'gear-set-full.3mf', url: 'https://makerworld.bblmw.com/f/901.3mf?sig=1' };
         if (url.endsWith('/design/51/model?modelType=all&type=download')) return { name: '', url: 'https://bbl-mw.s3.us-west-2.amazonaws.com/raw/all.zip?X-Amz=1' };
@@ -410,10 +414,18 @@ async function runStaticAndUiChecks() {
     assert(without.filesNote === 'login_needed' && !(without.files || []).length && !asked.some(a => a.auth), `Without a login only the page: ${JSON.stringify(without.files)}`);
     asked.length = 0;
     const page = await mw.load(51, fake(false), { token: 'tok' });
-    assert(!page.filesNote && JSON.stringify(page.files.map(f => `${f.name}|${f.size || 0}|${Boolean(f.unzip)}`)) === JSON.stringify(['gear-set-full.3mf|1234|false', 'Gear Set - files.zip|0|true']), `The designer's profile and the raw files: ${JSON.stringify(page.files)}`);
+    assert(!page.filesNote && JSON.stringify(page.files.map(f => `${f.name}|${f.size || 0}|${Boolean(f.unzip)}`)) === JSON.stringify(['Full: all plates.3mf|1234|false', 'Gear Set - files.zip|0|true']), `The designer's profile and the raw files: ${JSON.stringify(page.files)}`);
     assert(asked.filter(a => a.url.includes('/instance/') || a.url.includes('/model?')).every(a => a.auth === 'Bearer tok') && !asked.some(a => a.url.includes('/instance/902/')), 'The token goes with the file requests; profiles of other users are left out');
     const assets = common.assetsOf(page, mw.isAsset).filter(a => a.kind === 'model' || a.kind === 'archive');
-    assert(JSON.stringify(assets.map(a => `${a.kind}:${a.rel}`)) === JSON.stringify(['model:gear-set-full.3mf', 'archive:Gear Set - files.zip']), `Signed links of the API are downloaded: ${JSON.stringify(assets)}`);
+    assert(JSON.stringify(assets.map(a => `${a.kind}:${a.rel}`)) === JSON.stringify(['model:Full all plates.3mf', 'archive:Gear Set - files.zip']), `Signed links of the API are downloaded: ${JSON.stringify(assets)}`);
+    // In Polish: MakerWorld's translation of the title, the tags and the profile (and its file name)
+    asked.length = 0;
+    const pl = await mw.load(51, fake(false), { token: 'tok', lang: 'pl' });
+    assert(pl.title === 'Zestaw zębatek' && JSON.stringify(pl.tags) === '["zębatki"]' && pl.files[0].name === 'Pełny.3mf' && asked[0].lang === 'pl', `In Polish: ${JSON.stringify({ title: pl.title, tags: pl.tags, file: pl.files[0].name })}`);
+    assert(JSON.stringify(pl.archiveEntries) === JSON.stringify([{ rel: 'Gears/Gear.stl', size: 0 }]), `The raw files the ZIP holds: ${JSON.stringify(pl.archiveEntries)}`);
+    asked.length = 0;
+    await mw.load(51, fake(false), { lang: 'original' });
+    assert(asked[0].lang === '', 'As the designer wrote it: no translation asked');
     const refused = await mw.load(51, fake(true), { token: 'old' });
     assert(refused.filesNote === 'login_refused' && !refused.files.length, `A refused login: ${refused.filesNote}`);
     assert(mw.linkOf({ data: { url: 'https://x.bblmw.com/a.3mf', name: 'a.3mf' } }).name === 'a.3mf' && mw.linkOf({ url: 'http://insecure/a' }) === null, 'Download answers: nested data, https only');
@@ -1347,8 +1359,8 @@ async function runE2ETests() {
     'stl:41': 'https://files.printables.com/media/prints/777/stls/clip.stl',
     'gcode:42': 'https://files.printables.com/media/prints/777/gcodes/clip.bgcode'
   };
-  const printablesPrint = () => ({
-    id: '777', name: 'Cable Clip', summary: 'Clips for cables.', description: '<p>Print <strong>flat</strong>.</p>', datePublished: '2025-01-02T00:00:00+00:00',
+  const printablesPrint = (id = '777') => ({
+    id, name: id === '778' ? 'Wall Hook' : 'Cable Clip', summary: 'Clips for cables.', description: '<p>Print <strong>flat</strong>.</p>', datePublished: '2025-01-02T00:00:00+00:00',
     license: { name: 'CC BY' }, user: { publicUsername: 'Clipper' }, tags: [{ name: 'clip' }], images: [{ filePath: 'media/prints/777/images/1_a/clip.jpg' }],
     pdfFilePath: 'media/prints/777/pdfs/777.pdf', printDuration: '1.5', numPieces: 2, weight: '10', nozzleDiameters: ['0.4'], layerHeights: ['0.2'], materials: [{ name: 'PETG' }],
     stls: [{ id: '41', name: 'clip.stl', folder: '', fileSize: Buffer.byteLength(fakeContent('/files.printables.com/media/prints/777/stls/clip.stl')) }],
@@ -1376,7 +1388,8 @@ async function runE2ETests() {
     const send = (status, body, type = 'application/octet-stream') => { res.writeHead(status, { 'Content-Type': type }); res.end(body); };
     const json = (status, obj) => send(status, JSON.stringify(obj), 'application/json');
     if (req.url === '/makerworld.com/api/v1/design-service/design/4242') return json(200, makerWorldDesign);
-    if (req.url === '/makerworld.com/api/v1/design-service/design/5151') return json(200, mwDesign);
+    // In the language the request asks for (MakerWorld translates its texts itself)
+    if (req.url === '/makerworld.com/api/v1/design-service/design/5151') return json(200, req.headers['x-bbl-language'] === 'pl' ? { ...mwDesign, titleTranslated: 'Pudełko z zębatkami', summaryTranslated: '<p>Zębatki w pudełku.</p>', tagsTranslated: ['zębatki'] } : mwDesign);
     if (req.url === '/makerworld.com/api/v1/design-service/design/403') return send(403, '<title>Just a moment...</title>', 'text/html');
     if (req.url.startsWith('/makerworld.com/api/v1/design-service/instance/') || req.url.startsWith('/makerworld.com/api/v1/design-service/design/5151/model')) {
       if (req.headers.authorization !== 'Bearer mw-token' || fakeFiles.mwRefused) return json(403, { error: 'Please log in' });
@@ -1405,10 +1418,10 @@ async function runE2ETests() {
     if (req.url === '/api.printables.com/graphql/' && req.method === 'POST') {
       const q = await readBody(req);
       if (/getDownloadLink/.test(q.query)) {
-        const link = q.variables.printId === '777' && printablesLinks[`${q.variables.fileType}:${q.variables.id}`];
+        const link = ['777', '778'].includes(q.variables.printId) && printablesLinks[`${q.variables.fileType}:${q.variables.id}`];
         return json(200, { data: { getDownloadLink: link ? { ok: true, output: { link } } : { ok: false, output: null } } });
       }
-      return json(200, { data: { print: q.variables.id === '777' ? printablesPrint() : null } });
+      return json(200, { data: { print: ['777', '778'].includes(q.variables.id) ? printablesPrint(q.variables.id) : null } });
     }
     if (req.url.startsWith('/media.printables.com/') || req.url.startsWith('/files.printables.com/')) return send(200, Buffer.from(fakeContent(req.url)));
     send(404, 'Not found', 'text/plain');
@@ -3312,11 +3325,10 @@ async function runE2ETests() {
       assert(viewer.status === 403, `Viewers cannot read the copy status: ${viewer.status}`);
     });
 
-    await check('Source import: a Printables link copies the description, settings, pictures, PDFs and model files; Check for updates replaces changed files', async () => {
+    await check('Source import: a Printables link copies the page and its model files; Check for updates makes a new version only when files changed; a model from a link alone', async () => {
       const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
       const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
-      const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
-      put('Cable Clip/clip.stl', stl);
+      put('Cable Clip/CAD/Body.step', 'my own step');
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
       for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 100));
@@ -3324,9 +3336,7 @@ async function runE2ETests() {
         if (s.status === 200 && !s.data.isScanning) break;
       }
       const byName = async (name) => ((await apiReq(`/api/models?search=${encodeURIComponent(name)}`, { session: adminSession })).data.models || []).find(m => m.name === name);
-      const copyOf = async (id, url) => {
-        const saved = await apiReq(`/api/models/${id}`, { method: 'PUT', session: adminSession, body: { source_url: url } });
-        assert(saved.status === 200, `Saving the Source URL failed: ${JSON.stringify(saved.data)}`);
+      const wait = async (id) => {
         for (let i = 0; i < 200; i++) {
           const s = await apiReq(`/api/models/${id}/source-import`, { session: adminSession });
           if (s.status === 200 && !s.data.running) return s.data;
@@ -3336,45 +3346,53 @@ async function runE2ETests() {
       };
 
       // Printables: the description, the settings, the picture, the PDFs and the model files in
-      // their folders; the user's own clip.stl stays on the first copy
+      // their folders; the user's own CAD/Body.step stays on the first copy
       const clip = await byName('Cable Clip');
-      const pst = await copyOf(clip.id, 'https://www.printables.com/pl/model/777-cable-clip/files');
+      const saved = await apiReq(`/api/models/${clip.id}`, { method: 'PUT', session: adminSession, body: { source_url: 'https://www.printables.com/pl/model/777-cable-clip/files' } });
+      assert(saved.status === 200, `Saving the Source URL failed: ${JSON.stringify(saved.data)}`);
+      const pst = await wait(clip.id);
       assert(pst.status === 'done' && pst.site === 'Printables' && pst.message.includes('2 documents') && pst.message.includes('1 gallery picture') && pst.message.includes('3 model files'), `Printables copy: ${JSON.stringify(pst)}`);
-      for (const rel of ['README.md', 'images/clip.jpg', 'Assembly.pdf', 'Printables page.pdf', 'MK4S G-codes/clip.bgcode', 'CAD/Body.step']) assert(fs.existsSync(lib(`Cable Clip/${rel}`)), `Printables copy must write ${rel}`);
-      assert(fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8') === stl, 'The first copy keeps a file already in the folder');
+      for (const rel of ['README.md', 'images/clip.jpg', 'Assembly.pdf', 'Printables page.pdf', 'clip.stl', 'MK4S G-codes/clip.bgcode']) assert(fs.existsSync(lib(`Cable Clip/${rel}`)), `Printables copy must write ${rel}`);
+      assert(fs.readFileSync(lib('Cable Clip/CAD/Body.step'), 'utf8') === 'my own step', 'The first copy keeps a file already in the folder');
       const preadme = fs.readFileSync(lib('Cable Clip/README.md'), 'utf8');
       assert(preadme.includes('By **Clipper** on [Printables](https://www.printables.com/model/777)') && preadme.includes('Print **flat**.') && preadme.includes('- Materials: PETG')
         && preadme.includes('- [MK4S G-codes/clip.bgcode](MK4S%20G-codes/clip.bgcode)'), `Printables README:\n${preadme}`);
       const names = (await apiReq(`/api/models/${clip.id}`, { session: adminSession })).data.files.map(f => f.original_name);
       assert(names.includes('MK4S G-codes/clip.bgcode') && names.includes('CAD/Body.step'), `Model files are indexed in their folders: ${names}`);
 
-      // Check for updates: a model file whose size differs on the site is replaced, the old one goes to its history
+      // Check for updates: nothing changed, no new version
       const check = async () => {
         const started = await apiReq(`/api/models/${clip.id}/source-import`, { method: 'POST', session: adminSession });
         assert(started.status === 200, `Check for updates failed: ${JSON.stringify(started.data)}`);
-        for (let i = 0; i < 200; i++) {
-          const s = await apiReq(`/api/models/${clip.id}/source-import`, { session: adminSession });
-          if (s.status === 200 && !s.data.running) return s.data;
-          await new Promise(r => setTimeout(r, 50));
-        }
-        throw new Error('Check for updates did not finish within 10 s');
+        return wait(clip.id);
       };
-      const stlRow = () => apiReq(`/api/models/${clip.id}`, { session: adminSession }).then(r => r.data.files.find(f => f.original_name === 'clip.stl'));
       let up = await check();
-      assert(up.status === 'done' && up.message.includes('1 changed file updated'), `Check for updates replaces the changed file: ${JSON.stringify(up)}`);
-      assert(fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8') === 'file /files.printables.com/media/prints/777/stls/clip.stl', 'The STL of the site is in place');
-      let versions = (await apiReq(`/api/files/${(await stlRow()).id}/versions`, { session: adminSession })).data;
-      assert(Array.isArray(versions) && versions.length === 1 && versions[0].source === 'Printables', `The old STL is in its history: ${JSON.stringify(versions)}`);
-      up = await check();
-      assert(up.status === 'done' && !up.message.includes('changed file'), `Nothing changed, nothing replaced: ${up.message}`);
+      assert(up.status === 'done' && up.message.startsWith('No new or changed model files on Printables') && !up.version, `Nothing changed: ${JSON.stringify(up)}`);
+      assert(!(await apiReq(`/api/models/${clip.id}`, { session: adminSession })).data.versions.length, 'No new version when nothing changed');
+
+      // The designer changed the STL: a new version with a fresh copy; the project stays as it is
+      const before = fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8');
       fakeFiles.printablesRev = 1;
       up = await check();
       fakeFiles.printablesRev = 0;
-      assert(up.message.includes('1 changed file updated') && fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8').endsWith('rev 1'), `The designer's new STL comes in: ${up.message}`);
-      versions = (await apiReq(`/api/files/${(await stlRow()).id}/versions`, { session: adminSession })).data;
-      assert(versions.length === 2, `Two old versions: ${versions.length}`);
+      assert(up.status === 'done' && up.version && up.message.includes('1 new or changed file on Printables (clip.stl)') && up.message.includes('new version "Cable Clip (v2)"'), `A new version: ${JSON.stringify(up)}`);
+      assert(fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8') === before, 'The project keeps its files');
+      assert(fs.readFileSync(lib('Cable Clip (v2)/clip.stl'), 'utf8').endsWith('rev 1') && fs.existsSync(lib('Cable Clip (v2)/README.md')) && fs.existsSync(lib('Cable Clip (v2)/MK4S G-codes/clip.bgcode')), 'The new version has the fresh copy in its own folder');
+      const v2 = (await apiReq(`/api/models/${up.version}`, { session: adminSession })).data;
+      assert(v2.name === 'Cable Clip (v2)' && v2.parent_id === clip.id && v2.source_url === 'https://www.printables.com/pl/model/777-cable-clip/files' && JSON.parse(v2.source_import).status === 'done', `The version model: ${JSON.stringify({ name: v2.name, parent: v2.parent_id, src: v2.source_import })}`);
+      assert((await apiReq(`/api/models/${clip.id}`, { session: adminSession })).data.versions.some(v => v.id === up.version), 'The project lists its new version');
       const viewerCheck = await apiReq(`/api/models/${clip.id}/source-import`, { method: 'POST', session: viewerSession });
       assert(viewerCheck.status === 403, `Viewers cannot check for updates: ${viewerCheck.status}`);
+
+      // A model from a link alone: named after the page, copied at once
+      const preview = await apiReq(`/api/models/source-preview?url=${encodeURIComponent('https://www.printables.com/model/778-wall-hook')}`, { session: adminSession });
+      assert(preview.status === 200 && preview.data.site === 'Printables' && preview.data.title === 'Wall Hook', `The title of a link: ${JSON.stringify(preview.data)}`);
+      assert((await apiReq('/api/models/source-preview?url=https%3A%2F%2Fexample.com%2Fx', { session: adminSession })).status === 400, 'Only MakerWorld and Printables links');
+      const made = await apiReq('/api/models', { method: 'POST', session: adminSession, body: { source_url: 'https://www.printables.com/model/778-wall-hook' } });
+      assert(made.status === 201 && made.data.name === 'Wall Hook', `A model from a link: ${JSON.stringify(made.data)}`);
+      const mst = await wait(made.data.id);
+      assert(mst.status === 'done' && fs.existsSync(lib('Wall Hook/clip.stl')) && fs.existsSync(lib('Wall Hook/README.md')), `The new model is copied: ${JSON.stringify(mst)}`);
+      assert((await apiReq('/api/models', { method: 'POST', session: adminSession, body: { source_url: 'https://example.com/x' } })).status === 400, 'Without a name and a known link: Name is required');
     });
 
     await check('Source import: MakerWorld files with the Bambu Lab login (code by e-mail); the token never reaches the browser; a refused login is flagged', async () => {
@@ -3426,13 +3444,26 @@ async function runE2ETests() {
       assert(tfa2.status === 200 && tfa2.data.state === 'done' && tfa2.data.bambu.account === 'tfa@example.test', `Logged in with two factors: ${JSON.stringify(tfa2.data)}`);
       await apiReq('/api/auth/bambu', { method: 'DELETE', session: maker });
 
-      // Check for updates with the login: the profile 3MF and the raw files, unpacked
+      // Check for updates with the login: the project has none of the files yet, so they come into
+      // it (no new version): the profile 3MF (named after the profile) and the raw files, unpacked
       await apiReq(`/api/models/${box.id}/source-import`, { method: 'POST', session: adminSession });
       st = await wait();
-      assert(st.status === 'done' && !st.files && st.message.includes('3 model files'), `With the login: ${JSON.stringify(st)}`);
-      for (const rel of ['Gear Box Full.3mf', 'Gears/gear 8.stl', 'Case/lid.stl', 'notes.txt']) assert(fs.existsSync(lib(`Gear Box/${rel}`)), `MakerWorld copy must write ${rel}`);
+      assert(st.status === 'done' && !st.files && !st.version && st.message.includes('3 model files'), `With the login: ${JSON.stringify(st)}`);
+      for (const rel of ['Full.3mf', 'Gears/gear 8.stl', 'Case/lid.stl', 'notes.txt']) assert(fs.existsSync(lib(`Gear Box/${rel}`)), `MakerWorld copy must write ${rel}`);
       assert(!fs.existsSync(lib('Gear Box/Gear Box - files.zip')) && !fs.existsSync(lib('Gear Box/__MACOSX')), 'The ZIP is unpacked, not kept; system clutter is left out');
       assert(fs.readFileSync(lib('Gear Box/README.md'), 'utf8').includes('- Gear Box - files.zip: unpacked into this folder'), 'The README says the raw files were unpacked');
+
+      // Polish in Profile: MakerWorld's translation in the README and tags; nothing changed, no version
+      assert((await apiReq('/api/auth/profile', { method: 'PUT', session: adminSession, body: { source_language: 'xx' } })).status === 400, 'Unknown languages are refused');
+      assert((await apiReq('/api/auth/profile', { method: 'PUT', session: adminSession, body: { source_language: 'pl' } })).status === 200, 'The language is saved');
+      assert((await apiReq('/api/auth/me', { session: adminSession })).data.source_language === 'pl', 'The account says its language');
+      await apiReq(`/api/models/${box.id}/source-import`, { method: 'POST', session: adminSession });
+      st = await wait();
+      assert(st.status === 'done' && !st.version && st.message.startsWith('No new or changed model files'), `Polish, nothing changed: ${JSON.stringify(st)}`);
+      const plReadme = fs.readFileSync(lib('Gear Box/README.md'), 'utf8');
+      assert(plReadme.includes('# Pudełko z zębatkami') && plReadme.includes('Zębatki w pudełku.'), `The README in Polish:\n${plReadme.slice(0, 300)}`);
+      assert((await apiReq(`/api/models/${box.id}`, { session: adminSession })).data.tags.some(t => t.name === 'zębatki'), 'Tags in Polish');
+      await apiReq('/api/auth/profile', { method: 'PUT', session: adminSession, body: { source_language: 'en' } });
 
       // MakerWorld stops taking the login: the page is still copied, the account is flagged for the notice
       fakeFiles.mwRefused = true;

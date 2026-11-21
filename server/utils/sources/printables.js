@@ -1,8 +1,10 @@
 // Printables (printables.com). The page sits behind a bot check, its GraphQL API does not and needs
 // no login: print(id) gives the name, summary, description (HTML), author, licence, tags, pictures
 // (media.printables.com/<filePath>), the page as a PDF Printables makes (pdfFilePath), the print
-// settings and the "other files" (manuals, drawings), whose download links come from the
-// getDownloadLink mutation (files.printables.com, valid a day).
+// settings and its files: STLs, G-codes, SLA files and "other files" (manuals, STEPs...), whose
+// download links come from the getDownloadLink mutation (files.printables.com, valid a day), one
+// request per file. Documents among the other files go next to the README, the rest in their
+// Printables folder ("MK4S G-codes/x.bgcode").
 const { onHosts, textToHtml } = require('./common');
 
 const SITE = 'https://www.printables.com';
@@ -24,14 +26,18 @@ const isAsset = (url) => onHosts(url, ['printables.com']);
 const QUERY = `query Print($id: ID!) { print(id: $id) {
   id name summary description datePublished license { name } user { publicUsername handle } tags { name }
   images { filePath } pdfFilePath printDuration numPieces weight nozzleDiameters layerHeights materials { name }
-  otherFiles { id name }
+  stls { id name folder fileSize } gcodes { id name folder fileSize } slas { id name folder fileSize } otherFiles { id name folder fileSize }
 } }`;
 const LINK = `mutation Link($id: ID!, $printId: ID!, $fileType: DownloadFileTypeEnum!, $source: DownloadSourceEnum!) {
   getDownloadLink(id: $id, printId: $printId, fileType: $fileType, source: $source) { ok output { link } }
 }`;
 
-// Other files that are documentation (the models themselves are added by hand)
+// Other files that are documentation (next to the README); the others are model files
 const DOCUMENT = /\.(pdf|txt|md|docx?|odt|rtf|png|jpe?g|gif|webp)$/i;
+
+// The kinds of files of a print with the fileType of their download link
+const KINDS = [['stls', 'stl'], ['gcodes', 'gcode'], ['slas', 'sla'], ['otherFiles', 'other']];
+const linkKey = (type, id) => `${type}:${id}`;
 
 const media = (filePath) => (filePath ? MEDIA + String(filePath).replace(/^\/+/, '') : null);
 const list = (v) => (Array.isArray(v) ? v.filter(x => x !== null && x !== undefined && String(x).trim()) : []);
@@ -48,7 +54,7 @@ function settingsOf(p) {
   return out.join('\n');
 }
 
-// The print as a page of sources/common.js; links: { other file id: download URL }
+// The print as a page of sources/common.js; links: { "<fileType>:<id>": download URL }
 function pageOf(p, links = {}) {
   const summary = String(p.summary || '').trim();
   const description = String(p.description || '');
@@ -57,7 +63,15 @@ function pageOf(p, links = {}) {
   const lead = summary && !plain.includes(summary.replace(/\s+/g, ' ').slice(0, 60)) ? textToHtml(summary) : '';
   const settings = settingsOf(p);
   const documents = [];
-  for (const f of p.otherFiles || []) if (f && links[f.id] && DOCUMENT.test(f.name || '')) documents.push({ url: links[f.id], name: f.name });
+  const files = [];
+  for (const [field, type] of KINDS) {
+    for (const f of p[field] || []) {
+      const url = f && links[linkKey(type, f.id)];
+      if (!url) continue;
+      if (type === 'other' && DOCUMENT.test(f.name || '') && !f.folder) documents.push({ url, name: f.name });
+      else files.push({ url, name: f.name, folder: f.folder || '', size: Number(f.fileSize) || 0 });
+    }
+  }
   if (p.pdfFilePath) documents.push({ url: media(p.pdfFilePath), name: 'Printables page.pdf' });
   return {
     site: 'Printables',
@@ -72,7 +86,8 @@ function pageOf(p, links = {}) {
     pictures: (p.images || []).filter(i => i && i.filePath).map(i => ({ url: media(i.filePath), name: String(i.filePath).split('/').pop() })),
     documents,
     tags: (p.tags || []).map(t => t && t.name).filter(Boolean),
-    hardware: []
+    hardware: [],
+    files
   };
 }
 
@@ -81,14 +96,16 @@ async function load(id, http) {
   if (r && r.errors && r.errors.length) throw new Error(`Printables: ${r.errors[0].message}`);
   const p = r && r.data && r.data.print;
   if (!p) throw Object.assign(new Error('Printables has no model with this number'), { status: 404 });
-  // Download links of the documents among the other files (one request each)
+  // Download links of every file (one request each)
   const links = {};
-  for (const f of (p.otherFiles || []).filter(x => x && DOCUMENT.test(x.name || ''))) {
-    try {
-      const l = await http.json(API, { body: { query: LINK, variables: { id: String(f.id), printId: String(id), fileType: 'other', source: 'model_detail' } } });
-      const link = l && l.data && l.data.getDownloadLink && l.data.getDownloadLink.output && l.data.getDownloadLink.output.link;
-      if (link && isAsset(link)) links[f.id] = link;
-    } catch (e) { /* that file is listed without a copy */ }
+  for (const [field, type] of KINDS) {
+    for (const f of (p[field] || []).filter(Boolean)) {
+      try {
+        const l = await http.json(API, { body: { query: LINK, variables: { id: String(f.id), printId: String(id), fileType: type, source: 'model_detail' } } });
+        const link = l && l.data && l.data.getDownloadLink && l.data.getDownloadLink.output && l.data.getDownloadLink.output.link;
+        if (link && isAsset(link)) links[linkKey(type, f.id)] = link;
+      } catch (e) { /* that file is listed without a copy */ }
+    }
   }
   return pageOf(p, links);
 }

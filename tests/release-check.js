@@ -346,61 +346,90 @@ async function runStaticAndUiChecks() {
     assert(!common.hasMarker('# My own readme'), 'A README without the marker is not 3DLib\'s');
   });
 
-  await check('Printables and Thingiverse import: page links, pages of their data, which link goes to which site', () => {
+  await check('Printables import: page links, the page of its data, which link goes to which site', () => {
     const common = require(path.join(ROOT_DIR, 'server/utils/sources/common'));
     const { sourceOf } = require(path.join(ROOT_DIR, 'server/utils/sources'));
     const pr = require(path.join(ROOT_DIR, 'server/utils/sources/printables'));
-    const tv = require(path.join(ROOT_DIR, 'server/utils/sources/thingiverse'));
     assert(pr.idOf('https://www.printables.com/model/3161-3d-benchy') === 3161 && pr.idOf('https://printables.com/pl/model/5-x/files') === 5 && pr.idOf('https://www.printables.com/model/77') === 77, 'Printables links');
     assert(pr.idOf('https://www.printables.com/social/1-x') === null && pr.idOf('https://printables.com.evil.io/model/1') === null, 'Not Printables model pages');
-    assert(tv.idOf('https://www.thingiverse.com/thing:763622') === 763622 && tv.idOf('https://thingiverse.com/thing:5/files') === 5, 'Thingiverse links');
-    assert(tv.idOf('https://www.thingiverse.com/things:1') === null && tv.idOf('https://thingiverse.com.evil.io/thing:1') === null, 'Not Thingiverse thing pages');
     assert(sourceOf('https://makerworld.com/models/1').source.site === 'MakerWorld' && sourceOf('https://www.printables.com/model/2-a').source.site === 'Printables'
-      && sourceOf('https://www.thingiverse.com/thing:3').source.site === 'Thingiverse' && sourceOf('https://example.com/model/1') === null, 'Each link goes to its site');
-    assert(tv.isAsset('https://cdn.thingiverse.com/assets/a.pdf') && !tv.isAsset('https://cdn.thingiverse.com.evil.io/a.pdf') && pr.isAsset('https://files.printables.com/a.pdf'), 'Files only from the sites\' own hosts');
-    assert(JSON.stringify(tv.headersFor('https://api.thingiverse.com/files/1/download', 'T')) === JSON.stringify({ authorization: 'Bearer T' }) && tv.headersFor('https://cdn.thingiverse.com/a.pdf', 'T') === undefined, 'The token goes to the API only');
+      && sourceOf('https://www.thingiverse.com/thing:3') === null && sourceOf('https://example.com/model/1') === null, 'Each link goes to its site; Thingiverse is not copied');
+    assert(pr.isAsset('https://files.printables.com/a.pdf') && pr.isAsset('https://media.printables.com/a.jpg') && !pr.isAsset('https://printables.com.evil.io/a.pdf'), 'Files only from the own hosts of the site');
 
     const p = pr.pageOf({
       id: '12', name: 'Clip', summary: 'A clip for cables.', description: '<p>Print it <img src="https://media.printables.com/media/prints/12/d.png"></p>',
       datePublished: '2025-02-14T09:26:10+00:00', license: { name: 'CC BY' }, user: { publicUsername: 'Maker' }, tags: [{ name: 'clip' }],
       images: [{ filePath: 'media/prints/12/images/1_a/clip.jpg' }], pdfFilePath: 'media/prints/12/pdfs/12-clip.pdf',
       printDuration: '2.46', numPieces: 4, weight: '29.00', nozzleDiameters: ['0.40'], layerHeights: ['0.15', '0.2'], materials: [{ name: 'PLA' }],
-      otherFiles: [{ id: '5', name: 'Manual.pdf' }, { id: '6', name: 'Body.step' }, { id: '7', name: 'Notes.txt' }]
-    }, { 5: 'https://files.printables.com/media/prints/12/other/Manual.pdf', 6: 'https://files.printables.com/x.step' });
+      stls: [{ id: '5', name: 'clip.stl', folder: '', fileSize: 1000 }],
+      gcodes: [{ id: '8', name: 'clip.bgcode', folder: 'MK4S G-codes', fileSize: 50 }],
+      otherFiles: [{ id: '5', name: 'Manual.pdf', folder: '' }, { id: '6', name: 'Body.step', folder: 'CAD' }, { id: '7', name: 'Notes.txt' }]
+    }, {
+      'stl:5': 'https://files.printables.com/media/prints/12/stls/clip.stl', 'gcode:8': 'https://files.printables.com/media/prints/12/gcodes/clip.bgcode',
+      'other:5': 'https://files.printables.com/media/prints/12/other/Manual.pdf', 'other:6': 'https://files.printables.com/x.step'
+    });
     assert(p.title === 'Clip' && p.author === 'Maker' && p.license === 'CC BY' && p.url === 'https://www.printables.com/model/12', `Printables page: ${JSON.stringify(p)}`);
     assert(p.description.startsWith('<p>A clip for cables.</p>'), 'The summary leads the description');
-    assert(JSON.stringify(p.documents.map(d => d.name)) === JSON.stringify(['Manual.pdf', 'Printables page.pdf']), `Documents: the PDFs with a link, the page PDF (not the STEP): ${JSON.stringify(p.documents)}`);
+    assert(JSON.stringify(p.documents.map(d => d.name)) === JSON.stringify(['Manual.pdf', 'Printables page.pdf']), `Documents: the PDFs with a link, the page PDF: ${JSON.stringify(p.documents)}`);
+    assert(JSON.stringify(p.files.map(f => `${f.folder}|${f.name}|${f.size}`)) === JSON.stringify(['|clip.stl|1000', 'MK4S G-codes|clip.bgcode|50', 'CAD|Body.step|0']), `Model files with their folders and sizes (a file id of another kind is another file): ${JSON.stringify(p.files)}`);
     assert(p.sections[0].title === 'Print settings' && p.sections[0].markdown.includes('- Print time: 2.5 h') && p.sections[0].markdown.includes('- Layer height: 0.15, 0.2 mm'), `Print settings: ${JSON.stringify(p.sections)}`);
-    const pa = common.assetsOf(p, pr.isAsset).map(a => a.rel);
-    assert(JSON.stringify(pa) === JSON.stringify(['images/description-01.png', 'images/clip.jpg', 'Manual.pdf', 'Printables page.pdf']), `Printables files: ${pa}`);
+    const assets = common.assetsOf(p, pr.isAsset);
+    const pa = assets.map(a => `${a.kind}:${a.rel}`);
+    assert(JSON.stringify(pa) === JSON.stringify(['description:images/description-01.png', 'gallery:images/clip.jpg', 'document:Manual.pdf', 'document:Printables page.pdf',
+      'model:clip.stl', 'model:MK4S G-codes/clip.bgcode', 'model:CAD/Body.step']), `Printables files: ${pa}`);
+    assert(assets.find(a => a.rel === 'clip.stl').size === 1000, 'A model file keeps the size the site gives (Check for updates compares it)');
+    const local = new Map(assets.map(a => [a.url, a.rel]));
+    const readme = common.buildReadme(p, { local: u => local.get(u) || null });
+    assert(readme.includes('By **Maker** on [Printables](https://www.printables.com/model/12)') && readme.includes('## Print settings')
+      && readme.includes('## Files') && readme.includes('- [MK4S G-codes/clip.bgcode](MK4S%20G-codes/clip.bgcode)'), `Printables README:\n${readme}`);
+  });
 
-    const thing = {
-      id: 9, name: 'Box', added: '2015-04-09T09:46:56+00:00', license: 'Creative Commons - Attribution', creator: { name: 'maker9' },
-      details_parts: [
-        { type: 'summary', name: 'Summary', data: [{ content: 'A box.\n\nWith a lid.' }] },
-        { type: 'settings', name: 'Print Settings', data: [{ printer: 'MK3', supports: 'No', infill: '20%', notes: '' }] },
-        { type: 'tips', name: 'Post-Printing', data: [{ content: '<p>Sand <img src="https://cdn.thingiverse.com/assets/t.jpg"></p>' }] },
-        { type: 'custom', name: 'Empty', data: [] }
+  await check('MakerWorld files with the Bambu Lab login: profile 3MFs and raw files; without a login only the page; a refused login', async () => {
+    const mw = require(path.join(ROOT_DIR, 'server/utils/sources/makerworld'));
+    const common = require(path.join(ROOT_DIR, 'server/utils/sources/common'));
+    const design = {
+      id: 51, title: 'Gear Set', designCreator: { uid: 7, name: 'Maker' }, summary: '<p>Gears</p>',
+      instances: [
+        { id: 901, title: 'Full: all plates', instanceCreator: { uid: 7 }, extention: { modelInfo: { f3mf: { size: 1234 } } } },
+        { id: 902, title: 'Remix', instanceCreator: { uid: 8 } }
       ],
-      tags: [{ name: 'box' }, { name: 'lid' }]
+      designExtension: { model_files: [{ isDir: true, dirName: 'Gears', children: [{ modelName: 'Gear.stl' }] }] }
     };
-    const images = [{ name: 'box.jpg', sizes: [{ type: 'thumb', size: 'small', url: 'https://cdn.thingiverse.com/renders/s.jpg' }, { type: 'display', size: 'large', url: 'https://cdn.thingiverse.com/assets/l.jpg' }, { type: 'preview', size: 'featured', url: 'https://cdn.thingiverse.com/assets/f.jpg' }] }];
-    const files = [{ name: 'box.stl', direct_url: 'https://cdn.thingiverse.com/assets/box.stl' }, { name: 'Guide.pdf', direct_url: 'https://cdn.thingiverse.com/assets/g.pdf' }, { name: 'Other.pdf', download_url: 'https://api.thingiverse.com/files/3/download' }];
-    const t = tv.pageOf(thing, images, files);
-    assert(t.description === '<p>A box.</p><p>With a lid.</p>' && t.author === 'maker9' && t.url === 'https://www.thingiverse.com/thing:9', `Thingiverse page: ${JSON.stringify(t)}`);
-    assert(JSON.stringify(t.sections.map(s => s.title)) === JSON.stringify(['Print Settings', 'Post-Printing']) && t.sections[0].markdown === '- Printer: MK3\n- Supports: No\n- Infill: 20%', `Sections: ${JSON.stringify(t.sections)}`);
-    assert(t.pictures[0].url === 'https://cdn.thingiverse.com/assets/l.jpg', 'The biggest picture of an image');
-    assert(JSON.stringify(t.documents.map(d => d.url)) === JSON.stringify(['https://cdn.thingiverse.com/assets/g.pdf', 'https://api.thingiverse.com/files/3/download']) && JSON.stringify(t.tags) === '["box","lid"]', `Documents and tags: ${JSON.stringify(t)}`);
-    const old = tv.pageOf({ id: 4, name: 'Old', description: 'Line 1\nLine 2', instructions_html: '<p>Do it</p>' });
-    assert(old.description === '<p>Line 1<br>Line 2</p>' && old.sections[0].title === 'Instructions', `A thing without details_parts: ${JSON.stringify(old)}`);
-    const readme = common.buildReadme(t, { local: () => null });
-    assert(readme.includes('## Post-Printing') && readme.includes('![](https://cdn.thingiverse.com/assets/t.jpg)') && readme.includes('By **maker9** on [Thingiverse](https://www.thingiverse.com/thing:9)'), `Thingiverse README:\n${readme}`);
+    const asked = [];
+    const fake = (refuse) => ({
+      json: async (url, opts = {}) => {
+        asked.push({ url, auth: (opts.headers || {}).authorization || '' });
+        if (url.endsWith('/design/51')) return design;
+        if (refuse) throw Object.assign(new Error('HTTP 403'), { status: 403 });
+        if (url.includes('/instance/901/f3mf')) return { name: 'gear-set-full.3mf', url: 'https://makerworld.bblmw.com/f/901.3mf?sig=1' };
+        if (url.endsWith('/design/51/model?modelType=all&type=download')) return { name: '', url: 'https://bbl-mw.s3.us-west-2.amazonaws.com/raw/all.zip?X-Amz=1' };
+        throw Object.assign(new Error('HTTP 404'), { status: 404 });
+      }
+    });
+    const without = await mw.load(51, fake(false), {});
+    assert(without.filesNote === 'login_needed' && !(without.files || []).length && !asked.some(a => a.auth), `Without a login only the page: ${JSON.stringify(without.files)}`);
+    asked.length = 0;
+    const page = await mw.load(51, fake(false), { token: 'tok' });
+    assert(!page.filesNote && JSON.stringify(page.files.map(f => `${f.name}|${f.size || 0}|${Boolean(f.unzip)}`)) === JSON.stringify(['gear-set-full.3mf|1234|false', 'Gear Set - files.zip|0|true']), `The designer's profile and the raw files: ${JSON.stringify(page.files)}`);
+    assert(asked.filter(a => a.url.includes('/instance/') || a.url.includes('/model?')).every(a => a.auth === 'Bearer tok') && !asked.some(a => a.url.includes('/instance/902/')), 'The token goes with the file requests; profiles of other users are left out');
+    const assets = common.assetsOf(page, mw.isAsset).filter(a => a.kind === 'model' || a.kind === 'archive');
+    assert(JSON.stringify(assets.map(a => `${a.kind}:${a.rel}`)) === JSON.stringify(['model:gear-set-full.3mf', 'archive:Gear Set - files.zip']), `Signed links of the API are downloaded: ${JSON.stringify(assets)}`);
+    const refused = await mw.load(51, fake(true), { token: 'old' });
+    assert(refused.filesNote === 'login_refused' && !refused.files.length, `A refused login: ${refused.filesNote}`);
+    assert(mw.linkOf({ data: { url: 'https://x.bblmw.com/a.3mf', name: 'a.3mf' } }).name === 'a.3mf' && mw.linkOf({ url: 'http://insecure/a' }) === null, 'Download answers: nested data, https only');
+  });
 
-    // The token settings and the notice never put the token or a name into HTML unescaped
-    const panel = UI.thingiverseTokenPanel({ set: true, hint: '<b>1', status: 'invalid', checked_at: '2026-11-20 10:00:00' });
-    assert(panel.includes('…&lt;b&gt;1') && panel.includes('is-invalid') && panel.includes('App.removeThingiverseToken()') && panel.includes('thingiverse.com/apps/create'), 'Token panel: escaped hint, refused state, remove, instructions');
-    assert(UI.thingiverseTokenPanel({ set: false }).includes('No token yet') && !UI.thingiverseTokenPanel({ set: false }).includes('removeThingiverseToken'), 'Without a token: no Remove');
-    assert(UI.tokenNotice({ status: 'invalid', checked_at: '2026-11-20 10:00:00' }).includes('App.openTokenSettings()'), 'The notice opens the token settings');
+  await check('Model page: Check for updates, the login MakerWorld wants, the Bambu Lab panel and notice escape names', () => {
+    assert(UI.sourceSite('https://makerworld.com/pl/models/786733-x') === 'MakerWorld' && UI.sourceSite('https://www.printables.com/model/3161-x') === 'Printables' && UI.sourceSite('https://www.thingiverse.com/thing:1') === null, 'Sites of Source URLs');
+    const m = { id: 4, source_url: 'https://makerworld.com/models/1' };
+    assert(UI.sourceImportBadge(m, null, true).includes('App.checkSourceUpdates(4)') && UI.sourceImportBadge(m, null, false) === '', 'Check for updates for those who may change the project');
+    const needs = UI.sourceImportBadge(m, { url: m.source_url, status: 'done', files: 'login_needed', message: '<b>' }, true);
+    assert(needs.includes('App.openAccountSettings()') && needs.includes('Log in to MakerWorld for the files') && !needs.includes('<b>'), `The login MakerWorld wants: ${needs}`);
+    assert(UI.sourceImportBadge({ id: 5, source_url: 'https://example.com/x' }, null, true) === '', 'No button for other sites');
+    const X = '<x-evil>';
+    const panels = [UI.bambuPanel({ set: false }), UI.bambuPanel({ set: true, account: X, status: 'ok', expires_at: '2027-02-01T00:00:00Z' }), UI.bambuPanel({ set: true, account: X, status: 'invalid' }), UI.bambuPanel({ set: false }, { state: 'code', account: X }), UI.accountNotice({ set: true, status: 'invalid' })];
+    assert(panels.every(h => !h.includes('<x-evil')), 'Account names never become HTML');
+    assert(panels[0].includes('App.bambuSendCode(event)') && !panels[0].includes('name="password"') && panels[1].includes('App.bambuLogout()') && panels[2].includes('is-invalid') && panels[3].includes('App.bambuCode(event)') && panels[4].includes('App.openAccountSettings()'), 'Panel states: log in, logged in, expired, code, notice');
   });
 
   await check('Names, descriptions and file metadata never become HTML (cards, forms, model page, share page, settings)', () => {
@@ -432,7 +461,7 @@ async function runStaticAndUiChecks() {
       modelDetailCopyFailed: UI.modelDetail({ ...evilModel, source_url: 'https://makerworld.com/models/1', source_import: JSON.stringify({ url: 'https://makerworld.com/models/1', status: 'error', message: X, at: X }) }, true),
       modelDetailCopied: UI.modelDetail({ ...evilModel, source_url: 'https://makerworld.com/models/1', source_import: JSON.stringify({ url: 'https://makerworld.com/models/1', status: 'done', message: X, at: '2026-11-20T10:00:00Z' }) }, true)
     };
-    assert(renders.modelDetailCopyFailed.includes('App.retrySourceImport(') && !renders.modelDetailCopied.includes('App.retrySourceImport('), 'A failed copy of the source page offers a retry');
+    assert(renders.modelDetailCopyFailed.includes('Copy failed · retry') && renders.modelDetailCopied.includes('Check for updates') && !renders.modelDetailCopied.includes('Copy failed'), 'A failed copy offers a retry, a done one Check for updates');
     assert(renders.modelDetailWithParts.includes('id="tab-content-parts"') && renders.partsTab.includes('0/2'), 'The model page has a Parts tab with counters');
     for (const [label, html] of Object.entries(renders)) assert(!html.includes('<x-evil'), `UI.${label} writes a name as HTML`);
   });
@@ -1308,50 +1337,80 @@ async function runE2ETests() {
     }
   };
   const makerWorldHits = [];
-  // Printables (GraphQL) and Thingiverse (API with a token: "good-token" works, others get 401)
-  const printablesPrint = {
+  // Printables (GraphQL; the download links of its files from its mutation). A file's content is
+  // "file <url>", plus " rev <n>" for the STL once the designer "changed" it (Check for updates)
+  const fakeFiles = { printablesRev: 0, mwRefused: false };
+  const fakeContent = (url) => `file ${url}${url.endsWith('/stls/clip.stl') && fakeFiles.printablesRev ? ` rev ${fakeFiles.printablesRev}` : ''}`;
+  const printablesLinks = {
+    'other:31': 'https://files.printables.com/media/prints/777/other/Assembly.pdf',
+    'other:32': 'https://files.printables.com/media/prints/777/other/Body.step',
+    'stl:41': 'https://files.printables.com/media/prints/777/stls/clip.stl',
+    'gcode:42': 'https://files.printables.com/media/prints/777/gcodes/clip.bgcode'
+  };
+  const printablesPrint = () => ({
     id: '777', name: 'Cable Clip', summary: 'Clips for cables.', description: '<p>Print <strong>flat</strong>.</p>', datePublished: '2025-01-02T00:00:00+00:00',
     license: { name: 'CC BY' }, user: { publicUsername: 'Clipper' }, tags: [{ name: 'clip' }], images: [{ filePath: 'media/prints/777/images/1_a/clip.jpg' }],
     pdfFilePath: 'media/prints/777/pdfs/777.pdf', printDuration: '1.5', numPieces: 2, weight: '10', nozzleDiameters: ['0.4'], layerHeights: ['0.2'], materials: [{ name: 'PETG' }],
-    otherFiles: [{ id: '31', name: 'Assembly.pdf' }, { id: '32', name: 'Body.step' }]
+    stls: [{ id: '41', name: 'clip.stl', folder: '', fileSize: Buffer.byteLength(fakeContent('/files.printables.com/media/prints/777/stls/clip.stl')) }],
+    gcodes: [{ id: '42', name: 'clip.bgcode', folder: 'MK4S G-codes', fileSize: Buffer.byteLength(fakeContent('/files.printables.com/media/prints/777/gcodes/clip.bgcode')) }],
+    otherFiles: [{ id: '31', name: 'Assembly.pdf', folder: '' }, { id: '32', name: 'Body.step', folder: 'CAD' }]
+  });
+  // MakerWorld design 5151 with files, and Bambu Lab's code login: me@example.test with the code
+  // 123456 gets the access token "mw-token"; tfa@example.test then needs the app code 654321
+  const mwZip = (() => {
+    const AdmZip = require('adm-zip');
+    const z = new AdmZip();
+    z.addFile('Gears/gear 8.stl', Buffer.from('solid g\nendsolid g\n'));
+    z.addFile('Case/lid.stl', Buffer.from('solid l\nendsolid l\n'));
+    z.addFile('__MACOSX/Gears/._gear 8.stl', Buffer.from('x'));
+    return z.toBuffer();
+  })();
+  const mwDesign = {
+    id: 5151, title: 'Gear Box', designCreator: { uid: 7, name: 'Maker' }, summary: '<p>Gears in a box.</p>', tags: ['gears'],
+    instances: [{ id: 951, title: 'Full', instanceCreator: { uid: 7 }, extention: { modelInfo: { f3mf: { size: Buffer.byteLength('file /makerworld.bblmw.com/f/951.3mf') } } } }],
+    designExtension: { model_files: [{ isDir: true, dirName: 'Gears', children: [{ modelName: 'gear 8.stl' }] }] }
   };
-  const thingiverseThing = {
-    id: 888, name: 'Desk Box', added: '2016-05-06T07:08:09+00:00', license: 'Creative Commons - Attribution', creator: { name: 'boxer' },
-    details_parts: [{ type: 'summary', name: 'Summary', data: [{ content: '<p>A box for the desk.</p>' }] }], tags: [{ name: 'box' }]
-  };
-  const thingiverseRevoked = { on: false };
-  const cdnAuth = []; // Authorization headers that reached a CDN (must stay empty)
-  const makerWorld = require('http').createServer((req, res) => {
+  const readBody = (req) => new Promise(resolve => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => resolve(b ? JSON.parse(b) : {})); });
+  const makerWorld = require('http').createServer(async (req, res) => {
     makerWorldHits.push(req.url);
     const send = (status, body, type = 'application/octet-stream') => { res.writeHead(status, { 'Content-Type': type }); res.end(body); };
-    if (req.url === '/makerworld.com/api/v1/design-service/design/4242') return send(200, JSON.stringify(makerWorldDesign), 'application/json');
+    const json = (status, obj) => send(status, JSON.stringify(obj), 'application/json');
+    if (req.url === '/makerworld.com/api/v1/design-service/design/4242') return json(200, makerWorldDesign);
+    if (req.url === '/makerworld.com/api/v1/design-service/design/5151') return json(200, mwDesign);
     if (req.url === '/makerworld.com/api/v1/design-service/design/403') return send(403, '<title>Just a moment...</title>', 'text/html');
+    if (req.url.startsWith('/makerworld.com/api/v1/design-service/instance/') || req.url.startsWith('/makerworld.com/api/v1/design-service/design/5151/model')) {
+      if (req.headers.authorization !== 'Bearer mw-token' || fakeFiles.mwRefused) return json(403, { error: 'Please log in' });
+      if (req.url === '/makerworld.com/api/v1/design-service/instance/951/f3mf?type=download') return json(200, { name: 'Gear Box Full.3mf', url: 'https://makerworld.bblmw.com/f/951.3mf' });
+      if (req.url.endsWith('/design/5151/model?modelType=all&type=download')) return json(200, { name: '', url: 'https://makerworld.bblmw.com/raw/5151/all.zip' });
+      return json(404, {});
+    }
+    if (req.url === '/makerworld.bblmw.com/raw/5151/all.zip') return send(200, mwZip, 'application/zip');
     if (req.url.startsWith('/makerworld.bblmw.com/') && !req.url.includes('missing')) return send(200, Buffer.from(`file ${req.url}`));
+    if (req.url === '/api.bambulab.com/v1/user-service/user/login' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.password) return json(400, { code: 1, error: 'No passwords here' });
+      if (b.account === 'me@example.test' && b.code === '123456') return json(200, { accessToken: 'mw-token', refreshToken: 'mw-refresh', expiresIn: 7776000 });
+      if (b.account === 'tfa@example.test' && b.code === '123456') return json(200, { loginType: 'tfa', tfaKey: 'tfa-key-1' });
+      return json(400, { code: 2, error: 'Incorrect verification code.' });
+    }
+    if (req.url === '/api.bambulab.com/v1/user-service/user/sendemail/code' && req.method === 'POST') {
+      const b = await readBody(req);
+      return b.type === 'codeLogin' && /@example\.test$/.test(b.email) ? json(200, {}) : json(400, { code: 3, error: 'The account does not exist.' });
+    }
+    if (req.url === '/bambulab.com/api/sign-in/tfa' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.tfaKey === 'tfa-key-1' && b.tfaCode === '654321') { res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'token=mw-token; Path=/; HttpOnly' }); return res.end('{}'); }
+      return json(400, { error: 'Wrong code' });
+    }
     if (req.url === '/api.printables.com/graphql/' && req.method === 'POST') {
-      let body = '';
-      req.on('data', c => { body += c; });
-      req.on('end', () => {
-        const q = JSON.parse(body);
-        if (/getDownloadLink/.test(q.query)) {
-          const ok = q.variables.id === '31' && q.variables.printId === '777' && q.variables.fileType === 'other';
-          return send(200, JSON.stringify({ data: { getDownloadLink: ok ? { ok: true, output: { link: 'https://files.printables.com/media/prints/777/other/Assembly.pdf' } } : { ok: false, output: null } } }), 'application/json');
-        }
-        send(200, JSON.stringify({ data: { print: q.variables.id === '777' ? printablesPrint : null } }), 'application/json');
-      });
-      return;
+      const q = await readBody(req);
+      if (/getDownloadLink/.test(q.query)) {
+        const link = q.variables.printId === '777' && printablesLinks[`${q.variables.fileType}:${q.variables.id}`];
+        return json(200, { data: { getDownloadLink: link ? { ok: true, output: { link } } : { ok: false, output: null } } });
+      }
+      return json(200, { data: { print: q.variables.id === '777' ? printablesPrint() : null } });
     }
-    if (req.url.startsWith('/media.printables.com/') || req.url.startsWith('/files.printables.com/') || req.url.startsWith('/cdn.thingiverse.com/')) {
-      cdnAuth.push(req.headers.authorization || '');
-      return send(200, Buffer.from(`file ${req.url}`));
-    }
-    if (req.url.startsWith('/api.thingiverse.com/')) {
-      if (req.headers.authorization !== 'Bearer good-token' || thingiverseRevoked.on) return send(401, JSON.stringify({ error: 'Unauthorized' }), 'application/json');
-      const route = req.url.slice('/api.thingiverse.com'.length);
-      if (route === '/things/763622' || route === '/things/888') return send(200, JSON.stringify(route === '/things/888' ? thingiverseThing : { id: 763622 }), 'application/json');
-      if (route === '/things/888/images') return send(200, JSON.stringify([{ name: 'box.jpg', sizes: [{ type: 'display', size: 'large', url: 'https://cdn.thingiverse.com/assets/box.jpg' }] }]), 'application/json');
-      if (route === '/things/888/files') return send(200, JSON.stringify([{ name: 'box.stl', direct_url: 'https://cdn.thingiverse.com/assets/box.stl' }, { name: 'Guide.pdf', download_url: 'https://api.thingiverse.com/files/5/download' }]), 'application/json');
-      if (route === '/files/5/download') { res.writeHead(302, { Location: 'https://cdn.thingiverse.com/assets/guide.pdf' }); return res.end(); }
-    }
+    if (req.url.startsWith('/media.printables.com/') || req.url.startsWith('/files.printables.com/')) return send(200, Buffer.from(fakeContent(req.url)));
     send(404, 'Not found', 'text/plain');
   });
   await new Promise(resolve => makerWorld.listen(makerWorldPort, '127.0.0.1', resolve));
@@ -3253,12 +3312,11 @@ async function runE2ETests() {
       assert(viewer.status === 403, `Viewers cannot read the copy status: ${viewer.status}`);
     });
 
-    await check('Source import: Printables without a token; Thingiverse with the token of the user, checked, never shown, refused tokens flagged', async () => {
+    await check('Source import: a Printables link copies the description, settings, pictures, PDFs and model files; Check for updates replaces changed files', async () => {
       const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
       const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
       const stl = 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n';
       put('Cable Clip/clip.stl', stl);
-      put('Desk Box/box.stl', stl);
       await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
       for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 100));
@@ -3277,58 +3335,116 @@ async function runE2ETests() {
         throw new Error('The source import did not finish within 10 s');
       };
 
-      // Printables: the description, the settings, the picture, the PDF of the other files and the page PDF
+      // Printables: the description, the settings, the picture, the PDFs and the model files in
+      // their folders; the user's own clip.stl stays on the first copy
       const clip = await byName('Cable Clip');
       const pst = await copyOf(clip.id, 'https://www.printables.com/pl/model/777-cable-clip/files');
-      assert(pst.status === 'done' && pst.site === 'Printables' && pst.message.includes('2 documents') && pst.message.includes('1 gallery picture'), `Printables copy: ${JSON.stringify(pst)}`);
-      for (const rel of ['README.md', 'images/clip.jpg', 'Assembly.pdf', 'Printables page.pdf']) assert(fs.existsSync(lib(`Cable Clip/${rel}`)), `Printables copy must write ${rel}`);
-      assert(!fs.existsSync(lib('Cable Clip/Body.step')), 'Model files of the page are not downloaded');
+      assert(pst.status === 'done' && pst.site === 'Printables' && pst.message.includes('2 documents') && pst.message.includes('1 gallery picture') && pst.message.includes('3 model files'), `Printables copy: ${JSON.stringify(pst)}`);
+      for (const rel of ['README.md', 'images/clip.jpg', 'Assembly.pdf', 'Printables page.pdf', 'MK4S G-codes/clip.bgcode', 'CAD/Body.step']) assert(fs.existsSync(lib(`Cable Clip/${rel}`)), `Printables copy must write ${rel}`);
+      assert(fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8') === stl, 'The first copy keeps a file already in the folder');
       const preadme = fs.readFileSync(lib('Cable Clip/README.md'), 'utf8');
-      assert(preadme.includes('By **Clipper** on [Printables](https://www.printables.com/model/777)') && preadme.includes('Print **flat**.') && preadme.includes('- Materials: PETG'), `Printables README:\n${preadme}`);
+      assert(preadme.includes('By **Clipper** on [Printables](https://www.printables.com/model/777)') && preadme.includes('Print **flat**.') && preadme.includes('- Materials: PETG')
+        && preadme.includes('- [MK4S G-codes/clip.bgcode](MK4S%20G-codes/clip.bgcode)'), `Printables README:\n${preadme}`);
+      const names = (await apiReq(`/api/models/${clip.id}`, { session: adminSession })).data.files.map(f => f.original_name);
+      assert(names.includes('MK4S G-codes/clip.bgcode') && names.includes('CAD/Body.step'), `Model files are indexed in their folders: ${names}`);
 
-      // Thingiverse without a token: the copy says what is missing
-      const box = await byName('Desk Box');
-      const turl = 'https://www.thingiverse.com/thing:888';
-      let tst = await copyOf(box.id, turl);
-      assert(tst.status === 'error' && tst.code === 'token_missing' && /Profile/.test(tst.message), `Without a token: ${JSON.stringify(tst)}`);
+      // Check for updates: a model file whose size differs on the site is replaced, the old one goes to its history
+      const check = async () => {
+        const started = await apiReq(`/api/models/${clip.id}/source-import`, { method: 'POST', session: adminSession });
+        assert(started.status === 200, `Check for updates failed: ${JSON.stringify(started.data)}`);
+        for (let i = 0; i < 200; i++) {
+          const s = await apiReq(`/api/models/${clip.id}/source-import`, { session: adminSession });
+          if (s.status === 200 && !s.data.running) return s.data;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        throw new Error('Check for updates did not finish within 10 s');
+      };
+      const stlRow = () => apiReq(`/api/models/${clip.id}`, { session: adminSession }).then(r => r.data.files.find(f => f.original_name === 'clip.stl'));
+      let up = await check();
+      assert(up.status === 'done' && up.message.includes('1 changed file updated'), `Check for updates replaces the changed file: ${JSON.stringify(up)}`);
+      assert(fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8') === 'file /files.printables.com/media/prints/777/stls/clip.stl', 'The STL of the site is in place');
+      let versions = (await apiReq(`/api/files/${(await stlRow()).id}/versions`, { session: adminSession })).data;
+      assert(Array.isArray(versions) && versions.length === 1 && versions[0].source === 'Printables', `The old STL is in its history: ${JSON.stringify(versions)}`);
+      up = await check();
+      assert(up.status === 'done' && !up.message.includes('changed file'), `Nothing changed, nothing replaced: ${up.message}`);
+      fakeFiles.printablesRev = 1;
+      up = await check();
+      fakeFiles.printablesRev = 0;
+      assert(up.message.includes('1 changed file updated') && fs.readFileSync(lib('Cable Clip/clip.stl'), 'utf8').endsWith('rev 1'), `The designer's new STL comes in: ${up.message}`);
+      versions = (await apiReq(`/api/files/${(await stlRow()).id}/versions`, { session: adminSession })).data;
+      assert(versions.length === 2, `Two old versions: ${versions.length}`);
+      const viewerCheck = await apiReq(`/api/models/${clip.id}/source-import`, { method: 'POST', session: viewerSession });
+      assert(viewerCheck.status === 403, `Viewers cannot check for updates: ${viewerCheck.status}`);
+    });
+
+    await check('Source import: MakerWorld files with the Bambu Lab login (code by e-mail); the token never reaches the browser; a refused login is flagged', async () => {
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      fs.mkdirSync(lib('Gear Box'), { recursive: true });
+      fs.writeFileSync(lib('Gear Box/notes.txt'), 'my notes');
+      await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const s = await apiReq('/api/library/scan/status', { session: adminSession });
+        if (s.status === 200 && !s.data.isScanning) break;
+      }
+      const box = ((await apiReq('/api/models?search=Gear%20Box', { session: adminSession })).data.models || []).find(m => m.name === 'Gear Box');
+      assert(box, 'The Gear Box project');
+      const wait = async () => {
+        for (let i = 0; i < 200; i++) {
+          const s = await apiReq(`/api/models/${box.id}/source-import`, { session: adminSession });
+          if (s.status === 200 && !s.data.running) return s.data;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        throw new Error('The copy did not finish within 10 s');
+      };
+
+      // Without a login: the page, not its files
+      await apiReq(`/api/models/${box.id}`, { method: 'PUT', session: adminSession, body: { source_url: 'https://makerworld.com/en/models/5151-gear-box' } });
+      let st = await wait();
+      assert(st.status === 'done' && st.files === 'login_needed' && /log in to MakerWorld/.test(st.message) && !fs.existsSync(lib('Gear Box/Gear Box Full.3mf')), `Without a login: ${JSON.stringify(st)}`);
+
+      // The login: Bambu Lab e-mails a code (no password), a wrong code is refused
+      const noMail = await apiReq('/api/auth/bambu/send-code', { method: 'POST', session: adminSession, body: { account: 'not an e-mail' } });
+      assert(noMail.status === 400, `Not an e-mail: ${noMail.status}`);
+      const unknown = await apiReq('/api/auth/bambu/send-code', { method: 'POST', session: adminSession, body: { account: 'who@else.invalid' } });
+      assert(unknown.status === 400 && /does not exist/.test(unknown.data.error), `Bambu Lab's answer is passed on: ${JSON.stringify(unknown.data)}`);
+      const step1 = await apiReq('/api/auth/bambu/send-code', { method: 'POST', session: adminSession, body: { account: 'me@example.test' } });
+      assert(step1.status === 200 && step1.data.state === 'code', `Bambu Lab sends the code: ${JSON.stringify(step1.data)}`);
+      const wrong = await apiReq('/api/auth/bambu/code', { method: 'POST', session: adminSession, body: { account: 'me@example.test', code: '000000' } });
+      assert(wrong.status === 400 && /Incorrect/.test(wrong.data.error), `A wrong code: ${JSON.stringify(wrong)}`);
+      const step2 = await apiReq('/api/auth/bambu/code', { method: 'POST', session: adminSession, body: { account: 'me@example.test', code: '123456' } });
+      assert(step2.status === 200 && step2.data.state === 'done' && step2.data.bambu.set && step2.data.bambu.account === 'me@example.test' && step2.data.bambu.status === 'ok', `Logged in: ${JSON.stringify(step2.data)}`);
       let me = (await apiReq('/api/auth/me', { session: adminSession })).data;
-      assert(me.thingiverse && me.thingiverse.set === false, `No token yet: ${JSON.stringify(me.thingiverse)}`);
-
-      // A token Thingiverse refuses is not kept; a good one is, and only its end is ever shown
-      const bad = await apiReq('/api/auth/thingiverse-token', { method: 'PUT', session: adminSession, body: { token: 'wrong-token' } });
-      assert(bad.status === 400 && /refused/.test(bad.data.error), `A refused token: ${JSON.stringify(bad)}`);
-      const good = await apiReq('/api/auth/thingiverse-token', { method: 'PUT', session: adminSession, body: { token: 'good-token' } });
-      assert(good.status === 200 && good.data.thingiverse.set && good.data.thingiverse.hint === 'oken' && good.data.thingiverse.status === 'ok', `A good token: ${JSON.stringify(good.data)}`);
-      me = (await apiReq('/api/auth/me', { session: adminSession })).data;
-      assert(!JSON.stringify(me).includes('good-token') && me.thingiverse.hint === 'oken', `/me never sends the token: ${JSON.stringify(me)}`);
-
-      // With the token: the copy runs; the token reaches the API, never the CDN
-      tst = await copyOf(box.id, turl);
-      assert(tst.status === 'done' && tst.message.includes('1 gallery picture') && tst.message.includes('1 document'), `Thingiverse copy: ${JSON.stringify(tst)}`);
-      assert(fs.existsSync(lib('Desk Box/images/box.jpg')) && fs.existsSync(lib('Desk Box/Guide.pdf')) && !fs.existsSync(lib('Desk Box/box.stl.part')), 'Thingiverse picture and PDF (through the API download link)');
-      assert(fs.readFileSync(lib('Desk Box/Guide.pdf'), 'utf8') === 'file /cdn.thingiverse.com/assets/guide.pdf', 'The download link leads to the CDN file');
-      assert(fs.readFileSync(lib('Desk Box/README.md'), 'utf8').includes('A box for the desk.'), 'Thingiverse README');
-
-      // The token of another user is theirs: maker_user has none
+      assert(me.bambu.set && !JSON.stringify(me).includes('mw-token') && !JSON.stringify(me).includes('mw-refresh') && !JSON.stringify(step2.data).includes('mw-token'), `The tokens never reach the browser: ${JSON.stringify(me)}`);
       const maker = await makerSession();
-      const makerMe = (await apiReq('/api/auth/me', { session: maker })).data;
-      assert(makerMe.thingiverse && makerMe.thingiverse.set === false, 'Tokens are per user');
+      assert((await apiReq('/api/auth/me', { session: maker })).data.bambu.set === false, 'The login is per user');
+      // An account with two-factor authentication: the code of the e-mail, then the app's code
+      await apiReq('/api/auth/bambu/send-code', { method: 'POST', session: maker, body: { account: 'tfa@example.test' } });
+      const tfa1 = await apiReq('/api/auth/bambu/code', { method: 'POST', session: maker, body: { account: 'tfa@example.test', code: '123456' } });
+      assert(tfa1.status === 200 && tfa1.data.state === 'tfa' && tfa1.data.tfa_key === 'tfa-key-1', `Two-factor asks for the app's code: ${JSON.stringify(tfa1.data)}`);
+      const tfa2 = await apiReq('/api/auth/bambu/tfa', { method: 'POST', session: maker, body: { account: 'tfa@example.test', tfa_key: tfa1.data.tfa_key, code: '654321' } });
+      assert(tfa2.status === 200 && tfa2.data.state === 'done' && tfa2.data.bambu.account === 'tfa@example.test', `Logged in with two factors: ${JSON.stringify(tfa2.data)}`);
+      await apiReq('/api/auth/bambu', { method: 'DELETE', session: maker });
 
-      assert(cdnAuth.length && cdnAuth.every(a => !a), `The token never reaches a CDN: ${JSON.stringify(cdnAuth)}`);
+      // Check for updates with the login: the profile 3MF and the raw files, unpacked
+      await apiReq(`/api/models/${box.id}/source-import`, { method: 'POST', session: adminSession });
+      st = await wait();
+      assert(st.status === 'done' && !st.files && st.message.includes('3 model files'), `With the login: ${JSON.stringify(st)}`);
+      for (const rel of ['Gear Box Full.3mf', 'Gears/gear 8.stl', 'Case/lid.stl', 'notes.txt']) assert(fs.existsSync(lib(`Gear Box/${rel}`)), `MakerWorld copy must write ${rel}`);
+      assert(!fs.existsSync(lib('Gear Box/Gear Box - files.zip')) && !fs.existsSync(lib('Gear Box/__MACOSX')), 'The ZIP is unpacked, not kept; system clutter is left out');
+      assert(fs.readFileSync(lib('Gear Box/README.md'), 'utf8').includes('- Gear Box - files.zip: unpacked into this folder'), 'The README says the raw files were unpacked');
 
-      // Thingiverse stops accepting it (revoked): the copy fails with token_invalid and the account
-      // is flagged for the notice above every page
-      thingiverseRevoked.on = true;
-      tst = await copyOf(box.id, `${turl}/files`);
-      thingiverseRevoked.on = false;
-      assert(tst.status === 'error' && tst.code === 'token_invalid' && /refused/.test(tst.message), `A revoked token: ${JSON.stringify(tst)}`);
+      // MakerWorld stops taking the login: the page is still copied, the account is flagged for the notice
+      fakeFiles.mwRefused = true;
+      await apiReq(`/api/models/${box.id}/source-import`, { method: 'POST', session: adminSession });
+      st = await wait();
+      fakeFiles.mwRefused = false;
+      assert(st.status === 'done' && st.files === 'login_refused', `A refused login: ${JSON.stringify(st)}`);
       me = (await apiReq('/api/auth/me', { session: adminSession })).data;
-      assert(me.thingiverse.status === 'invalid' && me.thingiverse.checked_at, `The account is flagged for the notice: ${JSON.stringify(me.thingiverse)}`);
-      // A new token clears the flag
-      assert((await apiReq('/api/auth/thingiverse-token', { method: 'PUT', session: adminSession, body: { token: 'good-token' } })).data.thingiverse.status === 'ok', 'A new token clears the flag');
+      assert(me.bambu.status === 'invalid' && me.bambu.checked_at, `The account is flagged: ${JSON.stringify(me.bambu)}`);
 
-      const del = await apiReq('/api/auth/thingiverse-token', { method: 'DELETE', session: adminSession });
-      assert(del.status === 200 && del.data.thingiverse.set === false, 'The token can be removed');
+      const out = await apiReq('/api/auth/bambu', { method: 'DELETE', session: adminSession });
+      assert(out.status === 200 && out.data.bambu.set === false && (await apiReq('/api/auth/me', { session: adminSession })).data.bambu.set === false, 'Log out forgets the login');
     });
 
   } finally {

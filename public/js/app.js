@@ -1480,75 +1480,7 @@ const App = {
     this.renderAppNotice();
     this.route();
   },
-
-  // ─── Notices of the account ─────────────────────────────────────────────
-  // Above every page: the Thingiverse token Thingiverse refused, until a new one is saved (or the
-  // notice is closed for this browser session)
-  renderAppNotice() {
-    const box = document.getElementById('app-notice');
-    if (!box) return;
-    const t = this.currentUser && this.currentUser.thingiverse;
-    let closed = false;
-    try { closed = Boolean(t) && sessionStorage.getItem('3dl_notice_thingiverse') === String(t.checked_at); } catch (e) { /* storage blocked */ }
-    if (!t || t.status !== 'invalid' || closed) { box.hidden = true; box.innerHTML = ''; return; }
-    box.innerHTML = UI.tokenNotice(t);
-    box.hidden = false;
-  },
-
-  closeAppNotice() {
-    const t = this.currentUser && this.currentUser.thingiverse;
-    try { sessionStorage.setItem('3dl_notice_thingiverse', String(t && t.checked_at)); } catch (e) { /* storage blocked */ }
-    this.renderAppNotice();
-  },
-
-  // The account as the server has it now (a copy may have found the token refused)
-  async refreshUser() {
-    const me = await API.getMe().catch(() => null);
-    if (me && me.csrfToken) {
-      this.currentUser = me;
-      localStorage.setItem('3dl_user', JSON.stringify(me));
-    }
-    this.renderAppNotice();
-  },
-
-  // Profile -> API & Integrations, where the Thingiverse token is pasted
-  openTokenSettings() {
-    try { localStorage.setItem('3dl_profile_tab', 'api'); } catch (e) { /* storage blocked */ }
-    if (location.hash === '#/profile') this.renderProfile();
-    else this.navigate('/profile');
-  },
-
-  async saveThingiverseToken(e) {
-    e.preventDefault();
-    const form = e.target;
-    const input = form.querySelector('[name="token"]');
-    const btn = form.querySelector('button[type="submit"]');
-    if (btn) { btn.disabled = true; btn.textContent = 'Checking with Thingiverse...'; }
-    try {
-      const res = await API.saveThingiverseToken(input.value.trim());
-      this.currentUser = { ...this.currentUser, thingiverse: res.thingiverse };
-      localStorage.setItem('3dl_user', JSON.stringify(this.currentUser));
-      this.toast('Thingiverse accepted the token: Thingiverse pages are copied from now on');
-      this.renderAppNotice();
-      this.renderProfile();
-    } catch (err) {
-      this.toast(err.message || 'The token could not be saved', 'error');
-      if (btn) { btn.disabled = false; btn.textContent = 'Check and save'; }
-    }
-  },
-
-  async removeThingiverseToken() {
-    if (!confirm('Remove your Thingiverse token? Thingiverse pages will not be copied until you paste one again.')) return;
-    try {
-      const res = await API.deleteThingiverseToken();
-      this.currentUser = { ...this.currentUser, thingiverse: res.thingiverse };
-      localStorage.setItem('3dl_user', JSON.stringify(this.currentUser));
-      this.toast('Thingiverse token removed');
-      this.renderAppNotice();
-      this.renderProfile();
-    } catch (err) { this.toast(err.message || 'The token could not be removed', 'error'); }
-  },
-
+  
   updateUserNav() {
     this.renderSlicerPicker();
     this.renderFitPicker();
@@ -1703,7 +1635,7 @@ const App = {
               </div>
             </div>
           </div>
-          ${UI.thingiverseTokenPanel(user.thingiverse || { set: false })}
+          ${UI.bambuPanel(user.bambu || { set: false }, this.bambuStep)}
         `;
       }
     };
@@ -3464,20 +3396,127 @@ const App = {
         const now = await API.getSourceImport(model.id);
         if (now.running) return this.sourceImportPoll(model);
         if (now.status === 'done' || now.status === 'error') this.toast(now.message || 'Copy finished', now.status === 'error' ? 'error' : 'success');
-        // A token the site refused: the notice above every page
-        if (now.code) await this.refreshUser();
+        // A login MakerWorld refused: the notice above every page
+        if (now.files === 'login_refused') await this.refreshUser();
         this.renderModelDetail(model.id, this.currentModelOpts || {});
       } catch (e) {}
     }, 3000);
   },
 
-  // "Copy failed · retry": saving the same Source URL again starts the copy again
-  async retrySourceImport(id) {
+  // "Check for updates" (and "Copy failed · retry"): the source page is copied again
+  async checkSourceUpdates(id) {
     try {
-      const model = this.currentModel && this.currentModel.id === id ? this.currentModel : await API.getModel(id);
-      await API.updateModel(id, { source_url: model.source_url });
+      await API.checkSourceUpdates(id);
+      this.toast('Checking the source page for updates...');
       this.renderModelDetail(id, this.currentModelOpts || {});
     } catch (e) { this.toast(e.message || 'Could not start the copy', 'error'); }
+  },
+
+  // ─── The Bambu Lab account (MakerWorld files) and the notice when it expires ─
+  // Above every page while MakerWorld refuses the login, until the user logs in again (or closes
+  // the notice for this browser session)
+  renderAppNotice() {
+    const box = document.getElementById('app-notice');
+    if (!box) return;
+    const b = this.currentUser && this.currentUser.bambu;
+    let closed = false;
+    try { closed = Boolean(b) && sessionStorage.getItem('3dl_notice_bambu') === String(b.checked_at); } catch (e) { /* storage blocked */ }
+    if (!b || !b.set || b.status !== 'invalid' || closed) { box.hidden = true; box.innerHTML = ''; return; }
+    box.innerHTML = UI.accountNotice(b);
+    box.hidden = false;
+  },
+
+  closeAppNotice() {
+    const b = this.currentUser && this.currentUser.bambu;
+    try { sessionStorage.setItem('3dl_notice_bambu', String(b && b.checked_at)); } catch (e) { /* storage blocked */ }
+    this.renderAppNotice();
+  },
+
+  // The account as the server has it now (a copy may have found the login refused)
+  async refreshUser() {
+    const me = await API.getMe().catch(() => null);
+    if (me && me.csrfToken) {
+      this.currentUser = me;
+      localStorage.setItem('3dl_user', JSON.stringify(me));
+    }
+    this.renderAppNotice();
+  },
+
+  // Profile -> API & Integrations, where the Bambu Lab login is
+  openAccountSettings() {
+    try { localStorage.setItem('3dl_profile_tab', 'api'); } catch (e) { /* storage blocked */ }
+    if (location.hash === '#/profile') this.renderProfile();
+    else this.navigate('/profile');
+  },
+
+  bambuDone(bambu, text) {
+    this.bambuStep = null;
+    this.currentUser = { ...this.currentUser, bambu };
+    localStorage.setItem('3dl_user', JSON.stringify(this.currentUser));
+    if (text) this.toast(text);
+    this.renderAppNotice();
+    this.renderProfile();
+  },
+
+  // Step 1: Bambu Lab e-mails a login code (no password)
+  async bambuSendCode(e) {
+    e.preventDefault();
+    const form = e.target;
+    const account = form.querySelector('[name="account"]').value.trim();
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+    try {
+      await API.bambuSendCode(account);
+      this.bambuStep = { state: 'code', account };
+      this.renderProfile();
+    } catch (err) {
+      this.toast(err.message || 'The code could not be sent', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Send me a code'; }
+    }
+  },
+
+  async bambuResend() {
+    const step = this.bambuStep;
+    if (!step) return this.renderProfile();
+    try {
+      await API.bambuSendCode(step.account);
+      this.toast(`A new code is on its way to ${step.account}`);
+    } catch (err) { this.toast(err.message || 'The code could not be sent', 'error'); }
+  },
+
+  // Step 2: the code from the e-mail (or, for an account with two-factor authentication, then the
+  // code of the authenticator app)
+  async bambuCode(e) {
+    e.preventDefault();
+    const step = this.bambuStep;
+    if (!step) return this.renderProfile();
+    const code = e.target.querySelector('[name="code"]').value.trim();
+    const btn = e.target.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Logging in...'; }
+    try {
+      const r = step.state === 'tfa' ? await API.bambuTfa(step.account, step.tfaKey, code) : await API.bambuCode(step.account, code);
+      if (r.state === 'tfa') {
+        this.bambuStep = { state: 'tfa', account: step.account, tfaKey: r.tfa_key };
+        return this.renderProfile();
+      }
+      this.bambuDone(r.bambu, 'Logged in: MakerWorld model files are downloaded from now on');
+    } catch (err) {
+      this.toast(err.message || 'The code was not accepted', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Log in'; }
+    }
+  },
+
+  bambuCancel() {
+    this.bambuStep = null;
+    this.renderProfile();
+  },
+
+  async bambuLogout() {
+    if (!confirm('Log out of your Bambu Lab account? MakerWorld pages will be copied without their model files.')) return;
+    try {
+      const r = await API.bambuLogout();
+      this.bambuDone(r.bambu, 'Logged out of Bambu Lab');
+    } catch (err) { this.toast(err.message || 'The logout failed', 'error'); }
   },
 
   // Settings -> Printers: the build volumes

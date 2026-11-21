@@ -1,12 +1,14 @@
 // What the source import (server/services/sourceImport.js) shares between the sites it copies
-// (sources/makerworld.js, printables.js, thingiverse.js): HTML -> Markdown, the files a page brings
+// (sources/makerworld.js, printables.js): HTML -> Markdown, the files a page brings
 // and its README. Pure functions, no I/O; the tests load this file directly.
 //
 // A site module turns its data into a page:
 //   { site, id, url, title, author, published, license,
 //     description (HTML), sections: [{ title, html | markdown }],
 //     pictures: [{ url, name }], documents: [{ url, name }], tags: [names],
-//     hardware: [{ name, qty, note }] }
+//     hardware: [{ name, qty, note }],
+//     files: [{ url, name, folder, unzip }] (the model files: STL, 3MF profiles...; unzip: a ZIP
+//     whose entries go into the project folder) }
 
 // ─── HTML -> Markdown (what UI.renderMarkdown shows) ─────────────────────────
 
@@ -209,7 +211,7 @@ function safeFileName(name, fallback) {
     .replace(/ +(\.[^. ]+)$/, '$1').replace(/^\.+/, '').replace(/[. ]+$/, '');
   if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(s)) s = '_' + s;
   if (s.length > 120) {
-    const ext = (/\.[a-z0-9]{1,5}$/i.exec(s) || [''])[0];
+    const ext = (/\.[a-z0-9]{1,8}$/i.exec(s) || [''])[0];
     s = s.slice(0, 120 - ext.length).trim() + ext;
   }
   return s || fallback;
@@ -217,7 +219,7 @@ function safeFileName(name, fallback) {
 
 function extOf(url, fallback) {
   try {
-    const m = /\.([a-z0-9]{2,5})$/i.exec(new URL(url).pathname);
+    const m = /\.([a-z0-9]{1,8})$/i.exec(new URL(url).pathname);
     return m ? m[1].toLowerCase() : fallback;
   } catch (e) { return fallback; }
 }
@@ -226,7 +228,7 @@ function extOf(url, fallback) {
 // base: the name without an extension when there is none
 function fileNameOf(name, url, base, defExt) {
   let n = safeFileName(name, base);
-  if (!/\.[a-z0-9]{2,5}$/i.test(n)) n += `.${extOf(url, defExt)}`;
+  if (!/\.[a-z0-9]{1,8}$/i.test(n)) n += `.${extOf(url, defExt)}`;
   return n;
 }
 
@@ -234,24 +236,32 @@ function fileNameOf(name, url, base, defExt) {
 const htmlParts = (page) => [page.description || '', ...(page.sections || []).map(s => s.html || '')];
 
 // The files to download, with where they go in the project folder:
-// [{ url, rel, kind: 'description' | 'gallery' | 'document' }]. Pictures of the description are
-// numbered by their place in it, gallery pictures and documents keep their names. isAsset(url):
-// the hosts the site keeps its files on (nothing else is downloaded).
+// [{ url, rel, kind: 'description' | 'gallery' | 'document' | 'model' | 'archive' }]. Pictures of
+// the description are numbered by their place in it, gallery pictures, documents and model files
+// keep their names (model files in their folder of the site). isAsset(url): the hosts the site
+// keeps its files on (nothing else is downloaded).
 function assetsOf(page, isAsset) {
   const out = [];
   const taken = new Set();
-  const add = (url, rel, kind) => {
-    if (!url || !isAsset(url) || out.some(a => a.url === url)) return;
+  // extra: { size } when the site says how big the file is; { trusted } for a link the site's own
+  // API gave (a signed link of its cloud storage)
+  const add = (url, rel, kind, extra = {}) => {
+    if (!url || !(isAsset(url) || (extra.trusted && /^https:\/\//i.test(url))) || out.some(a => a.url === url)) return;
     let r = rel;
     for (let i = 2; taken.has(r.toLowerCase()); i++) r = rel.replace(/(\.[^./]+)?$/, m => ` (${i})${m}`);
     taken.add(r.toLowerCase());
-    out.push({ url, rel: r, kind });
+    out.push({ url, rel: r, kind, size: Number(extra.size) || 0 });
   };
   const inText = [];
   for (const html of htmlParts(page)) for (const src of imagesOf(html)) if (!inText.includes(src)) inText.push(src);
   inText.forEach((url, i) => add(url, `images/description-${String(i + 1).padStart(2, '0')}.${extOf(url, 'jpg')}`, 'description'));
   (page.pictures || []).forEach((p, i) => add(p.url, `images/${fileNameOf(p.name, p.url, `picture-${String(i + 1).padStart(2, '0')}`, 'jpg')}`, 'gallery'));
   for (const d of page.documents || []) add(d.url, fileNameOf(d.name, d.url, 'document', 'pdf'), 'document');
+  for (const m of page.files || []) {
+    const folder = String(m.folder || '').split(/[\\/]+/).map(p => safeFileName(p, '')).filter(Boolean).join('/');
+    const name = fileNameOf(m.name, m.url, 'file', m.unzip ? 'zip' : 'bin');
+    add(m.url, folder ? `${folder}/${name}` : name, m.unzip ? 'archive' : 'model', { size: m.size, trusted: m.trusted });
+  }
   return out;
 }
 
@@ -295,6 +305,18 @@ function buildReadme(page, { local = () => null, today = '' } = {}) {
   if (documents.length) {
     lines.push('## Documents', '');
     for (const d of documents) lines.push(`- [${String(d.name || 'Document').replace(/[[\]]/g, '')}](${mdTarget(target(d.url))})`);
+    lines.push('');
+  }
+
+  const files = (page.files || []).filter(m => m && m.url);
+  if (files.length) {
+    lines.push('## Files', '');
+    for (const m of files) {
+      const where = local(m.url);
+      const label = [m.folder, m.name].filter(Boolean).join('/').replace(/[[\]]/g, '');
+      if (m.unzip) lines.push(`- ${label}: ${where ? 'unpacked into this folder' : 'not downloaded'}`);
+      else lines.push(where ? `- [${label}](${mdTarget(where)})` : `- ${label} (not downloaded)`);
+    }
     lines.push('');
   }
 

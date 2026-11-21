@@ -108,33 +108,46 @@ page and footer credit GyroidVault; keep that.
 ## What the fork adds (newest first)
 
 - Source import (`server/services/sourceImport.js`, `server/utils/sources/`): saving a model with
-  a MakerWorld, Printables or Thingiverse Source URL (new, or its last copy failed) copies the
-  page into the project folder in the background: `README.md` (marker line
-  `<!-- 3dlib-source: ... -->`, title, author, licence, the description as Markdown, the site's
-  sections: MakerWorld print profiles, Printables print settings, Thingiverse details parts;
-  hardware, documents, gallery), pictures in `images/` (`description-NN.<ext>` by position,
-  gallery names kept), the PDFs in the folder (never the model files).
-  - Sites are modules of `sources/index.js` (`idOf`, `isAsset`, `load` -> a page of
-    `sources/common.js`, which has HTML -> Markdown, `assetsOf`, `buildReadme`). HTTP:
-    `sources/http.js` (Node `https`, `3DLib/<version>` user agent; Node's `fetch` gets 403 from
-    MakerWorld; redirects only to the site's hosts, headers to the first host only).
-  - MakerWorld: `GET makerworld.com/api/v1/design-service/design/<id>`. Printables: GraphQL
-    `api.printables.com/graphql/` `print(id)` (no login), "other files" that are documents via the
-    `getDownloadLink` mutation, plus the page PDF Printables makes ("Printables page.pdf").
-    Thingiverse: `api.thingiverse.com` with the App Token of the user who saved the model
-    (`users.thingiverse_token`, Profile -> API & Integrations with how to get one; `PUT /api/auth/
-    thingiverse-token` checks it with Thingiverse first, `DELETE` removes it; the browser gets only
-    `user.thingiverse` = { set, hint (last 4), status ok/invalid, checked_at }). A 401 marks the
-    token invalid: `#app-notice` above every page (`App.renderAppNotice`) until a new one is saved.
-  - Files at their place stay; a download whose content the project has elsewhere is dropped and
-    the README links that file; a README without the marker stays (copy goes to `<Site>.md`); a
-    loose file becomes a folder; read-only projects fail. Tags of the page are added; hardware
-    fills an empty Parts list.
-  - `models.source_import` = { url, site, status running/done/error, at, message, code
-    token_missing/token_invalid } (a restart marks a running one failed); the model page polls
-    `GET /api/models/:id/source-import` and offers "Copy failed · retry" or "<Site> · Token
-    needed" (opens the token settings).
-  - Tests: a local fake of the three sites (`SOURCE_IMPORT_TEST_ORIGIN`, only with
+  a MakerWorld or Printables Source URL (new, or its last copy failed) copies the page into the
+  project folder in the background: `README.md` (marker line `<!-- 3dlib-source: ... -->`,
+  title, author, licence, the description as Markdown, the site's sections: MakerWorld print
+  profiles, Printables print settings; hardware, documents, files, gallery), pictures in
+  `images/` (`description-NN.<ext>` by position, gallery names kept), the PDFs, and the model
+  files (Printables: STLs, G-codes, SLA and other files in their Printables folders; MakerWorld:
+  the designer's profile 3MFs and the raw files' ZIP, unpacked into the folder, with the user's
+  Bambu Lab login only). "Check for updates" next to the Source link (`POST
+  /api/models/:id/source-import`) copies it again. Thingiverse was dropped (its API wants a token
+  per user); the migration drops the `users.thingiverse_token*` columns.
+  - Sites are modules of `sources/index.js` (`idOf`, `isAsset`, `load(id, http, { token })` -> a
+    page of `sources/common.js`, which has HTML -> Markdown, `assetsOf`, `buildReadme`; page.files
+    = { url, name, folder, size, unzip, trusted }). HTTP: `sources/http.js` (Node `https`,
+    `3DLib/<version>` user agent; Node's `fetch` gets 403 from MakerWorld; redirects only to the
+    site's hosts, headers to the first host only).
+  - MakerWorld: `GET makerworld.com/api/v1/design-service/design/<id>` (public); files with the
+    token (`Authorization: Bearer` + cookie `token`): `instance/<id>/f3mf?type=download` and
+    `design/<id>/model?modelType=all&type=download` ("Download all", a ZIP) answer { name, url }
+    (signed links: `trusted`). Without a login the page is
+    copied and `source_import.files` = 'login_needed'; a 401/403 with the token = 'login_refused'
+    and marks the account invalid. Printables: GraphQL `api.printables.com/graphql/` `print(id)`
+    (no login), every file's link from the `getDownloadLink` mutation (`fileType` stl / gcode /
+    sla / other), plus the page PDF Printables makes ("Printables page.pdf").
+  - Bambu Lab login (`server/utils/bambuAccount.js`, Profile -> API & Integrations, `UI.bambuPanel`):
+    a code Bambu Lab e-mails (`/api/auth/bambu/send-code`, `/code`, `/tfa` for two-factor
+    accounts, `DELETE /api/auth/bambu`); no password ever (Google sign-in accounts have none).
+    `users.bambu_*` keep the access / refresh token (they open the whole Bambu account, printers
+    too), refreshed a day before they expire; the browser gets only `user.bambu` = { set, account,
+    status, expires_at }. A refused login: `#app-notice` above every page (`App.renderAppNotice`)
+    until the next login.
+  - The first copy never replaces a file already in the folder; a download whose content the
+    project has elsewhere is dropped and the README links that file. "Check for updates" replaces
+    a model file whose size on the site differs (or, without a size, whose content differs) with
+    `fileVersions.replaceWithVersion` (the old one in its history, source = the site). A README
+    without the marker stays (copy goes to `<Site>.md`); a loose file becomes a folder; read-only
+    projects fail. Tags of the page are added; hardware fills an empty Parts list.
+  - `models.source_import` = { url, site, status running/done/error, at, message, files } (a
+    restart marks a running one failed); the model page polls `GET .../source-import` and shows
+    "Check for updates" / "Copy failed · retry" and "Log in to MakerWorld for the files".
+  - Tests: a local fake of both sites and Bambu Lab's login (`SOURCE_IMPORT_TEST_ORIGIN`, only with
     `NODE_ENV=test`). `UI.renderMarkdown(text, { base })` resolves a README's relative pictures
     and links next to it; its photos go through `/thumbs` and open full size.
 - File list icons (`UI.fileIcon` / `fileIconType`): each kind of file has its icon (PDF, MD, text,

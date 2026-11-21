@@ -19,8 +19,9 @@ function idOf(url) {
 const apiUrl = (id) => `${SITE}/api/v1/design-service/design/${id}`;
 const pageUrl = (id) => `${SITE}/en/models/${id}`;
 
-// Images and documents of a design live on Bambu Lab's CDNs
-const isAsset = (url) => onHosts(url, ['bblmw.com', 'bblcdn.com', 'bambulab.com']);
+// Images and documents of a design live on Bambu Lab's CDNs; the signed links of its model files
+// may lead to the cloud storage behind them
+const isAsset = (url) => onHosts(url, ['bblmw.com', 'bblcdn.com', 'bambulab.com', 'amazonaws.com', 'cloudfront.net']);
 
 // Hardware of the design: [{ name, qty, note }]. Store items come in packs ("M3x10 ... (20PCS)"),
 // their quantity counts packs.
@@ -86,10 +87,68 @@ function pageOf(design) {
   };
 }
 
-async function load(id, http) {
-  const design = await http.json(apiUrl(id));
-  if (!design || Number(design.id) !== id) throw new Error('MakerWorld sent no model data');
-  return pageOf(design);
+// The designer's own print profiles (instances of the design)
+function ownProfiles(design) {
+  const all = (design.instances || []).filter(i => i && i.id);
+  const uid = design.designCreator && design.designCreator.uid;
+  const own = all.filter(i => uid && i.instanceCreator && i.instanceCreator.uid === uid);
+  return own.length ? own : all;
 }
 
-module.exports = { site: 'MakerWorld', idOf, pageUrl, isAsset, load, pageOf, hardwareOf, apiUrl };
+const hasFiles = (design) => (design.instances || []).length > 0 || ((design.designExtension || {}).model_files || []).length > 0;
+
+// The link of a download answer: { url, name } (the shape MakerWorld answers with; a nested
+// "data" is taken too)
+function linkOf(j) {
+  const d = j && (j.url ? j : j.data);
+  return d && typeof d.url === 'string' && /^https:/.test(d.url) ? { url: d.url, name: d.name || '' } : null;
+}
+
+// The model files of a design for a logged-in user (token: the Bambu Lab access token): the
+// profile 3MF of each of the designer's print profiles and the raw files (a ZIP of the design's
+// folders, unpacked into the project). { files, refused }: refused when MakerWorld does not take
+// the token (401 / 403).
+async function filesOf(design, http, token) {
+  const headers = { authorization: `Bearer ${token}`, cookie: `token=${token}` };
+  const files = [];
+  let refused = false;
+  const ask = async (url) => {
+    try {
+      return linkOf(await http.json(url, { headers }));
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) refused = true;
+      return null;
+    }
+  };
+  for (const p of ownProfiles(design)) {
+    const link = await ask(`${SITE}/api/v1/design-service/instance/${p.id}/f3mf?type=download`);
+    if (!link) continue;
+    const info = (p.extention && p.extention.modelInfo && p.extention.modelInfo.f3mf) || {};
+    const name = /\.3mf$/i.test(link.name) ? link.name : `${String(p.title || `Profile ${p.id}`).trim()}.3mf`;
+    files.push({ url: link.url, name, size: Number(info.size) || 0, trusted: true });
+  }
+  if (((design.designExtension || {}).model_files || []).length) {
+    // "Download all" of the page's raw files (modelType=all: one ZIP)
+    const link = await ask(`${SITE}/api/v1/design-service/design/${design.id}/model?modelType=all&type=download`);
+    if (link) {
+      const name = link.name || `${String(design.title || 'Model').trim()} - files.zip`;
+      const zip = /\.zip$/i.test(name) || /\.zip(\?|$)/i.test(link.url);
+      files.push({ url: link.url, name, unzip: zip, trusted: true });
+    }
+  }
+  return { files, refused };
+}
+
+// The page; with a token (the user's Bambu Lab login) also the model files. page.filesNote says
+// why there are none: 'login_needed' (no login) / 'login_refused' (MakerWorld refused it)
+async function load(id, http, { token } = {}) {
+  const design = await http.json(apiUrl(id));
+  if (!design || Number(design.id) !== id) throw new Error('MakerWorld sent no model data');
+  const page = pageOf(design);
+  if (!hasFiles(design)) return page;
+  if (!token) return { ...page, filesNote: 'login_needed' };
+  const { files, refused } = await filesOf(design, http, token);
+  return { ...page, files, filesNote: refused && !files.length ? 'login_refused' : undefined };
+}
+
+module.exports = { site: 'MakerWorld', usesBambuLogin: true, idOf, pageUrl, isAsset, load, pageOf, hardwareOf, apiUrl, linkOf };

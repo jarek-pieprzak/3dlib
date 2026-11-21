@@ -7,6 +7,8 @@ const { get, run } = require('../database');
 const { authenticate, getJwtSecret, TOKEN_COOKIE, tokenCookieOptions } = require('../middleware/auth');
 const { authLimiter, loginLimiter } = require('../middleware/rateLimit');
 const { getSettingBool } = require('../utils/modelHelpers');
+const bambuAccount = require('../utils/bambuAccount');
+const rateLimit = require('express-rate-limit');
 
 router.post('/register', authLimiter, async (req, res) => {
   try {
@@ -92,7 +94,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     res.cookie(TOKEN_COOKIE, token, tokenCookieOptions(req));
     
     // The preferred slicer and printer too: the top bar and "Open in slicer" need them at once
-    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null, thingiverse: thingiverseOf(user) } });
+    res.json({ csrfToken, user: { id: user.id, username: user.username, role: user.role, email: user.email, preferred_slicer: user.preferred_slicer || null, preferred_printer: user.preferred_printer || null, bambu: bambuAccount.accountOf(user) } });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Login failed' }); }
 });
 
@@ -102,42 +104,55 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', authenticate, (req, res) => {
-  const row = get('SELECT id, username, email, role, preferred_slicer, preferred_printer, thingiverse_token, thingiverse_token_status, thingiverse_token_checked_at FROM users WHERE id=?', [req.user.id]);
+  const row = get('SELECT * FROM users WHERE id=?', [req.user.id]);
   if (!row) return res.json(null);
-  const { thingiverse_token, thingiverse_token_status, thingiverse_token_checked_at, ...user } = row;
-  user.thingiverse = thingiverseOf(row);
-  user.csrfToken = req.user.csrfToken;
-  res.json(user);
+  const { id, username, email, role, preferred_slicer, preferred_printer } = row;
+  res.json({ id, username, email, role, preferred_slicer, preferred_printer, bambu: bambuAccount.accountOf(row), csrfToken: req.user.csrfToken });
 });
 
-// ─── The user's Thingiverse token (source import of Thingiverse pages) ──────
-// The browser only learns whether there is one, its last 4 characters and what Thingiverse said
-// about it last ('ok' / 'invalid'), never the token itself.
-function thingiverseOf(user) {
-  const token = user && user.thingiverse_token;
-  if (!token) return { set: false };
-  return { set: true, hint: token.slice(-4), status: user.thingiverse_token_status || null, checked_at: user.thingiverse_token_checked_at || null };
-}
+// ─── The user's Bambu Lab account (MakerWorld files of the source import) ────
+// A login with a code Bambu Lab sends by e-mail (no password); the browser only learns { set, account,
+// status, expires_at } (utils/bambuAccount.js).
+// Logins to Bambu Lab: a few tries, like the logins here
+const bambuLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many attempts, try again after 15 minutes' }, validate: { xForwardedForHeader: false } });
+const bambuError = (res, e) => {
+  if (e instanceof bambuAccount.LoginError) return res.status(400).json({ error: e.message });
+  return res.status(502).json({ error: `Bambu Lab could not be reached (${e.message}); try again later` });
+};
+const field = (v, max) => String(v || '').trim().slice(0, max);
 
-// PUT { token }: checked with Thingiverse first; a token it refuses is not kept
-router.put('/thingiverse-token', authenticate, async (req, res) => {
-  const token = String((req.body && req.body.token) || '').trim();
-  if (!token || token.length > 200 || /\s/.test(token)) return res.status(400).json({ error: 'Paste the App Token of your Thingiverse app' });
-  const thingiverse = require('../utils/sources/thingiverse');
-  let status;
+// POST { account }: Bambu Lab sends a login code to that e-mail (no password anywhere)
+router.post('/bambu/send-code', bambuLimiter, authenticate, async (req, res) => {
+  const account = field(req.body && req.body.account, 200);
+  if (!/^[^\s@]+@[^\s@]+$/.test(account)) return res.status(400).json({ error: 'The e-mail of your Bambu Lab account' });
   try {
-    status = await thingiverse.checkToken(token, require('../utils/sources/http'));
-  } catch (e) {
-    return res.status(502).json({ error: `Thingiverse could not be reached (${e.message}); try again later` });
-  }
-  if (status !== 'ok') return res.status(400).json({ error: 'Thingiverse refused this token: copy the App Token of your app (not the Client ID or Secret)' });
-  run("UPDATE users SET thingiverse_token = ?, thingiverse_token_status = 'ok', thingiverse_token_checked_at = datetime('now') WHERE id = ?", [token, req.user.id]);
-  res.json({ thingiverse: thingiverseOf(get('SELECT thingiverse_token, thingiverse_token_status, thingiverse_token_checked_at FROM users WHERE id = ?', [req.user.id])) });
+    await bambuAccount.sendCode(account);
+    res.json({ state: 'code' });
+  } catch (e) { bambuError(res, e); }
 });
 
-router.delete('/thingiverse-token', authenticate, (req, res) => {
-  run('UPDATE users SET thingiverse_token = NULL, thingiverse_token_status = NULL, thingiverse_token_checked_at = NULL WHERE id = ?', [req.user.id]);
-  res.json({ thingiverse: { set: false } });
+// POST { account, code }: { state: 'done', bambu } or { state: 'tfa', tfa_key } (two-factor)
+router.post('/bambu/code', bambuLimiter, authenticate, async (req, res) => {
+  const account = field(req.body && req.body.account, 200);
+  const code = field(req.body && req.body.code, 20);
+  if (!account || !code) return res.status(400).json({ error: 'The code from the e-mail' });
+  try {
+    const r = await bambuAccount.loginWithCode(req.user.id, account, code);
+    res.json(r.state === 'tfa' ? { state: 'tfa', tfa_key: r.tfaKey } : r);
+  } catch (e) { bambuError(res, e); }
+});
+
+router.post('/bambu/tfa', bambuLimiter, authenticate, async (req, res) => {
+  const account = field(req.body && req.body.account, 200);
+  const tfaKey = field(req.body && req.body.tfa_key, 500);
+  const code = field(req.body && req.body.code, 20);
+  if (!tfaKey || !code) return res.status(400).json({ error: 'The code of your authenticator app' });
+  try { res.json({ state: 'done', bambu: await bambuAccount.loginWithTfa(req.user.id, account, tfaKey, code) }); } catch (e) { bambuError(res, e); }
+});
+
+router.delete('/bambu', authenticate, (req, res) => {
+  bambuAccount.logout(req.user.id);
+  res.json({ bambu: { set: false } });
 });
 
 // The slicers "Open in slicer" links open (public/js/components.js UI.slicerLinks)

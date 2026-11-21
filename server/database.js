@@ -318,10 +318,15 @@ async function initDatabase() {
     if (!uCols.some(c => c.name === 'preferred_printer')) db.run('ALTER TABLE users ADD COLUMN preferred_printer TEXT');
     // Login tokens carry it as "tv": a new password raises it and logs out every other session
     if (!uCols.some(c => c.name === 'token_version')) db.run('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0');
-    // The user's own Thingiverse App Token for the source import (never sent to the browser) and
-    // what Thingiverse said about it last: 'ok' / 'invalid' (Profile and the app's notice)
-    for (const col of ['thingiverse_token TEXT', 'thingiverse_token_status TEXT', 'thingiverse_token_checked_at TEXT']) {
+    // The user's Bambu Lab account for MakerWorld files (utils/bambuAccount.js): what Bambu Lab
+    // answered to the login (never the password), and whether MakerWorld still takes it
+    for (const col of ['bambu_account TEXT', 'bambu_token TEXT', 'bambu_refresh_token TEXT', 'bambu_expires_at TEXT', 'bambu_status TEXT', 'bambu_checked_at TEXT']) {
       if (!uCols.some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE users ADD COLUMN ${col}`);
+    }
+    // The Thingiverse import was dropped: the users' tokens it kept go with their columns
+    for (const col of ['thingiverse_token', 'thingiverse_token_status', 'thingiverse_token_checked_at']) {
+      if (!uCols.some(c => c.name === col)) continue;
+      try { db.run(`ALTER TABLE users DROP COLUMN ${col}`); } catch (e) { db.run(`UPDATE users SET ${col} = NULL`); }
     }
     
     // Auto-migrate the very first user (id 1) to admin to prevent lockout when roles are enforced

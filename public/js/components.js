@@ -670,67 +670,86 @@ const UI = {
     return s && s.url === model.source_url ? s : null;
   },
 
-  // Next to the Source link: the copy running, or failed (a click tries again; a token the site
-  // wants opens Profile -> API & Integrations, unless the user has a working one by now)
-  sourceImportBadge(model, copy = this.sourceImportOf(model)) {
-    if (!copy) return '';
-    if (copy.status === 'running') {
-      return `<span class="badge badge-source-import" title="${this.escapeHtml(copy.message || '')}"><span class="source-import-spin"></span>Copying the page...</span>`;
-    }
-    const user = typeof App !== 'undefined' ? App.currentUser : null;
-    const tokenOk = user && user.thingiverse && user.thingiverse.set && user.thingiverse.status !== 'invalid';
-    if (copy.status === 'error' && copy.code && !tokenOk) {
-      const label = copy.code === 'token_invalid' ? 'Token refused' : 'Token needed';
-      return `<button type="button" class="badge badge-source-import is-error" onclick="App.openTokenSettings()" title="${this.escapeHtml(`${copy.message || ''} Click to open your token settings, then save the model again.`)}">${this.escapeHtml(copy.site || 'Source')} · ${label}</button>`;
-    }
-    if (copy.status === 'error') {
-      return `<button type="button" class="badge badge-source-import is-error" onclick="App.retrySourceImport(${model.id})" title="${this.escapeHtml(`${copy.message || 'The copy failed'}. Click to try again.`)}">Copy failed · retry</button>`;
-    }
-    return '';
+  // The site 3DLib copies a Source URL from (server/utils/sources/), or null
+  sourceSite(url) {
+    const m = /^https?:\/\/(?:www\.)?(makerworld|printables)\.com(\/[^?#]*)?/i.exec(String(url || '').trim());
+    if (!m) return null;
+    const p = m[2] || '/';
+    if (m[1].toLowerCase() === 'makerworld' && /^\/(?:[a-z]{2}(?:-[a-z]{2,4})?\/)?models\/\d+/i.test(p)) return 'MakerWorld';
+    if (m[1].toLowerCase() === 'printables' && /^\/(?:[a-z]{2}(?:-[a-z]{2,4})?\/)?model\/\d+/i.test(p)) return 'Printables';
+    return null;
   },
 
-  // The notice above every page while Thingiverse refuses the user's token (App.renderAppNotice)
-  tokenNotice(t) {
-    const when = t.checked_at ? ` on ${this.formatDateShort(this.sqlDate(t.checked_at))}` : '';
+  // Next to the Source link: the copy running or failed, "Check for updates" (canChange: the user
+  // may change the project), and the login MakerWorld wants for its model files
+  sourceImportBadge(model, copy = this.sourceImportOf(model), canChange = false) {
+    const site = this.sourceSite(model.source_url);
+    if (!site) return '';
+    if (copy && copy.status === 'running') {
+      return `<span class="badge badge-source-import" title="${this.escapeHtml(copy.message || '')}"><span class="source-import-spin"></span>Copying ${this.escapeHtml(site)}...</span>`;
+    }
+    if (!canChange) return '';
+    let out = '';
+    if (copy && copy.status === 'error') {
+      out += `<button type="button" class="badge badge-source-import is-error" onclick="App.checkSourceUpdates(${model.id})" title="${this.escapeHtml(`${copy.message || 'The copy failed'}. Click to try again.`)}">Copy failed · retry</button>`;
+    } else {
+      const last = copy && copy.status === 'done' ? ` Last copy: ${copy.message || ''}` : '';
+      out += `<button type="button" class="badge badge-source-import" onclick="App.checkSourceUpdates(${model.id})" title="${this.escapeHtml(`Copy the ${site} page again: new files come in, changed model files are updated (the old ones stay in their history).${last}`)}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><polyline points="21 3 21 8 16 8"/></svg>Check for updates</button>`;
+    }
+    if (copy && (copy.files === 'login_needed' || copy.files === 'login_refused')) {
+      const label = copy.files === 'login_refused' ? `${site} login expired` : `Log in to ${site} for the files`;
+      out += `<button type="button" class="badge badge-source-import is-error" onclick="App.openAccountSettings()" title="${this.escapeHtml(`${site} gives its model files only to a logged-in user. Log in with your Bambu Lab account in Profile, then Check for updates.`)}">${this.escapeHtml(label)}</button>`;
+    }
+    return out;
+  },
+
+  // The notice above every page while MakerWorld refuses the user's Bambu Lab login
+  // (App.renderAppNotice)
+  accountNotice(b) {
     return `<div class="app-notice-body">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      <span>Thingiverse refused your API token${this.escapeHtml(when)}: Thingiverse pages are not copied until you paste a new one.</span>
-      <button type="button" class="btn btn-sm btn-primary" onclick="App.openTokenSettings()">Update token</button>
+      <span>Your Bambu Lab login has expired: MakerWorld model files are not downloaded until you log in again.</span>
+      <button type="button" class="btn btn-sm btn-primary" onclick="App.openAccountSettings()">Log in</button>
       <button type="button" class="app-notice-close" onclick="App.closeAppNotice()" title="Hide until the next session" aria-label="Hide">×</button>
     </div>`;
   },
 
-  // Profile -> API & Integrations: the user's own Thingiverse token, what Thingiverse said about it
-  // last, and how to get one. t: { set, hint, status, checked_at } (never the token)
-  thingiverseTokenPanel(t = { set: false }) {
-    const when = t.checked_at ? ` (${this.formatDateShort(this.sqlDate(t.checked_at))})` : '';
-    const hint = this.escapeHtml(t.hint || '');
-    const status = !t.set
-      ? '<div class="token-status is-none">No token yet: Thingiverse pages are not copied.</div>'
-      : t.status === 'invalid'
-        ? `<div class="token-status is-invalid">Thingiverse refused the token …${hint}${this.escapeHtml(when)}: paste a new one.</div>`
-        : `<div class="token-status is-ok">Token …${hint} works${this.escapeHtml(when)}.</div>`;
+  // Profile -> API & Integrations: the Bambu Lab account for MakerWorld files. b: { set, account,
+  // status, expires_at } (never a token); step: { state: 'code' | 'tfa', account } while Bambu Lab
+  // waits for a code
+  bambuPanel(b = { set: false }, step = null) {
+    const input = (name, type, placeholder, value = '') => `<input type="text" class="form-input${type === 'secret' ? ' masked-input' : ''}" name="${name}" placeholder="${this.escapeHtml(placeholder)}" value="${this.escapeHtml(value)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" required>`;
+    let body;
+    if (step && (step.state === 'code' || step.state === 'tfa')) {
+      body = `
+        <div class="token-status">${step.state === 'code'
+          ? `Bambu Lab sent a code to ${this.escapeHtml(step.account)} (check the spam folder too): type it here.`
+          : 'Your account has two-factor authentication: type the code of your authenticator app.'}</div>
+        <form class="token-form" onsubmit="App.bambuCode(event)">
+          ${input('code', 'text', 'Code')}
+          <button type="submit" class="btn btn-primary">Log in</button>
+          ${step.state === 'code' ? '<button type="button" class="btn btn-secondary" onclick="App.bambuResend()">Send again</button>' : ''}
+          <button type="button" class="btn btn-secondary" onclick="App.bambuCancel()">Cancel</button>
+        </form>`;
+    } else if (b.set && b.status !== 'invalid') {
+      const until = b.expires_at ? ` until ${this.formatDateShort(b.expires_at)}` : '';
+      body = `
+        <div class="token-status is-ok">Logged in as ${this.escapeHtml(b.account)}${this.escapeHtml(until)}: MakerWorld model files are downloaded.</div>
+        <button type="button" class="btn btn-secondary" onclick="App.bambuLogout()">Log out</button>`;
+    } else {
+      body = `
+        ${b.set ? `<div class="token-status is-invalid">The login of ${this.escapeHtml(b.account)} has expired or MakerWorld refused it: log in again.</div>` : '<div class="token-status is-none">Not logged in: MakerWorld pages are copied without their model files.</div>'}
+        <form class="token-form" onsubmit="App.bambuSendCode(event)">
+          ${input('account', 'text', 'E-mail of your Bambu Lab account', b.account || '')}
+          <button type="submit" class="btn btn-primary">Send me a code</button>
+        </form>`;
+    }
     return `
-      <div class="glass-panel" style="margin-top:20px" id="thingiverse-token-panel">
-        <div class="panel-header"><div class="panel-title">Thingiverse</div></div>
+      <div class="glass-panel" style="margin-top:20px" id="bambu-panel">
+        <div class="panel-header"><div class="panel-title">MakerWorld (Bambu Lab account)</div></div>
         <div class="panel-body">
-          <p class="token-lead">A Thingiverse link as a model's Source URL copies the page into the project (description, pictures, PDFs). Thingiverse answers only with a token of your own; MakerWorld and Printables need none.</p>
-          ${status}
-          <form class="token-form" onsubmit="App.saveThingiverseToken(event)">
-            <input type="text" class="form-input masked-input" name="token" placeholder="${t.set ? 'Paste a new App Token to replace it' : 'Paste your App Token'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" required>
-            <button type="submit" class="btn btn-primary">Check and save</button>
-            ${t.set ? '<button type="button" class="btn btn-secondary" onclick="App.removeThingiverseToken()">Remove</button>' : ''}
-          </form>
-          <details class="token-howto"${t.set && t.status !== 'invalid' ? '' : ' open'}>
-            <summary>How to get the token</summary>
-            <ol>
-              <li>Sign in at <a href="https://www.thingiverse.com" target="_blank" rel="noopener noreferrer">thingiverse.com</a>.</li>
-              <li>Open <a href="https://www.thingiverse.com/apps/create" target="_blank" rel="noopener noreferrer">thingiverse.com/apps/create</a> and create an app: type <strong>Desktop app</strong>, any name (for example "3DLib") and a short description, the address of your 3DLib as its URL; accept the terms.</li>
-              <li>On the page of the new app copy the <strong>App Token</strong> (not the Client ID or the Client Secret).</li>
-              <li>Paste it above and save: 3DLib asks Thingiverse whether it works before keeping it.</li>
-            </ol>
-            <p>Every 3DLib user has a token of their own; it is used only for the pages you link and never shown again. When Thingiverse stops accepting it (the app was deleted or its token renewed), a notice at the top of every page says so until you paste a new one.</p>
-          </details>
+          <p class="token-lead">MakerWorld gives profile 3MFs and model files only to a logged-in user. Log in once with a code Bambu Lab sends to the e-mail of your account (with "Sign in with Google": your Google address); no password is asked. 3DLib keeps the login Bambu Lab answers with on this server: it opens your whole Bambu Lab account, printers too, and Log out deletes it. Printables needs no login.</p>
+          ${body}
         </div>
       </div>`;
   },
@@ -1309,7 +1328,7 @@ const UI = {
     const copy = this.sourceImportOf(model);
     const copied = copy && copy.status === 'done' ? ` title="${this.escapeHtml(`${copy.message || 'Copied'} (${this.formatDateShort(copy.at)})`)}"` : '';
     const sourceLink = cleanSourceUrl
-      ? `<a href="${this.escapeHtml(cleanSourceUrl)}"${copied} target="_blank" rel="noopener noreferrer" class="badge badge-category" style="background:var(--bg-tertiary);color:var(--accent-cyan);text-decoration:none;border:1px solid var(--border)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Source</a>${this.sourceImportBadge(model, copy)}`
+      ? `<a href="${this.escapeHtml(cleanSourceUrl)}"${copied} target="_blank" rel="noopener noreferrer" class="badge badge-category" style="background:var(--bg-tertiary);color:var(--accent-cyan);text-decoration:none;border:1px solid var(--border)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Source</a>${this.sourceImportBadge(model, copy, canChange)}`
       : '';
 
     // A README in the project folder is shown in the description section
@@ -2500,7 +2519,7 @@ const UI = {
         <div class="form-group">
           <label class="form-label">Source URL (optional)</label>
           <input class="form-input" type="url" name="source_url" value="${this.escapeHtml(model?.source_url || '')}" placeholder="e.g. https://www.printables.com/...">
-          <div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">A MakerWorld, Printables or Thingiverse link: on save, its description, pictures and PDFs are copied into the project folder (README.md, images/). Thingiverse needs your token (Profile → API &amp; Integrations).</div>
+          <div class="form-hint" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">A MakerWorld or Printables link: on save, its description, pictures, PDFs and model files are copied into the project folder (README.md, images/). MakerWorld files need your Bambu Lab login (Profile → API &amp; Integrations).</div>
         </div>
         <div class="form-group">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">

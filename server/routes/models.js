@@ -644,8 +644,8 @@ router.put('/:id', authenticate, (req, res) => {
         }
       }
     }
-    // A MakerWorld, Printables or Thingiverse page as the source: its documentation is copied into
-    // the project folder (Thingiverse with the token of the user who saves)
+    // A MakerWorld or Printables page as the source: it is copied into the project folder (the
+    // MakerWorld files with the Bambu Lab login of the user who saves)
     sourceImport.maybeStart(get('SELECT * FROM models WHERE id=?', [id]), model.source_url, req.user.id);
     res.json(get('SELECT * FROM models WHERE id=?', [id]));
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to update model' }); }
@@ -658,6 +658,20 @@ router.get('/:id/source-import', authenticate, (req, res) => {
   if (!model) return res.status(404).json({ error: 'Model not found' });
   if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
   res.json({ ...(sourceImport.statusOf(model) || {}), running: sourceImport.isRunning(model.id) });
+});
+
+// ─── POST /api/models/:id/source-import ───────────────────────────────────────
+// "Check for updates": the source page is copied again; new files come in, changed model files
+// replace the old ones (kept in their history)
+router.post('/:id/source-import', authenticate, (req, res) => {
+  const model = get('SELECT * FROM models WHERE id=? AND deleted_at IS NULL', [Number(req.params.id)]);
+  if (!model) return res.status(404).json({ error: 'Model not found' });
+  if (!canEditModel(req.user, model)) return res.status(403).json({ error: 'Forbidden' });
+  if (!sourceImport.sourceOf(model.source_url)) return res.status(400).json({ error: 'The Source URL is not a MakerWorld or Printables page' });
+  if (sourceImport.isRunning(model.id)) return res.status(409).json({ error: 'The copy is running already' });
+  sourceImport.maybeStart(model, model.source_url, req.user.id, { force: true });
+  const fresh = get('SELECT source_import FROM models WHERE id=?', [model.id]);
+  res.json({ ...(sourceImport.statusOf(fresh) || {}), running: sourceImport.isRunning(model.id) });
 });
 
 // ─── DELETE /api/models/:id ───────────────────────────────────────────────────

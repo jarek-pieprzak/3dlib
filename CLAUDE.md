@@ -120,8 +120,16 @@ page and footer credit GyroidVault; keep that.
   without a name takes it). Texts come in the user's language (`users.source_language`, Profile;
   English by default, 'original' as written): MakerWorld translates title, description, profile
   names and tags itself (request header `x-bbl-language`; `titleTranslated`, `summaryTranslated`,
-  `tagsTranslated`); Printables has no translations. Thingiverse was dropped (its API wants a
-  token per user); the migration drops the `users.thingiverse_token*` columns.
+  `tagsTranslated`); Printables has no translations. Names the site leaves in another script
+  than Latin (plates, objects and parts inside 3MFs, file and folder names) get their translation
+  next to them, "配料台 (Stół do przygotowywania składników)" (`sources/translate.js`: MyMemory,
+  free without a key, ~5000 characters a day, each name asked once and kept in
+  `source_translations`; Google's free address answers servers with its bot check, not used;
+  `sources/names3mf.js` rewrites `Metadata/model_settings.config`). Such a 3MF keeps the size the
+  site gave it in `files.source_size`, so Check for updates still sees the same file; a file
+  renamed with a translation is found by the cached translations of any language.
+  Thingiverse was dropped (its API wants a token per user); the migration drops the
+  `users.thingiverse_token*` columns.
   - Sites are modules of `sources/index.js` (`idOf`, `isAsset`, `load(id, http, { token })` -> a
     page of `sources/common.js`, which has HTML -> Markdown, `assetsOf`, `buildReadme`; page.files
     = { url, name, folder, size, unzip, trusted }). HTTP: `sources/http.js` (Node `https`,

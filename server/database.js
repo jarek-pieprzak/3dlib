@@ -326,6 +326,11 @@ async function initDatabase() {
     // The language of the pages the source import copies for this user: MakerWorld translates
     // them itself ('en' by default, 'pl', or 'original')
     if (!uCols.some(c => c.name === 'source_language')) db.run("ALTER TABLE users ADD COLUMN source_language TEXT DEFAULT 'en'");
+    // Names the source import translated (sources/translate.js), asked for once per language
+    db.run('CREATE TABLE IF NOT EXISTS source_translations (src TEXT NOT NULL, lang TEXT NOT NULL, text TEXT NOT NULL, PRIMARY KEY (src, lang))');
+    // The size of a file as the site gave it, when 3DLib changed it after the download (the names
+    // of plates and objects translated inside a 3MF): Check for updates compares this one
+    if (!all("PRAGMA table_info(files)").some(c => c.name === 'source_size')) db.run('ALTER TABLE files ADD COLUMN source_size INTEGER');
     // The Thingiverse import was dropped: the users' tokens it kept go with their columns
     for (const col of ['thingiverse_token', 'thingiverse_token_status', 'thingiverse_token_checked_at']) {
       if (!uCols.some(c => c.name === col)) continue;

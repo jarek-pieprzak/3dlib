@@ -32,7 +32,10 @@ const projectFiles = require('../utils/projectFiles');
 const fileVersions = require('../utils/fileVersions');
 const bambuAccount = require('../utils/bambuAccount');
 const { sourceOf } = require('../utils/sources');
-const { assetsOf, buildReadme, hasMarker } = require('../utils/sources/common');
+const { assetsOf, buildReadme, hasMarker, safeFileName } = require('../utils/sources/common');
+const translateMod = require('../utils/sources/translate');
+const { translator } = translateMod;
+const names3mf = require('../utils/sources/names3mf');
 const http = require('../utils/sources/http');
 const { tagIdFor, logEvent, hashFileStream } = require('../utils/modelHelpers');
 const { newToken } = require('../utils/slicerToken');
@@ -80,16 +83,17 @@ async function download(url, part, opts) {
 
 // The database row of a file in the project folder: indexed like the scanner does (with the
 // thumbnail of a 3MF / G-code), a row in the Trash comes back (the import asked for it again)
-function indexFile(model, root, abs) {
+// sourceSize: the size the site gave the file, when 3DLib changed it (names translated in a 3MF)
+function indexFile(model, root, abs, sourceSize = null) {
   const size = fs.statSync(abs).size;
   const row = get('SELECT * FROM files WHERE library_path = ?', [abs]);
   if (row) {
-    run('UPDATE files SET file_size = ?, deleted_at = NULL WHERE id = ?', [size, row.id], true);
+    run('UPDATE files SET file_size = ?, deleted_at = NULL, source_size = COALESCE(?, source_size) WHERE id = ?', [size, sourceSize, row.id], true);
     return row.id;
   }
   const filename = path.basename(abs);
-  const r = run('INSERT INTO files (model_id, filename, original_name, file_type, file_size, library_path, slicer_token) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [model.id, filename, projectFiles.relOf(root, abs), getFileType(filename), size, abs, newToken()], true);
+  const r = run('INSERT INTO files (model_id, filename, original_name, file_type, file_size, library_path, slicer_token, source_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [model.id, filename, projectFiles.relOf(root, abs), getFileType(filename), size, abs, newToken(), sourceSize], true);
   const file = get('SELECT * FROM files WHERE id = ?', [r.lastId]);
   if (['3mf', 'gcode'].includes(file.file_type)) {
     try { fileVersions.refreshFileInfo(model, file); } catch (e) { /* the scanner reads it later */ }
@@ -212,8 +216,9 @@ async function titleOf(url, userId) {
   return { site: found.source.site, title: String(page.title || '').trim() };
 }
 
-// Copies the page (loaded already) into the model's folder
-async function importPage(modelId, found, page) {
+// Copies the page (loaded already) into the model's folder; lang: the user's language, for the
+// names the site leaves untranslated (files, folders, plates and objects inside 3MFs)
+async function importPage(modelId, found, page, lang = 'original') {
   const { source } = found;
   await waitForScan();
   const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [modelId]);
@@ -226,8 +231,36 @@ async function importPage(modelId, found, page) {
   const reused = [];
   const counts = { description: 0, gallery: 0, document: 0, model: 0, archive: 0 };
   const touched = [];
+  const sourceSizes = new Map(); // abs path -> size as the site gave it (names changed after)
+  let renamed = 0;
   const own = all("SELECT library_path FROM files WHERE model_id = ? AND deleted_at IS NULL AND library_path IS NOT NULL AND library_path NOT LIKE '%::%'", [modelId])
     .map(f => f.library_path);
+
+  // Names in another script get their translation next to them: file and folder names, and the
+  // plates and objects inside a 3MF ("配料台 (Stół do przygotowywania składników)")
+  const tr = translator(lang, { db: { get, run }, http });
+  const names = new Map();
+  const learn = async (texts) => { for (const [k, v] of await tr.translate(texts.filter(t => !names.has(t)))) names.set(k, v); };
+  const relIn = (rel) => rel.split('/').map((seg, i, all) => {
+    const stem = i === all.length - 1 ? translateMod.stemOf(seg) : seg;
+    const t = names.get(stem);
+    if (!t) return seg;
+    return safeFileName(i === all.length - 1 ? translateMod.dualFileName(seg, t) : translateMod.dual(seg, t), seg);
+  }).join('/');
+  const segmentsOf = (rels) => rels.flatMap(rel => rel.split('/').map((seg, i, all) => (i === all.length - 1 ? translateMod.stemOf(seg) : seg)));
+  const renameInside = async (abs) => {
+    if (!/\.3mf$/i.test(abs)) return;
+    const inside = names3mf.namesOf(abs).filter(translateMod.needsTranslation);
+    if (!inside.length) return;
+    await learn(inside);
+    const size = fs.statSync(abs).size;
+    if (names3mf.renameAll(abs, n => (names.has(n) ? translateMod.dual(n, names.get(n)) : n))) {
+      sourceSizes.set(abs, size);
+      renamed++;
+    }
+  };
+  const assets = assetsOf(page, source.isAsset);
+  await learn(segmentsOf(assets.filter(a => a.kind !== 'description').map(a => a.rel)));
 
   // A downloaded file (at `part`) for `dest`: a file already at `dest` stays; content the project
   // has elsewhere is not added twice; otherwise it is put in place
@@ -240,14 +273,16 @@ async function importPage(modelId, found, page) {
       reused.push(rel);
       return { rel };
     }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.renameSync(part, dest);
     touched.push(dest);
     own.push(dest);
-    return { rel: projectFiles.relOf(root, dest) };
+    return { rel: projectFiles.relOf(root, dest), placed: true };
   };
 
-  for (const asset of assetsOf(page, source.isAsset)) {
-    const dest = path.join(root, ...asset.rel.split('/'));
+  for (const asset of assets) {
+    const rel = asset.kind === 'description' ? asset.rel : relIn(asset.rel);
+    const dest = path.join(root, ...rel.split('/'));
     const part = partOf(dest);
     const opts = { allow: source.isAsset };
     try {
@@ -258,13 +293,15 @@ async function importPage(modelId, found, page) {
         try {
           const zip = await zipEntries(tmp);
           try {
+            await learn(segmentsOf(zip.entries.map(e => e.rel)));
             for (const e of zip.entries) {
-              const out = path.join(root, ...e.rel.split('/'));
+              const out = path.join(root, ...relIn(e.rel).split('/'));
               const ep = partOf(out);
               try {
                 if (projectFiles.exists(out)) { touched.push(out); counts.archive++; continue; }
                 await e.read(ep);
-                await place(ep, out);
+                const r = await place(ep, out);
+                if (r.placed) await renameInside(out);
                 counts.archive++;
               } catch (er) {
                 try { fs.unlinkSync(ep); } catch (x) { /* none */ }
@@ -277,18 +314,19 @@ async function importPage(modelId, found, page) {
         continue;
       }
       if (projectFiles.exists(dest)) {
-        local.set(asset.url, asset.rel);
+        local.set(asset.url, rel);
         touched.push(dest);
         counts[asset.kind]++;
         continue;
       }
       await download(asset.url, part, opts);
       const r = await place(part, dest);
+      if (r.placed && asset.kind === 'model') await renameInside(dest);
       local.set(asset.url, r.rel);
       counts[asset.kind]++;
     } catch (e) {
       try { fs.unlinkSync(part); } catch (x) { /* none */ }
-      failed.push(`${asset.rel} (${e.message})`);
+      failed.push(`${rel} (${e.message})`);
     }
   }
 
@@ -305,7 +343,7 @@ async function importPage(modelId, found, page) {
   }
 
   const fresh = get('SELECT * FROM models WHERE id = ?', [modelId]);
-  for (const abs of touched) indexFile(fresh, root, abs);
+  for (const abs of touched) indexFile(fresh, root, abs, sourceSizes.get(abs) || null);
   const tags = addTags(fresh, page.tags);
   const parts = fillPartsList(fresh, page.hardware || [], source.site);
   run("UPDATE models SET updated_at = datetime('now') WHERE id = ?", [modelId], true);
@@ -318,6 +356,7 @@ async function importPage(modelId, found, page) {
   let message = `Copied ${bits.join(', ')} from ${source.site}`;
   if (tags) message += `; ${tags} tag${tags === 1 ? '' : 's'} added`;
   if (parts) message += '; hardware in the Parts tab';
+  if (renamed) message += `; plate and object names translated in ${renamed} 3MF file${renamed === 1 ? '' : 's'}`;
   if (page.filesNote === 'login_needed') message += `. Model files: log in to ${source.site} in Profile -> API & Integrations`;
   if (page.filesNote === 'login_refused') message += `. Model files: ${source.site} refused your login, log in again in Profile -> API & Integrations`;
   if (reused.length) message += `. Already in the project: ${reused.join(', ')}`;
@@ -327,7 +366,7 @@ async function importPage(modelId, found, page) {
 
 // The site's model files against the project: { changed: missing or of another size, present:
 // in the folder } ([{ rel, size }]; the raw files of a ZIP by the list the site gives of them)
-function compareFiles(model, page, source) {
+function compareFiles(model, page, source, lang = 'original') {
   const info = projectFiles.projectInfo(model);
   if (!info || !info.isFolder) return { changed: [], present: [] };
   const expected = [
@@ -335,18 +374,41 @@ function compareFiles(model, page, source) {
     ...(page.archiveEntries || [])
   ];
   // A file of the same size under another name is the same file (a profile 3MF is named in the
-  // user's language: another language renames it)
-  const sizes = new Set(all('SELECT file_size FROM files WHERE model_id = ? AND deleted_at IS NULL', [model.id]).map(f => Number(f.file_size)));
+  // user's language: another language renames it). Sizes are the site's: a 3MF whose names 3DLib
+  // translated keeps the size it was downloaded with (files.source_size)
+  const rows = all('SELECT library_path, file_size, source_size FROM files WHERE model_id = ? AND deleted_at IS NULL', [model.id]);
+  const sizeOf = new Map(rows.map(f => [f.library_path, Number(f.source_size || f.file_size)]));
+  const sizes = new Set(sizeOf.values());
   const changed = [];
   const present = [];
   for (const e of expected) {
-    let st = null;
-    try { st = fs.statSync(path.join(info.root, ...e.rel.split('/'))); } catch (x) { /* missing */ }
-    if (!st && e.size && sizes.has(e.size)) { present.push(e); continue; }
-    if (st) present.push(e);
-    if (!st || (e.size && st.size !== e.size)) changed.push(e);
+    // At its name, or at the name with its translation next to it (as the copy named it)
+    let abs = null;
+    for (const rel of [e.rel, ...cachedRels(e.rel, lang)]) {
+      const p = path.join(info.root, ...rel.split('/'));
+      if (projectFiles.exists(p)) { abs = p; break; }
+    }
+    if (!abs && e.size && sizes.has(e.size)) { present.push(e); continue; }
+    if (abs) present.push(e);
+    const size = abs ? (sizeOf.get(abs) || fs.statSync(abs).size) : 0;
+    if (!abs || (e.size && size !== e.size)) changed.push(e);
   }
   return { changed, present };
+}
+
+// The path with the translations a copy may have put next to its names: the user's language first,
+// then the others in the cache of translations (a copy made before the language was changed)
+function cachedRels(rel, lang) {
+  if (!rel.split('/').some(translateMod.needsTranslation)) return [];
+  const langs = [...new Set([lang, ...all('SELECT DISTINCT lang FROM source_translations').map(r => r.lang)])].filter(l => l && l !== 'original');
+  return langs.map(l => rel.split('/').map((seg, i, segs) => {
+    const last = i === segs.length - 1;
+    const stem = last ? translateMod.stemOf(seg) : seg;
+    if (!translateMod.needsTranslation(stem)) return seg;
+    const row = get('SELECT text FROM source_translations WHERE src = ? AND lang = ?', [stem, l]);
+    if (!row) return seg;
+    return safeFileName(last ? translateMod.dualFileName(seg, row.text) : translateMod.dual(seg, row.text), seg);
+  }).join('/'));
 }
 
 // A new version of the model for a changed page: "<name> (vN)" in a folder next to the project,
@@ -379,7 +441,7 @@ async function runImport(modelId, url, userId) {
   setStatus(modelId, { url, site, status: 'running', message: `Copying ${site}...` });
   try {
     const page = await loadPage(found.source, found.id, userId);
-    const r = await importPage(modelId, found, page);
+    const r = await importPage(modelId, found, page, languageOf(userId));
     setStatus(modelId, { url, site, status: 'done', message: r.message, files: r.files });
     logEvent(r.failed ? 'warning' : 'info', `Source import, model ${modelId}: ${r.message}`);
   } catch (e) {
@@ -400,11 +462,11 @@ async function runCheck(modelId, url, userId) {
     const page = await loadPage(found.source, found.id, userId);
     const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [modelId]);
     if (!model) throw new Error('The model is gone');
-    const { changed, present } = compareFiles(model, page, found.source);
+    const { changed, present } = compareFiles(model, page, found.source, languageOf(userId));
     // Nothing changed, or the project has none of the site's files yet (copied without a login
     // before): this model gets what is new
     if (!changed.length || !present.length) {
-      const r = await importPage(modelId, found, page);
+      const r = await importPage(modelId, found, page, languageOf(userId));
       const message = changed.length ? r.message : `No new or changed model files on ${site}. ${r.message}`;
       setStatus(modelId, { url, site, status: 'done', message, files: r.files });
       logEvent('info', `Source update check, model ${modelId}: ${message}`);
@@ -416,7 +478,7 @@ async function runCheck(modelId, url, userId) {
     running.add(version.id);
     setStatus(version.id, { url, site, status: 'running', message: `Copying ${site}...` });
     try {
-      const r = await importPage(version.id, found, page);
+      const r = await importPage(version.id, found, page, languageOf(userId));
       setStatus(version.id, { url, site, status: 'done', message: r.message, files: r.files });
     } finally { running.delete(version.id); }
     const list = changed.slice(0, 5).map(c => c.rel).join(', ') + (changed.length > 5 ? ` and ${changed.length - 5} more` : '');

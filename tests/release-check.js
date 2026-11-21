@@ -431,6 +431,40 @@ async function runStaticAndUiChecks() {
     assert(mw.linkOf({ data: { url: 'https://x.bblmw.com/a.3mf', name: 'a.3mf' } }).name === 'a.3mf' && mw.linkOf({ url: 'http://insecure/a' }) === null, 'Download answers: nested data, https only');
   });
 
+  await check('Names in another script: translated once (MyMemory, cached), "original (translation)", plates and objects inside a 3MF', async () => {
+    const t = require(path.join(ROOT_DIR, 'server/utils/sources/translate'));
+    const n3 = require(path.join(ROOT_DIR, 'server/utils/sources/names3mf'));
+    assert(t.needsTranslation('配料台') && t.needsTranslation('Box 盒子') && !t.needsTranslation('Gear 8 (left).stl') && !t.needsTranslation('Łożysko ząb') && !t.needsTranslation(''), 'Only names in another script than Latin');
+    assert(t.dual('配料台', 'Stół') === '配料台 (Stół)' && t.dual('A', 'A') === 'A' && t.dual('配料台', '') === '配料台', 'Original (translation)');
+    assert(t.dualFileName('齿轮.stl', 'Zębatka') === '齿轮 (Zębatka).stl' && t.stemOf('齿轮.stl') === '齿轮' && t.stemOf('Gears') === 'Gears', 'Translations go before the extension');
+    const cache = new Map();
+    const db = { get: (sql, [src, lang]) => (cache.has(`${src}|${lang}`) ? { text: cache.get(`${src}|${lang}`) } : undefined), run: (sql, [src, lang, text]) => { cache.set(`${src}|${lang}`, text); } };
+    const asked = [];
+    const http = { json: async (url) => { asked.push(url); const q = decodeURIComponent(/q=([^&]*)/.exec(url)[1]); return { responseStatus: 200, responseData: { translatedText: q === '坏' ? 'MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS' : `PL ${q}` } }; } };
+    const tr = t.translator('pl', { db, http });
+    const m = await tr.translate(['配料台', 'Body', '配料台', '坏']);
+    assert(m.get('配料台') === 'PL 配料台' && !m.has('Body') && !m.has('坏') && asked.length === 2 && asked[0].includes('langpair=Autodetect%7Cpl'), `Translated once, Latin names and quota warnings left out: ${JSON.stringify([...m])} ${asked}`);
+    await t.translator('pl', { db, http }).translate(['配料台']);
+    assert(asked.length === 2, 'A name translated before comes from the cache');
+    assert((await t.translator('original', { db, http }).translate(['配料台'])).size === 0, 'As the designer wrote it: nothing translated');
+
+    const AdmZip = require('adm-zip');
+    const file = path.join(os.tmpdir(), `3dlib-names-${Date.now()}.3mf`);
+    const z = new AdmZip();
+    z.addFile('3D/3dmodel.model', Buffer.from('<model/>'));
+    z.addFile('Metadata/model_settings.config', Buffer.from('<config><object id="2"><metadata key="name" value="盒子 &amp; 盖"/><part id="1"><metadata key="name" value="Body"/></part></object><plate><metadata key="plater_name" value="配料台"/></plate></config>'));
+    z.writeZip(file);
+    try {
+      assert(JSON.stringify(n3.namesOf(file)) === JSON.stringify(['盒子 & 盖', 'Body', '配料台']), `Names of plates, objects and parts: ${JSON.stringify(n3.namesOf(file))}`);
+      assert(n3.renameAll(file, s => (t.needsTranslation(s) ? t.dual(s, `PL ${s}`) : s)), 'Renamed');
+      const cfg = new AdmZip(file).getEntry('Metadata/model_settings.config').getData().toString();
+      assert(cfg.includes('value="盒子 &amp; 盖 (PL 盒子 &amp; 盖)"') && cfg.includes('value="配料台 (PL 配料台)"') && cfg.includes('value="Body"') && new AdmZip(file).getEntry('3D/3dmodel.model').getData().toString() === '<model/>', `The 3MF keeps the rest: ${cfg}`);
+      assert(!n3.renameAll(file, s => s), 'Nothing to change, nothing written');
+      fs.writeFileSync(file, 'not a zip');
+      assert(n3.namesOf(file).length === 0 && !n3.renameAll(file, s => `${s}!`), 'A file that is no 3MF is left alone');
+    } finally { fs.rmSync(file, { force: true }); }
+  });
+
   await check('Model page: Check for updates, the login MakerWorld wants, the Bambu Lab panel and notice escape names', () => {
     assert(UI.sourceSite('https://makerworld.com/pl/models/786733-x') === 'MakerWorld' && UI.sourceSite('https://www.printables.com/model/3161-x') === 'Printables' && UI.sourceSite('https://www.thingiverse.com/thing:1') === null, 'Sites of Source URLs');
     const m = { id: 4, source_url: 'https://makerworld.com/models/1' };
@@ -1374,14 +1408,24 @@ async function runE2ETests() {
     const z = new AdmZip();
     z.addFile('Gears/gear 8.stl', Buffer.from('solid g\nendsolid g\n'));
     z.addFile('Case/lid.stl', Buffer.from('solid l\nendsolid l\n'));
+    z.addFile('Gears/齿轮.stl', Buffer.from('solid c\nendsolid c\n'));
     z.addFile('__MACOSX/Gears/._gear 8.stl', Buffer.from('x'));
+    return z.toBuffer();
+  })();
+  // The profile 3MF: a Chinese plate and object, which the copy translates inside the file
+  const mw3mf = (() => {
+    const AdmZip = require('adm-zip');
+    const z = new AdmZip();
+    z.addFile('3D/3dmodel.model', Buffer.from('<model/>'));
+    z.addFile('Metadata/model_settings.config', Buffer.from('<config><object id="2"><metadata key="name" value="齿轮"/></object><plate><metadata key="plater_name" value="配料台"/></plate></config>'));
     return z.toBuffer();
   })();
   const mwDesign = {
     id: 5151, title: 'Gear Box', designCreator: { uid: 7, name: 'Maker' }, summary: '<p>Gears in a box.</p>', tags: ['gears'],
-    instances: [{ id: 951, title: 'Full', instanceCreator: { uid: 7 }, extention: { modelInfo: { f3mf: { size: Buffer.byteLength('file /makerworld.bblmw.com/f/951.3mf') } } } }],
-    designExtension: { model_files: [{ isDir: true, dirName: 'Gears', children: [{ modelName: 'gear 8.stl' }] }] }
+    instances: [{ id: 951, title: 'Full', instanceCreator: { uid: 7 }, extention: { modelInfo: { f3mf: { size: mw3mf.length } } } }],
+    designExtension: { model_files: [{ isDir: true, dirName: 'Gears', children: [{ modelName: 'gear 8.stl' }, { modelName: '齿轮.stl', modelSize: Buffer.byteLength('solid c\nendsolid c\n') }] }] }
   };
+  const myMemoryHits = [];
   const readBody = (req) => new Promise(resolve => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => resolve(b ? JSON.parse(b) : {})); });
   const makerWorld = require('http').createServer(async (req, res) => {
     makerWorldHits.push(req.url);
@@ -1398,6 +1442,13 @@ async function runE2ETests() {
       return json(404, {});
     }
     if (req.url === '/makerworld.bblmw.com/raw/5151/all.zip') return send(200, mwZip, 'application/zip');
+    if (req.url === '/makerworld.bblmw.com/f/951.3mf') return send(200, mw3mf);
+    // MyMemory: "<LANG> <text>"
+    if (req.url.startsWith('/api.mymemory.translated.net/get?')) {
+      const u = new URL(`http://x${req.url.slice('/api.mymemory.translated.net'.length)}`);
+      myMemoryHits.push(u.searchParams.get('q'));
+      return json(200, { responseStatus: 200, responseData: { translatedText: `${u.searchParams.get('langpair').split('|')[1].toUpperCase()} ${u.searchParams.get('q')}` } });
+    }
     if (req.url.startsWith('/makerworld.bblmw.com/') && !req.url.includes('missing')) return send(200, Buffer.from(`file ${req.url}`));
     if (req.url === '/api.bambulab.com/v1/user-service/user/login' && req.method === 'POST') {
       const b = await readBody(req);
@@ -3448,8 +3499,13 @@ async function runE2ETests() {
       // it (no new version): the profile 3MF (named after the profile) and the raw files, unpacked
       await apiReq(`/api/models/${box.id}/source-import`, { method: 'POST', session: adminSession });
       st = await wait();
-      assert(st.status === 'done' && !st.files && !st.version && st.message.includes('3 model files'), `With the login: ${JSON.stringify(st)}`);
-      for (const rel of ['Full.3mf', 'Gears/gear 8.stl', 'Case/lid.stl', 'notes.txt']) assert(fs.existsSync(lib(`Gear Box/${rel}`)), `MakerWorld copy must write ${rel}`);
+      assert(st.status === 'done' && !st.files && !st.version && st.message.includes('4 model files') && st.message.includes('plate and object names translated in 1 3MF file'), `With the login: ${JSON.stringify(st)}`);
+      for (const rel of ['Full.3mf', 'Gears/gear 8.stl', 'Case/lid.stl', 'notes.txt', 'Gears/齿轮 (EN 齿轮).stl']) assert(fs.existsSync(lib(`Gear Box/${rel}`)), `MakerWorld copy must write ${rel}`);
+      assert(!fs.existsSync(lib('Gear Box/Gears/齿轮.stl')), 'A file name in another script gets its translation next to it');
+      const n3 = require(path.join(ROOT_DIR, 'server/utils/sources/names3mf'));
+      assert(JSON.stringify(n3.namesOf(lib('Gear Box/Full.3mf'))) === JSON.stringify(['齿轮 (EN 齿轮)', '配料台 (EN 配料台)']), `Plates and objects inside the 3MF: ${JSON.stringify(n3.namesOf(lib('Gear Box/Full.3mf')))}`);
+      const full = (await apiReq(`/api/models/${box.id}`, { session: adminSession })).data.files.find(f => f.original_name === 'Full.3mf');
+      assert(full && Number(full.source_size) === mw3mf.length && Number(full.file_size) !== mw3mf.length, `The 3MF keeps the size MakerWorld gave it: ${JSON.stringify(full && { s: full.source_size, f: full.file_size })}`);
       assert(!fs.existsSync(lib('Gear Box/Gear Box - files.zip')) && !fs.existsSync(lib('Gear Box/__MACOSX')), 'The ZIP is unpacked, not kept; system clutter is left out');
       assert(fs.readFileSync(lib('Gear Box/README.md'), 'utf8').includes('- Gear Box - files.zip: unpacked into this folder'), 'The README says the raw files were unpacked');
 
@@ -3459,7 +3515,8 @@ async function runE2ETests() {
       assert((await apiReq('/api/auth/me', { session: adminSession })).data.source_language === 'pl', 'The account says its language');
       await apiReq(`/api/models/${box.id}/source-import`, { method: 'POST', session: adminSession });
       st = await wait();
-      assert(st.status === 'done' && !st.version && st.message.startsWith('No new or changed model files'), `Polish, nothing changed: ${JSON.stringify(st)}`);
+      assert(st.status === 'done' && !st.version && st.message.startsWith('No new or changed model files'), `Polish, nothing changed (the translated 3MF and file names are the same files): ${JSON.stringify(st)}`);
+      assert(fs.existsSync(lib('Gear Box/Gears/齿轮 (EN 齿轮).stl')) && !fs.existsSync(lib('Gear Box/Gears/齿轮 (PL 齿轮).stl')), 'Files copied before keep their names');
       const plReadme = fs.readFileSync(lib('Gear Box/README.md'), 'utf8');
       assert(plReadme.includes('# Pudełko z zębatkami') && plReadme.includes('Zębatki w pudełku.'), `The README in Polish:\n${plReadme.slice(0, 300)}`);
       assert((await apiReq(`/api/models/${box.id}`, { session: adminSession })).data.tags.some(t => t.name === 'zębatki'), 'Tags in Polish');

@@ -14,7 +14,7 @@ const MIN_BYTES = 20 * 1024 * 1024;
 const CACHE_DIR = path.join(DATA_DIR, 'cache', 'mesh');
 // Raised when the simplification changes: copies of another version are made again, and the
 // hourly prune drops the old ones (their names do not match)
-const VERSION = 2;
+const VERSION = 3;
 const NAME = /^(\d+)-(\d+)-(\d+)-v(\d+)\.stl\.gz$/;
 
 let worker = null;

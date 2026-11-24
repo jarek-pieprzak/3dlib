@@ -25,6 +25,10 @@ const fs = require('fs');
 
 const TARGET = 160000;
 const MIN_CELLS = 24;
+// The base grid takes this share of the target, splitting the worst cells (up to REFINE times,
+// each a cell of half the size) the rest
+const BASE = 0.5;
+const REFINE = 3;
 const MAX_TRIANGLES = 10000000;
 // More bodies than this, or corners not shared at all: a triangle soup, taken as one body
 const MAX_BODIES = 20000;
@@ -113,9 +117,11 @@ function eigSym(a) {
   return { values: [m[0][0], m[1][1], m[2][2]], vectors: v };
 }
 
-// ── Cells: per cell a quadric (a11 a12 a13 a22 a23 a33 b1 b2 b3), how far its vertex may go
-// from the mean (negative: an exact corner, kept where it is), the sum and count of corners ──
-const W = 14;
+// ── Cells: per cell a quadric (a11 a12 a13 a22 a23 a33 b1 b2 b3 ... c), how far its vertex may
+// go from the mean (negative: an exact corner, kept where it is), the sum and count of corners.
+// The quadric's trace is the area of its triangles (counted once a corner), so
+// (pᵀAp + 2bᵀp + c) / trace is the mean squared distance of those planes from the vertex p ──
+const W = 15;
 class Cells {
   constructor() { this.data = new Float64Array(W * 65536); this.n = 0; }
   add(limit) {
@@ -124,12 +130,41 @@ class Cells {
     this.data[i * W + 9] = limit;
     return i;
   }
+  // Sums back to zero (the limits stay): the corners are gathered again
+  reset() {
+    const a = this.data;
+    for (let i = 0; i < this.n; i++) {
+      const o = i * W;
+      for (let k = 0; k < W; k++) if (k !== 9) a[o + k] = 0;
+    }
+  }
   plane(i, w, ux, uy, uz, d) {
     const o = i * W, a = this.data;
     a[o] += w * ux * ux; a[o + 1] += w * ux * uy; a[o + 2] += w * ux * uz;
     a[o + 3] += w * uy * uy; a[o + 4] += w * uy * uz; a[o + 5] += w * uz * uz;
     a[o + 6] += w * ux * d; a[o + 7] += w * uy * d; a[o + 8] += w * uz * d;
+    a[o + 14] += w * d * d;
   }
+  // How badly each cell's one vertex (pos) stands for its triangles: the mean squared distance
+  // (mm²) of their planes, 0 for exact corners and empty cells
+  errors(pos) {
+    const e = new Float64Array(this.n);
+    const a = this.data;
+    for (let i = 0; i < this.n; i++) {
+      const o = i * W;
+      const trace = a[o] + a[o + 3] + a[o + 5];
+      if (!(a[o + 9] > 0) || !(trace > 0)) continue;
+      const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+      const q = a[o] * x * x + a[o + 3] * y * y + a[o + 5] * z * z
+        + 2 * (a[o + 1] * x * y + a[o + 2] * x * z + a[o + 4] * y * z)
+        + 2 * (a[o + 6] * x + a[o + 7] * y + a[o + 8] * z) + a[o + 14];
+      e[i] = Math.max(0, q) / trace;
+    }
+    return e;
+  }
+  area(i) { const o = i * W; return (this.data[o] + this.data[o + 3] + this.data[o + 5]) / 3; }
+  size(i) { return this.data[i * W + 9] / 0.75; }
+  used(i) { return this.data[i * W + 13] > 0; }
   corner(i, x, y, z) {
     const o = i * W, a = this.data;
     a[o + 10] += x; a[o + 11] += y; a[o + 12] += z; a[o + 13] += 1;
@@ -279,7 +314,8 @@ async function readMesh(path, expected) {
   return tooBig ? null : { pos, verts, tri, count };
 }
 
-async function simplify(path, target = TARGET) {
+// opts.refine: false keeps one grid a body (the tests compare)
+async function simplify(path, target = TARGET, opts = {}) {
   const binary = isBinaryStl(path);
   const size = fs.statSync(path).size;
   const expected = binary ? (size - 84) / 50 : Math.ceil(size / 200);
@@ -339,11 +375,13 @@ async function simplify(path, target = TARGET) {
   }
   if (!(total > 0)) throw new Error('No geometry in the file');
 
-  // Cells: the target's size, finer for small bodies (MIN_CELLS across, fewer if that would
-  // give far more than the target); a body its cells would keep about whole stays as it is
+  // Cells: the size for BASE of the target (all of it without refining), finer for small bodies
+  // (MIN_CELLS across, fewer if that would give far more than the target); a body its cells
+  // would keep about whole stays as it is
   let span = 0;
   for (let b = 0; b < bodies; b++) for (let k = 0; k < 3; k++) span = Math.max(span, box[b * 6 + 3 + k] - box[b * 6 + k]);
-  const big = Math.max(cellFor(total, target), span / 4096, 1e-6);
+  const refine = opts.refine !== false;
+  const big = Math.max(cellFor(total, refine ? target * BASE : target), span / 4096, 1e-6);
   const cell = new Float64Array(bodies);
   const whole = new Uint8Array(bodies);
   for (const across of [MIN_CELLS, 16, 12, 8, 6]) {
@@ -359,51 +397,93 @@ async function simplify(path, target = TARGET) {
     if (estimate <= target * 2) break;
   }
 
-  // Every corner to its cell (a corner of a body kept whole is a cell of its own)
+  // Every corner to its cell (a corner of a body kept whole is a cell of its own). A cell of
+  // level L is the body's cell halved L times; the grids of a body share their origin, so a cell
+  // splits into eight of the next level
   const cells = new Cells();
   const cellOf = new Int32Array(verts);
-  const grids = new Array(bodies);
-  for (let i = 0; i < verts; i++) {
+  const levelOf = new Uint8Array(verts);
+  const grids = new Map();
+  const assign = (i, level) => {
     const b = bodyOf[i];
-    if (whole[b]) { cellOf[i] = cells.add(-1); cells.corner(cellOf[i], pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]); continue; }
     const o = b * 6;
-    const s = cell[b];
+    const s = cell[b] / (1 << level);
     const nx = Math.floor((box[o + 3] - box[o]) / s) + 1;
     const ny = Math.floor((box[o + 4] - box[o + 1]) / s) + 1;
     const ix = Math.min(nx - 1, Math.floor((pos[i * 3] - box[o]) / s));
     const iy = Math.min(ny - 1, Math.floor((pos[i * 3 + 1] - box[o + 1]) / s));
     const iz = Math.floor((pos[i * 3 + 2] - box[o + 2]) / s);
     const key = (iz * ny + iy) * nx + ix;
-    const grid = grids[b] || (grids[b] = new Map());
+    let grid = grids.get(b * 8 + level);
+    if (!grid) grids.set(b * 8 + level, grid = new Map());
     let c = grid.get(key);
     if (c === undefined) { c = cells.add(s * 0.75); grid.set(key, c); }
     cellOf[i] = c;
-    cells.corner(c, pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+    levelOf[i] = level;
+  };
+  for (let i = 0; i < verts; i++) {
+    if (whole[bodyOf[i]]) cellOf[i] = cells.add(-1);
+    else assign(i, 0);
   }
-  if (cells.n >= 4194304) throw new Error('Too many cells');
-
-  // Planes of the triangles into their cells; the triangles that span three cells
-  const out = new Triangles();
-  const kept = new Int32Array(bodies);
-  for (let f = 0; f < count; f++) {
-    const v0 = tri[f * 3], v1 = tri[f * 3 + 1], v2 = tri[f * 3 + 2];
-    const b = bodyOf[v0];
-    const c0 = cellOf[v0], c1 = cellOf[v1], c2 = cellOf[v2];
-    if (!whole[b]) {
+  // The corners and the planes of the triangles into their cells
+  const gather = () => {
+    cells.reset();
+    for (let i = 0; i < verts; i++) cells.corner(cellOf[i], pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+    for (let f = 0; f < count; f++) {
+      const v0 = tri[f * 3], v1 = tri[f * 3 + 1], v2 = tri[f * 3 + 2];
+      if (whole[bodyOf[v0]]) continue;
       const p0 = v0 * 3, p1 = v1 * 3, p2 = v2 * 3;
       const ax = pos[p1] - pos[p0], ay = pos[p1 + 1] - pos[p0 + 1], az = pos[p1 + 2] - pos[p0 + 2];
       const bx = pos[p2] - pos[p0], by = pos[p2 + 1] - pos[p0 + 1], bz = pos[p2 + 2] - pos[p0 + 2];
       const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
       const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      if (len > 0) {
-        const ux = nx / len, uy = ny / len, uz = nz / len;
-        const d = -(ux * pos[p0] + uy * pos[p0 + 1] + uz * pos[p0 + 2]);
-        cells.plane(c0, len / 2, ux, uy, uz, d);
-        cells.plane(c1, len / 2, ux, uy, uz, d);
-        cells.plane(c2, len / 2, ux, uy, uz, d);
-      }
+      if (!(len > 0)) continue;
+      const ux = nx / len, uy = ny / len, uz = nz / len;
+      const d = -(ux * pos[p0] + uy * pos[p0 + 1] + uz * pos[p0 + 2]);
+      cells.plane(cellOf[v0], len / 2, ux, uy, uz, d);
+      cells.plane(cellOf[v1], len / 2, ux, uy, uz, d);
+      cells.plane(cellOf[v2], len / 2, ux, uy, uz, d);
     }
-    if (out.add(c0, c1, c2)) kept[b]++;
+  };
+  // Detail where it shows: the cells whose one vertex stands worst for their triangles (holes,
+  // letters, fillets, thin walls; flat faces and sharp edges stand well) split in eight, the
+  // worst first, while the estimate (2.2 triangles a cell of the surface; a split one gives
+  // four times as many) stays within the target
+  let refined = 0;
+  for (let round = 0; refine && round < REFINE; round++) {
+    gather();
+    const err = cells.errors(cells.positions());
+    let estimate = 0;
+    const candidates = [];
+    for (let c = 0; c < cells.n; c++) {
+      if (!cells.used(c)) continue;
+      const s = cells.size(c);
+      const est = s > 0 ? (2.2 * cells.area(c)) / (s * s) : 1;
+      estimate += s > 0 ? est : 1;
+      if (s > 0 && err[c] > s * s * 1e-3) candidates.push({ c, e: err[c], est });
+    }
+    candidates.sort((x, y) => y.e - x.e);
+    const split = new Uint8Array(cells.n);
+    let n = 0;
+    for (const k of candidates) {
+      if (estimate + 3 * k.est > target) continue;
+      estimate += 3 * k.est;
+      split[k.c] = 1;
+      n++;
+    }
+    if (!n) break;
+    refined += n;
+    for (let i = 0; i < verts; i++) if (split[cellOf[i]]) assign(i, levelOf[i] + 1);
+  }
+  gather();
+  if (cells.n >= 4194304) throw new Error('Too many cells');
+
+  // The triangles that span three cells
+  const out = new Triangles();
+  const kept = new Int32Array(bodies);
+  for (let f = 0; f < count; f++) {
+    const v0 = tri[f * 3];
+    if (out.add(cellOf[v0], cellOf[tri[f * 3 + 1]], cellOf[tri[f * 3 + 2]])) kept[bodyOf[v0]]++;
   }
   // A body that kept nothing (a speck its cells swallowed) comes as it is
   for (let b = 0; b < bodies; b++) {
@@ -419,7 +499,7 @@ async function simplify(path, target = TARGET) {
       out.add(exact(tri[f * 3]), exact(tri[f * 3 + 1]), exact(tri[f * 3 + 2]));
     }
   }
-  return { stl: writeStl(out, cells.positions()), triangles: count, kept: out.n, cell: big, bodies };
+  return { stl: writeStl(out, cells.positions()), triangles: count, kept: out.n, cell: big, bodies, refined };
 }
 
 // Files over MAX_TRIANGLES: streamed twice, one grid for all

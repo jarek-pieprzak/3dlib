@@ -111,9 +111,12 @@ page and footer credit GyroidVault; keep that.
   simplifies the mesh to about 160 000 triangles (`server/utils/meshPreview.js`: vertex
   clustering with quadrics; every body of the file (corners shared by exact coordinates,
   union-find) gets its own grid, a small one at least 24 cells across or kept whole, so small
-  parts never vanish or melt into a big one; files up to 10 M triangles in memory, ~6 s and
-  ~370 MB for 350 MB; bigger ones streamed with one grid; corner hashing mixes every bit, round
-  coordinates once made it quadratic) in
+  parts never vanish or melt into a big one. The base grid takes half the target; then up to
+  three times the cells whose one vertex stands worst for their triangles (the quadric's mean
+  squared distance: holes, letters, fillets, thin walls; flat faces and sharp edges stand
+  well) split in eight, the worst first, while the estimate stays within the target. Files up
+  to 10 M triangles in memory, ~5 s and ~370 MB for 350 MB; bigger ones streamed with one grid;
+  corner hashing mixes every bit, round coordinates once made it quadratic) in
   a worker thread when first asked for (`server/services/meshPreviews.js`), keeps it gzipped in
   `<data>/cache/mesh/<file id>-<size>-<mtime>-v<VERSION>.stl.gz` (raise `VERSION` in
   `meshPreviews.js` when the simplification changes) and sends it with

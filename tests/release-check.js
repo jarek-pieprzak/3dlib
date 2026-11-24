@@ -1421,6 +1421,37 @@ async function runStaticAndUiChecks() {
       const rr = await simplify(path.join(dir, 'round.stl'));
       const ms = Date.now() - started;
       assert(rr.bodies === 1 && rr.kept < 200000 && ms < 10000, `A cube on a 0.5 mm grid: ${rr.kept} triangles in ${ms} ms`);
+
+      // Detail where it shows: a 300 mm plate with a 20 x 20 mm patch of 8 mm waves, 3 mm high.
+      // One grid for the plate flattens them; the cells that stand worst for their triangles
+      // split until the waves are back, while the flat plate stays coarse
+      const A = 3;
+      const zOf = (x, y) => (x >= 140 && x <= 160 && y >= 140 && y <= 160 ? A * Math.sin(2 * Math.PI * x / 8) * Math.sin(Math.PI * (y - 140) / 20) : 0);
+      const wave = [];
+      for (let i = 0; i < 150; i++) for (let j = 0; j < 150; j++) {
+        const p = (a, b) => [a * 2, b * 2, zOf(a * 2, b * 2)];
+        wave.push([p(i, j), p(i + 1, j), p(i + 1, j + 1)], [p(i, j), p(i + 1, j + 1), p(i, j + 1)]);
+      }
+      const wbuf = Buffer.alloc(84 + wave.length * 50);
+      wbuf.writeUInt32LE(wave.length, 80);
+      wave.forEach((t, i) => t.flat().forEach((v, k) => wbuf.writeFloatLE(v, 84 + i * 50 + 12 + k * 4)));
+      fs.writeFileSync(path.join(dir, 'waves.stl'), wbuf);
+      const off = (stl) => {
+        let sum = 0;
+        let n = 0;
+        for (let f = 0; f < stl.readUInt32LE(80); f++) {
+          for (let k = 0; k < 3; k++) {
+            const o = 84 + f * 50 + 12 + k * 12;
+            const x = stl.readFloatLE(o), y = stl.readFloatLE(o + 4);
+            if (x > 140 && x < 160 && y > 140 && y < 160) { sum += Math.abs(stl.readFloatLE(o + 8) - zOf(x, y)); n++; }
+          }
+        }
+        return n ? sum / n : Infinity;
+      };
+      const flat = await simplify(path.join(dir, 'waves.stl'), 6000, { refine: false });
+      const fine = await simplify(path.join(dir, 'waves.stl'), 6000);
+      assert(off(flat.stl) > 0.1 && off(fine.stl) < 0.05 && fine.refined > 0 && fine.kept <= 6000,
+        `The waves come back where one grid flattens them: ${off(flat.stl).toFixed(3)} mm off with one grid, ${off(fine.stl).toFixed(3)} mm with ${fine.refined} cells split, ${fine.kept} triangles`);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

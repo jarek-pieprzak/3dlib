@@ -991,7 +991,10 @@ const UI = {
       thumb = `<img src="${this.imgSrc(thumbUrl, 480)}" alt="${this.escapeHtml(m.name)}" loading="lazy" decoding="async">`;
     } else if (m.stl_file) {
       const stlUrl = m.stl_file.startsWith('/') ? m.stl_file : `/uploads/${m.stl_file}`;
-      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${this.escapeHtml(stlUrl)}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
+      // A big STL is rendered from its light copy; the size keeps another big file from being
+      // downloaded for a card (Viewer.generateThumbnails)
+      const lite = this.previewMeshUrl({ id: m.stl_file_id, file_type: m.stl_file_type, file_size: m.stl_file_size, url: stlUrl });
+      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${this.escapeHtml(lite || stlUrl)}" data-size="${lite ? 0 : Number(m.stl_file_size) || 0}" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else {
       thumb = `<div class="model-card-placeholder" style="background:${this.gradient(m.name)};display:flex;align-items:center;justify-content:center"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.35"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     }
@@ -2403,11 +2406,9 @@ const UI = {
           <div class="kit-part-main">
             <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}${p.optional ? ' <span class="kit-est" title="Not in the manual: set how many you need">optional</span>' : ''}</div>
             <div class="kit-part-path">${esc(path)}</div>
-            ${locked ? `<div class="kit-part-meta">${this.formatSize(p.file.file_size)}${this.MEASURABLE.includes(p.file.file_type) ? ` <span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}</div>` : ''}
+            <div class="kit-part-meta">${this.formatSize(p.file.file_size)}${this.MEASURABLE.includes(p.file.file_type) ? ` <span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}</div>
           </div>
           ${p.auto !== undefined && !locked ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
-          ${locked ? '' : `${this.MEASURABLE.includes(p.file.file_type) ? `<span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}
-          <span class="kit-part-size">${this.formatSize(p.file.file_size)}</span>`}
           ${locked ? slicer(p.file) : ''}
           ${download(p.file)}
           ${extra && !locked ?`<button type="button" class="kit-icon-btn is-danger" title="Remove from the list" onclick="event.stopPropagation(); App.kitRemoveExtra(this.closest('.kit-part').dataset.key)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}

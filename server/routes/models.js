@@ -144,7 +144,7 @@ router.get('/', (req, res) => {
       printCounts.forEach(r => { printCountByModel[r.model_id] = r.print_count; });
 
       // Most-recent stl/3mf per model, in one pass (newest-first)
-      const previewCandidates = all(`SELECT id, model_id, filename, library_path, file_type, uploaded_at FROM files WHERE model_id IN (${placeholders}) AND file_type IN ('stl','3mf') AND deleted_at IS NULL ORDER BY uploaded_at DESC`, modelIds);
+      const previewCandidates = all(`SELECT id, model_id, filename, library_path, file_type, file_size, uploaded_at FROM files WHERE model_id IN (${placeholders}) AND file_type IN ('stl','3mf') AND deleted_at IS NULL ORDER BY uploaded_at DESC`, modelIds);
       previewCandidates.forEach(f => {
         if (f.file_type === 'stl' && !stlByModel[f.model_id]) stlByModel[f.model_id] = f;
         if (f.file_type === '3mf' && !mfByModel[f.model_id]) mfByModel[f.model_id] = f;
@@ -155,7 +155,7 @@ router.get('/', (req, res) => {
       const previewIds = [...new Set(rawModels.map(m => m.preview_file_id).filter(id => id != null && !previewFileById[id]))];
       if (previewIds.length) {
         const pPlaceholders = previewIds.map(() => '?').join(',');
-        const extraPreview = all(`SELECT id, filename, library_path, file_type FROM files WHERE id IN (${pPlaceholders}) AND file_type IN ('stl','3mf') AND deleted_at IS NULL`, previewIds);
+        const extraPreview = all(`SELECT id, filename, library_path, file_type, file_size FROM files WHERE id IN (${pPlaceholders}) AND file_type IN ('stl','3mf') AND deleted_at IS NULL`, previewIds);
         extraPreview.forEach(f => { previewFileById[f.id] = f; });
       }
     }
@@ -172,6 +172,9 @@ router.get('/', (req, res) => {
       const mfEntry = mfByModel[m.id];
 
       let stl_url = null;
+      // The card's file: its size and type say whether it is rendered from a light copy or not
+      // at all (UI.modelCard)
+      const cardFile = stl_file_name ? (preview || stlFallback) : mfEntry;
       if (stl_file_name) {
         stl_url = getFileUrl({ filename: stl_file_name, library_path: stl_file_libpath });
       } else if (mfEntry) {
@@ -189,6 +192,9 @@ router.get('/', (req, res) => {
         thumbnail: thumb_url,
         fit,
         stl_file: stl_url,
+        stl_file_id: stl_url && cardFile ? cardFile.id : null,
+        stl_file_size: stl_url && cardFile ? cardFile.file_size : null,
+        stl_file_type: stl_url && cardFile ? cardFile.file_type : null,
         file_count: fstats ? fstats.file_count : 0,
         file_types: fstats && fstats.file_types ? [...new Set(fstats.file_types.split(','))] : [],
         print_count,

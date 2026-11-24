@@ -693,6 +693,13 @@ async function runStaticAndUiChecks() {
     assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 0, p1s: 1, u1: 0 } } }).includes('⚠ U1'), 'A card names the printer that takes the model');
     assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 0, p1s: 1, u1: 1 } } }).includes('⚠ Other printers'), 'Each part fits another printer');
     assert(UI.modelCard({ ...mockModel, fit: { total: 2, pending: 0, failed: 0, misfit: { any: 1, p1s: 1, u1: 1 } } }).includes('✗ 1 too big'), 'Too big for every printer');
+    // A card without a cover: a big STL is rendered from its light copy, a big 3MF keeps its
+    // placeholder (its size stops the viewer), a small STL is rendered from itself
+    const big = 99 * 1024 * 1024;
+    const cardOf = (stl_file, stl_file_type, stl_file_size) => UI.modelCard({ ...mockModel, thumbnail: null, stl_file, stl_file_id: 9, stl_file_type, stl_file_size });
+    assert(cardOf('/library-files/P/big.stl', 'stl', big).includes(`data-stl-url="/api/files/9/preview-mesh?v=${big}" data-size="0"`), 'A big STL card renders from the light copy');
+    assert(cardOf('/library-files/P/big.3mf', '3mf', big).includes(`data-stl-url="/library-files/P/big.3mf" data-size="${big}"`), 'A big 3MF card says its size');
+    assert(cardOf('/library-files/P/s.stl', 'stl', 1000).includes('data-stl-url="/library-files/P/s.stl" data-size="1000"'), 'A small STL card renders from the file');
     if (!sandbox.PrintFit) vm.runInContext(fs.readFileSync(path.join(ROOT_DIR, 'public/js/printfit.js'), 'utf8'), sandbox);
     const dim = UI.fitDim([268, 268, 146], null, App.printerBeds, 'p1s');
     assert(dim.includes('fit-flag is-other') && dim.includes('⚠ U1'), `A file too big for the P1S fits the U1: ${dim}`);
@@ -3498,6 +3505,13 @@ async function runE2ETests() {
       const again = await fetchMesh(cubeFile.id);
       assert(again.status === 200 && again.body.equals(first.body), 'The second request is the cached copy');
       assert((await fetchMesh(small.id)).status === 404, 'A small STL has no light copy');
+
+      // The card and Regenerate Covers use the light copy of the model's big STL
+      await apiReq(`/api/models/${model.id}/preview-file`, { method: 'PUT', session: adminSession, body: { file_id: cubeFile.id } });
+      const listed = ((await apiReq('/api/models?search=Big%20Mesh', { session: adminSession })).data.models || []).find(m => m.id === model.id);
+      assert(listed && listed.stl_file_id === cubeFile.id && listed.stl_file_size === big.length && listed.stl_file_type === 'stl', `The list says which file the card shows: ${JSON.stringify(listed && { id: listed.stl_file_id, size: listed.stl_file_size, type: listed.stl_file_type })}`);
+      const coverJob = ((await apiReq('/api/covers/pending', { session: adminSession })).data.models || []).find(m => m.id === model.id);
+      assert(coverJob && coverJob.lite && coverJob.url === `/api/files/${cubeFile.id}/preview-mesh?v=${big.length}`, `Regenerate Covers renders the light copy: ${JSON.stringify(coverJob)}`);
 
       // A protected model's copy needs the unlock, like its files
       await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: true } });

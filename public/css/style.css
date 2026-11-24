@@ -1672,7 +1672,9 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-locked-note{display:inline-flex;align-items:center;gap:6px;margin-right:auto;font-size:.8rem;font-weight:600;color:var(--text-secondary)}
 .kit-layout.is-locked{grid-template-columns:minmax(0, 1fr)}
 .kit-layout.is-locked .kit-builder-panel{display:none}
-.kit-part-meta{display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--text-muted)}
+.kit-part-meta{display:flex;align-items:center;flex-wrap:wrap;gap:0 6px;font-size:.7rem;color:var(--text-muted);white-space:nowrap}
+/* In a narrow list the size, the measures and the printer flag go to the next line whole */
+.kit-part-meta .fit-dim{display:contents}
 @media(min-width:1025px){
   .kit-layout.is-locked .kit-result{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,.9fr);grid-template-rows:minmax(0,1fr)}
   .kit-layout.is-locked .kit-preview-panel{order:2;min-height:420px}
@@ -1791,12 +1793,11 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-hw{display:flex;gap:8px;padding:3px 16px;font-size:.8rem;color:var(--text-secondary)}
 .kit-hw-qty{flex:none;min-width:44px;font-weight:600;text-align:right;color:var(--text-primary)}
 .kit-parts-body>.kit-check{padding:4px 16px}
-/* A narrow list (the list and the 3D Studio side by side): size and buttons under the name */
+/* A narrow list (the list and the 3D Studio side by side): size and fit are under the name
+   anyway, the row only comes closer to the edges */
 .kit-parts-panel{container-type:inline-size}
 @container (max-width:460px){
-  .kit-part{flex-wrap:wrap;row-gap:2px}
-  .kit-part-main{flex:1 1 calc(100% - 126px)}
-  .kit-part-main+*{margin-left:112px}
+  .kit-part{gap:8px;padding:5px 12px}
 }
 /* Wide screens: one window tall like the file view; the builder and the list scroll */
 @media(min-width:1025px) and (min-height:600px){

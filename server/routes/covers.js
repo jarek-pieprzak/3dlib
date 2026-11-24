@@ -10,6 +10,7 @@ const { all } = require('../database');
 const { authenticate } = require('../middleware/auth');
 const { getFileUrl } = require('../utils/modelHelpers');
 const protection = require('../utils/protection');
+const meshPreviews = require('../services/meshPreviews');
 
 const VIEWER_COVER = /^\d{10,}-[0-9a-f]{16}\.png$/i;
 
@@ -19,7 +20,7 @@ router.get('/pending', authenticate, (req, res) => {
   try {
     const locked = Boolean(protection.passwordHash());
     const models = all('SELECT id, name, thumbnail, preview_file_id, is_protected, kit_archive FROM models WHERE deleted_at IS NULL ORDER BY sortkey(name)');
-    const files = all(`SELECT f.id, f.model_id, f.filename, f.library_path, f.file_type, f.is_archive_entry
+    const files = all(`SELECT f.id, f.model_id, f.filename, f.library_path, f.file_type, f.file_size, f.is_archive_entry
       FROM files f JOIN models m ON m.id = f.model_id
       WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL AND f.file_type IN ('stl', '3mf')
       ORDER BY f.uploaded_at DESC`);
@@ -37,7 +38,9 @@ router.get('/pending', authenticate, (req, res) => {
       const file = candidates.find(f => f.id === m.preview_file_id)
         || candidates.find(f => f.file_type === 'stl')
         || candidates[0];
-      pending.push({ id: m.id, name: m.name, reason, file_type: file.file_type, url: getFileUrl(file) });
+      // A big STL is rendered from its light copy (services/meshPreviews.js), not downloaded whole
+      const lite = meshPreviews.eligible(file) ? `/api/files/${file.id}/preview-mesh?v=${Number(file.file_size)}` : null;
+      pending.push({ id: m.id, name: m.name, reason, file_type: file.file_type, url: lite || getFileUrl(file), lite: Boolean(lite) });
     }
     res.json({ models: pending, skipped_protected: skippedProtected });
   } catch (e) {

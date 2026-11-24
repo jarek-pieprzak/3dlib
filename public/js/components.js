@@ -1825,7 +1825,7 @@ const UI = {
   kitTipContent(tip, ctx = {}) {
     const esc = (s) => this.escapeHtml(s);
     const img = (name, alt) => (name ? `<img class="kit-tip-img" src="/img/kits/ussa-vault/${esc(name)}.webp" alt="${esc(alt || '')}" loading="lazy">` : '');
-    const manual = (m) => (m ? `<button type="button" class="kit-tip-manual" onclick="App.kitShowManual(${this.jsArg(m[0])}, ${Number(m[1])})">Manual: ${esc(m[0].replace(/^\d+_/, '').replace(/\.pdf$/i, ''))}, page ${Number(m[1])}</button>` : '');
+    const manual = (m) => (m ? `<button type="button" class="kit-tip-manual" onclick="App.kitShowManual(${this.jsArg(m[0])}, ${Number(m[1])})">Manual: ${esc(m[0].replace(/^\d+_/, '').replace(/\.pdf$/i, '').replace(/_[\d.]+$/, ''))}, page ${Number(m[1])}</button>` : '');
     const choices = tip.choices || null;
     const keys = choices ? (ctx.relevant || Object.keys(choices)).filter(k => choices[k]) : [];
     const current = choices && choices[ctx.value];
@@ -2135,7 +2135,9 @@ const UI = {
         <div class="kit-field"><span class="kit-label">Roof</span>${ch.roofs.length
           ? `<select class="form-select kit-select" onchange="App.kitSet('roof', this.value)"${on('roof', 'cfg:roof')}>${opt('none', 'No roof', cfg.roof === 'none')}${ch.roofs.map(r => opt(r, (VaultKit.ROOFS.find(x => x.id === r) || {}).label || r, r === cfg.roof)).join('')}</select>${tip('roof', 'cfg:roof')}`
           : '<span class="kit-muted">Sustainers on top have their own lids.</span>'}</div>
+        ${cfg.roof === 'grid' && ch.topHandles.length > 1 ? `<div class="kit-field"><span class="kit-label">Top handle</span><select class="form-select kit-select" onchange="App.kitSet('topHandle', this.value)"${on('topHandle', 'cfg:topHandle')}>${ch.topHandles.map(h => opt(h, { standard: 'Standard', tall: 'Taller' }[h], cfg.topHandle === h)).join('')}</select>${tip('topHandle', 'cfg:topHandle')}</div>` : ''}
         <div class="kit-field"><span class="kit-label">Drawer key</span><select class="form-select kit-select" onchange="App.kitSet('key', this.value)"${on('key', 'cfg:key')}>${opt('standard', 'Key with cap', cfg.key === 'standard')}${opt('hidden', 'Hidden key', cfg.key === 'hidden')}</select>${tip('key', 'cfg:key')}</div>
+        ${ch.latches.length > 1 ? `<div class="kit-field"><span class="kit-label">Drawer latch</span><select class="form-select kit-select" onchange="App.kitSet('latch', this.value)"${on('latch', 'cfg:latch')}>${ch.latches.map(l => opt(l, { standard: 'Latch', split: 'Split latch (STEP)' }[l], cfg.latch === l)).join('')}</select>${tip('latch', 'cfg:latch')}</div>` : ''}
         ${hasSustainer ? `<div class="kit-field"><span class="kit-label">Sustainer facades</span><select class="form-select kit-select" onchange="App.kitSet('sustainerFacade', this.value)"${on('sustainerFacade', 'cfg:sustainerFacade')}>${opt('family', 'Standard', cfg.sustainerFacade === 'family')}${opt('universal', 'Plain (Universal folder)', cfg.sustainerFacade === 'universal')}</select>${tip('sustainerFacade', 'cfg:sustainerFacade')}</div>` : ''}
         <div class="kit-checks">
           ${ch.canSplit ? check('Bases and sustainer lids in two parts', cfg.split, "App.kitSet('split', this.checked)", false, 'split') : ''}
@@ -2151,6 +2153,7 @@ const UI = {
         <div class="kit-field"><span class="kit-label">Pegboard</span><select class="form-select kit-select" onchange="App.kitMod('pegboard', this.value)"${noBackbone ? ' disabled' : ''}${on('pegboard', 'mod:pegboard')}>${VaultKit.PEGBOARDS.map(p => opt(p, { none: 'None', ikea: 'IKEA Skådis', ussa: 'USSA' }[p], p === mods.pegboard)).join('')}</select>${tip('pegboard', noBackbone ? '' : 'mod:pegboard')}</div>
         <div class="kit-checks">
           ${check('Pull-out handle', mods.pullHandle, "App.kitMod('pullHandle', this.checked)", noBackbone, 'pullHandle')}
+          ${mods.pullHandle && ch.pullInserts ? check('Heat inserts in the handle', mods.pullInserts, "App.kitMod('pullInserts', this.checked)", noBackbone, 'pullInserts') : ''}
           ${check('Stationary handle', mods.stationaryHandle, "App.kitMod('stationaryHandle', this.checked)", noBackbone, 'stationaryHandle')}
           ${check('Wall mount', mods.wallMount, "App.kitMod('wallMount', this.checked)", false, 'wallMount')}
         </div>

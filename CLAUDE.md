@@ -266,26 +266,40 @@ page and footer credit GyroidVault; keep that.
     model page. From the Trash it always opens as files.
   - Parts are recognised by normalised name patterns (`classify`), never by paths; the app never
     changes the archive. The test covers every STL of the real archive (`tests/fixtures/ussa-vault-files.tsv`:
-    its 751 file names and sizes: the archive of 2026-10-21, `261021_VAULT_USSA_S.zip`, plus the
-    three older Gridfinity baseplates and `03_Sustainers Assembly.pdf` that it dropped and that stay
-    in my folder). M4 drawers have a second set of baseplates ("M4 Gridfinity Baseplate ..."); the
-    names every family uses win.
+    its 803 file names and sizes: `Vault Archive_18.11.2026.zip` from `Vault_USSA l 20261123.zip`
+    without its 68 `.stlbak` backups). The NAS folder `Z:\Modele3D\VAULT_USSA` is exactly that;
+    files the archive dropped were deleted. `S4 Module 1f.stl` keeps its October name (the archive
+    says "1F"; a case-only rename on the share could give the file a second row). The package's
+    `FINAL RHINO MODELS_14.11.2027.zip` (one 4 GB `.3dm`) is not in the library.
+  - The November 2026 archive keeps every S, M and L drawer box twice ("S3 Box 1F" of October,
+    "S3 Box 1F Upd" of 18 November: back wall without holes, thicker supports): `buildCatalog`
+    takes the newer, except S3 / S4 4F where the plain file is the newer (`NEWER_PLAIN`).
+    `Archive/` folders (the older pull-out handles) are not parts. New in that archive: the split
+    latch, only as `Latch (split).stp` (`cfg.latch`), the taller top handle (`cfg.topHandle`,
+    61 mm instead of 51; bolts an estimate), the pull-out handle that clamps the rods (S / M grip +
+    plate, L / XL bar with or without heat inserts, `mods.pullInserts`; top covers a pair, a
+    front cover at each end with inserts; 4 × M6 × 8 × 8 inserts), and, not in the manual's
+    pages, "Box Coverfor bolts" (optional with Grid dividers) and the XL box connectors (optional
+    with XL boxes). M sustainer modules and facades are named `..._Sustainer`.
+  - One manual, `Instructions Manual_14.11.26.pdf`: the five October PDFs in a row (pages 3-23
+    general, 24-31 drawers, 32-38 sustainers, 39-55 modifications, 56-67 mounting), updates on
+    page 2, the new pull-out handle on page 52. The tips (`TIPS[..].manual`) point at its pages.
   - `computeBom(catalog, config)`: files with print counts, hardware, notes. A count is prints of a
     file: springs, geared rails, rods, bottom hinges and the L-XL hinge top hold a pair; runner
     guides and slides are single parts since the 2026-10 archive (two per box). S and M sustainers
     have one lock and one hinge top (L and XL two). L² / XL² are one L / XL module with two drawer
-    columns (S+S / S+M). Where the PDFs say nothing, the STL files decide (the archive is on the
-    NAS share `Z:\Modele3D\VAULT_USSA`): facade bolts are the holes (S 2 / 4 / 4, M and L
-    4 / 6 / 6, XL 4), sustainer dividers and seal dividers are a full set of the module's slots
+    columns (S+S / S+M). Where the manual says nothing, the STL files decide: facade bolts are the
+    holes (S 2 / 4 / 4, M and L 4 / 6 / 6, XL 4), sustainer dividers and seal dividers are a full
+    set of the module's slots
     (`DIVIDER_SLOTS`, `SEAL_SLOTS`; the 3D tower draws the same counts, with the hinges, rods and
     runners of the list), every grid divider strip ends in a straight edge piece at the
-    wall (4 for the cross). Counts the PDFs do not give are marked "estimate"; parts they do not
-    show at all (grid divider pins, rounded edge pieces) are "optional" rows with 0 prints when
+    wall (4 for the cross). Counts the manual does not give are marked "estimate"; parts it does
+    not show at all (grid divider pins, rounded edge pieces) are "optional" rows with 0 prints when
     Grid dividers is chosen, hidden on a locked configuration until counted. Manual supports
     (`x3`-`x7`, triangular braces) go with the parts printed standing: grid, table, bowl and
     under-table roofs and whole sustainer lids. Every count can be changed by hand. Roof `heavycut`
-    (`XLn Heavyweight Roof Cut`, the heavyweight roof cut to fit a 350 × 320 bed) is a roof choice
-    of its own, XL only.
+    (`XLn Heawyweight Roof (Cut to fit on a plate)`, the heavyweight roof cut to fit a 350 × 320
+    bed) is a roof choice of its own, XL only.
   - `normalize` checks a configuration against the archive (unavailable choices fall back, with a
     note). The configuration lives in the URL (`?c=` base64url JSON, `history.replaceState`) and in
     localStorage `3dl_kit_<model id>`.

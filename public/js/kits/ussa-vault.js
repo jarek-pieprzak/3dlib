@@ -5,16 +5,21 @@
  * how many prints of each, and the hardware to buy.
  *
  * Files are recognised by normalised name patterns, never by fixed paths: the archive's names
- * are not consistent ("Module 4f" / "4F", "M3 1F Module .stl", "L4F' Facade", double spaces,
- * "Roof" / "Roofs" folders, "Heawyweight"). The archive itself is never changed.
+ * are not consistent ("Module 4f" / "4F", "M3 1F Module_Sustainer", "L4F' Facade", double
+ * spaces, "Roof" / "Roofs" folders, "Heawyweight"). The archive itself is never changed.
  *
  * Quantities count prints of a file. Some files hold a pair (springs, geared rails, rods,
- * bottom hinges, the L-XL hinge top): one print per box or sustainer. Runner guides and slides
- * are single parts since the October 2026 archive: two prints per box. The rules come from the
- * five PDFs in the archive root and, where they say nothing, from the STL files themselves
- * (bolt holes, divider slots); quantities the PDFs leave open are marked as estimates and can
- * be changed by hand (cfg.qty). Parts the PDFs do not show at all are listed with 0 prints
- * (optional) when their option is chosen.
+ * bottom hinges, the L-XL hinge top, the pull-out handle's top covers): one print per box,
+ * sustainer or handle. Runner guides and slides are single parts since the October 2026
+ * archive: two prints per box. The rules come from the archive's instructions manual and,
+ * where it says nothing, from the STL files themselves (bolt holes, divider slots); quantities
+ * the manual leaves open are marked as estimates and can be changed by hand (cfg.qty). Parts
+ * the manual does not show at all are listed with 0 prints (optional) when their option is
+ * chosen.
+ *
+ * The November 2026 archive keeps the old drawer boxes next to the updated ones ("S3 Box 1F" /
+ * "S3 Box 1F Upd"): the newer file wins (buildCatalog). Older versions it keeps as .stlbak
+ * files and in "Archive" folders are not parts.
  *
  * Pure functions, no DOM: window.VaultKit in the browser, globalThis.VaultKit in the tests.
  */
@@ -54,6 +59,8 @@ globalThis.VaultKit = (function () {
   ];
   const DRAWER_INTERIORS = ['empty', 'gridfinity', 'dividers'];
   const SUSTAINER_INTERIORS = ['flat', 'gridfinity', 'dividers', 'sealed'];
+  const LATCHES = ['standard', 'split'];
+  const TOP_HANDLES = ['standard', 'tall'];
   const BASES = ['none', 'plain', 'wheels', 'casters'];
   const BACKBONES = ['none', 'wide', 'universal'];
   const PEGBOARDS = ['none', 'ikea', 'ussa'];
@@ -78,25 +85,24 @@ globalThis.VaultKit = (function () {
     'Interiors', 'Roof', 'Base & wheels', 'Backbone & handles', 'Wall mount', 'Print supports', 'Extra files'];
 
   // ── Help for the builder: what an option does and how it looks ──
-  // image: an illustration cropped from the archive's PDFs (public/img/kits/ussa-vault/<image>.webp);
+  // image: an illustration cropped from the archive's manual (public/img/kits/ussa-vault/<image>.webp);
   // manual: [PDF in the archive root, page]; adds: what the option puts on the lists. choices:
   // the same for every value of a select.
-  const MANUAL = '01_Instructions Manual.pdf';
-  const DRAWER_PDF = '02_Drawer Assembly.pdf';
-  const SUSTAINER_PDF = '03_Sustainers Assembly.pdf';
-  const MODS_PDF = '04_Modifications.pdf';
-  const MOUNT_PDF = '05_Mounting Instructions.pdf';
+  // The November 2026 archive has one manual: the five PDFs of October in a row (pages 3-23
+  // general, 24-31 drawers, 32-38 sustainers, 39-55 modifications, 56-67 mounting), with the
+  // updates on page 2 and the new pull-out handle on page 52
+  const MANUAL = 'Instructions Manual_14.11.26.pdf';
   const TIPS = {
     saved: { title: 'Saved configurations', text: 'Save the tower as a configuration: a project of its own in the library, with its parts list, its ZIP and Open in slicer for every file. It opens locked; Edit configuration changes it.' },
-    width: { title: 'Width', image: 'sizes', manual: [MANUAL, 6],
+    width: { title: 'Width', image: 'sizes', manual: [MANUAL, 7],
       text: 'How wide the tower is: S 165 mm, M 254 mm, L 330 mm, XL 419 mm. L is as wide as two S modules and XL as an S and an M, so an L or XL tower can have floors of smaller modules side by side. XL modules exist only in 1F.' },
-    depth: { title: 'Depth', image: 'sizes', manual: [MANUAL, 6],
+    depth: { title: 'Depth', image: 'sizes', manual: [MANUAL, 7],
       text: 'Depth in Gridfinity units of 42 mm: 3 is about 146 mm deep, every step adds 42 mm, 7 is about 314 mm. Deeper modules hold more but need a bigger print bed; 6 and 7 deep bases and sustainer lids can be printed in two parts.' },
-    floors: { title: 'Floors', image: 'stacking', manual: [MANUAL, 8],
+    floors: { title: 'Floors', image: 'stacking', manual: [MANUAL, 9],
       text: 'The tower from top to bottom. Every floor is one or more modules side by side; modules of the same width and depth stack on each other, drawers and sustainers mix freely. Use the arrows to move a floor, the copy button to repeat it.' },
-    height: { title: 'Floor height', image: 'sizes', manual: [MANUAL, 6],
+    height: { title: 'Floor height', image: 'sizes', manual: [MANUAL, 7],
       text: '1F, 2F or 4F: 48 mm per F (a 1F module is 57 mm tall with its stacking lip). There is no 3F, everything divides by two. A 2F or 4F drawer module can hold several lower boxes.' },
-    layout: { title: 'Modules side by side', image: 'stacking', manual: [MANUAL, 8],
+    layout: { title: 'Modules side by side', image: 'stacking', manual: [MANUAL, 9],
       text: 'One module as wide as the tower, or smaller modules next to each other.',
       choices: {
         S: { label: 'S', text: 'One S module.' }, M: { label: 'M', text: 'One M module.' },
@@ -108,85 +114,98 @@ globalThis.VaultKit = (function () {
         'S+M': { label: 'S + M', text: 'Separate S and M modules, the S on the left.' },
         'M+S': { label: 'M + S', text: 'Separate M and S modules, the M on the left.' }
       } },
-    type: { title: 'Drawer or sustainer', manual: [MANUAL, 5],
+    type: { title: 'Drawer or sustainer', manual: [MANUAL, 6],
       choices: {
         drawer: { label: 'Drawer', image: 'type-drawer', text: 'A box that slides out on runners, with a turn key in the facade. Good for small parts you reach for often.' },
         sustainer: { label: 'Sustainer', image: 'type-sustainer', text: 'A module with a hinged lid and locks at the front: one on S and M, two on L and XL. Good for bigger or longer items and sealed compartments.' }
       } },
-    boxes: { title: 'Boxes in the module', image: 'geared-rails', manual: [DRAWER_PDF, 4],
+    boxes: { title: 'Boxes in the module', image: 'geared-rails', manual: [MANUAL, 27],
       text: 'A 2F or 4F drawer module holds one tall box or several lower boxes stacked inside, each with its own facade and key. With more than one box, every box gets geared rails (added automatically): its key then locks it in the module.' },
-    drawerInterior: { title: 'Drawer interior', manual: [MANUAL, 9],
+    drawerInterior: { title: 'Drawer interior', manual: [MANUAL, 10],
       choices: {
         empty: { label: 'Empty', image: 'drawer-empty', text: 'The bare box with its perforated floor.' },
         gridfinity: { label: 'Gridfinity baseplate', image: 'drawer-gridfinity', text: 'A 42 mm Gridfinity grid in the box for Gridfinity bins; with 0, 1 or 2 handles to lift it out.' },
         dividers: { label: 'Grid dividers', image: 'drawer-dividers', text: 'Strips pinned to the perforated floor: one along the width and one along the depth (estimate, add more by hand). Strips do not cross: the one along the depth is two shorter strips on either side, named by the holes they span (the archive\'s Grid Dividers instructions). Every strip ends in a straight edge piece at the wall: four for the cross. Each strip has two pin holes; the pins (loose or tight fit) and the rounded edge pieces are listed with 0 prints, set how many you need.' }
       } },
-    handles: { title: 'Baseplate handles', image: 'drawer-gridfinity', manual: [MANUAL, 9],
+    handles: { title: 'Baseplate handles', image: 'drawer-gridfinity', manual: [MANUAL, 10],
       text: 'Handles on the Gridfinity baseplate to lift it out of the box with the bins on it. Not every size has every variant.' },
-    low: { title: 'Low dividers', image: 'drawer-dividers', manual: [MANUAL, 9],
+    low: { title: 'Low dividers', image: 'drawer-dividers', manual: [MANUAL, 10],
       text: 'Grid dividers 20 mm tall instead of the full box height (34.5 mm for 1F boxes, 82.5 mm for 2F and 4F).' },
-    sustainerInterior: { title: 'Sustainer interior', manual: [MANUAL, 9],
+    sustainerInterior: { title: 'Sustainer interior', manual: [MANUAL, 10],
       choices: {
         flat: { label: 'Flat', image: 'sus-flat', text: 'An open module with a flat floor.' },
         gridfinity: { label: 'Gridfinity baseplate', image: 'sus-gridfinity', text: 'A Gridfinity baseplate on the flat floor for Gridfinity bins.' },
         dividers: { label: 'Dividers', image: 'sus-dividers', text: 'Divider walls in the slots of the module, a full set as in the archive\'s example: S and M modules hold 3 to 6 dividers by depth; L and XL ones two depth dividers crossed by 3 to 6 width dividers. Leave some out in the list.' },
         sealed: { label: 'Sealed compartments', image: 'sus-sealed', text: 'A module with closed compartments and seal dividers, so small parts cannot wander between them. L and XL only. Listed as a full set: every slot of every compartment (2 to 6 per compartment by depth).' }
       } },
-    roof: { title: 'Roof', manual: [MANUAL, 10], adds: 'One roof on every drawer module of the top floor; sustainers have their own lids.',
+    roof: { title: 'Roof', manual: [MANUAL, 11], adds: 'One roof on every drawer module of the top floor; sustainers have their own lids.',
       choices: {
         none: { label: 'No roof', text: 'The top floor stays open (sustainers on top bring their own lids).' },
         grid: { label: 'Grid', image: 'roof-grid', text: 'A Gridfinity grid on top with a carry handle (2 × M6 50 mm bolts).' },
         table: { label: 'Table', image: 'roof-table', text: 'A flat top to put things on.' },
         bowl: { label: 'Bowl', image: 'roof-bowl', text: 'A tray with a raised rim for loose items.' },
         heavy: { label: 'Heavyweight', image: 'roof-heavy', text: 'Two bowls with a handle between them, to carry the tower. L and XL only.' },
-        heavycut: { label: 'Heavyweight, cut', image: 'roof-heavy-cut', text: 'The heavyweight roof with the outer corners of both bowls cut off, so it fits a 350 × 320 mm bed: 337 × 320 mm on the plate instead of 366 × 348 mm (picture: both on that bed). Same handle and inserts; XL only. Not in the manual (October 2026 archive).' },
-        undertable: { label: 'Under-table mount', image: 'undertable-mount', text: 'A plate screwed under a table top; the tower hangs from it, as many modules as you like.', manual: [MOUNT_PDF, 10] }
+        heavycut: { label: 'Heavyweight, cut', image: 'roof-heavy-cut', manual: [MANUAL, 2], text: 'The heavyweight roof with the outer corners of both bowls cut off, so it fits a 350 × 320 mm bed: 337 × 320 mm on the plate instead of 366 × 348 mm (picture: both on that bed). Same handle and inserts; XL only. The manual names it only in its list of updates ("cut to fit on a plate").' },
+        undertable: { label: 'Under-table mount', image: 'undertable-mount', text: 'A plate screwed under a table top; the tower hangs from it, as many modules as you like.', manual: [MANUAL, 65] }
       } },
-    key: { title: 'Drawer key', image: 'key', manual: [DRAWER_PDF, 1],
+    key: { title: 'Drawer key', image: 'key', manual: [MANUAL, 24],
       choices: {
         standard: { label: 'Key with cap', image: 'key', text: 'A turn key in the facade with a cap pressed on.' },
         hidden: { label: 'Hidden key', text: 'A key that sits flush in the facade (two parts; the cap is left out, check before printing).' }
       } },
-    sustainerFacade: { title: 'Sustainer facades', manual: [MANUAL, 12],
+    latch: { title: 'Drawer latch', manual: [MANUAL, 2], adds: 'One latch per drawer module.',
+      choices: {
+        standard: { label: 'Latch', text: 'The latch the manual shows, one piece (STL).' },
+        split: { label: 'Split latch (STEP)', text: 'The latch added in November 2026 "with easier installation": the archive has it only as a STEP file (Latch (split).stp), which Bambu Studio, OrcaSlicer and PrusaSlicer open. Not shown in the manual\'s assembly pages.' }
+      } },
+    topHandle: { title: 'Top handle', image: 'roof-grid', manual: [MANUAL, 19],
+      text: 'The carry handle of the grid roof, held by 2 × M6 50 mm bolts.',
+      choices: {
+        standard: { label: 'Standard', text: 'The handle the manual shows, 51 mm tall.' },
+        tall: { label: 'Taller', text: 'Added in November 2026: 61 mm tall, more room for the hand. The manual still lists M6 × 50 mm bolts; check the length before buying.' }
+      } },
+    sustainerFacade: { title: 'Sustainer facades', manual: [MANUAL, 13],
       choices: {
         family: { label: 'Standard', image: 'type-sustainer', text: 'The facades from the size folders.' },
         universal: { label: 'Plain (Universal folder)', text: 'A second set in the Universal folder: same size, simpler surface.' }
       } },
     split: { title: 'Two-part bases and lids',
       text: 'Bases and sustainer lids of depth 6 and 7 are large: print them whole, or in two parts that a connector joins.' },
-    gearedRails: { title: 'Geared rails', image: 'geared-rails', manual: [DRAWER_PDF, 4],
+    gearedRails: { title: 'Geared rails', image: 'geared-rails', manual: [MANUAL, 27],
       text: 'An extra lock for the drawer front: two toothed racks slide into the box front behind the facade, one above and one below the key\'s gear, which moves them when the key turns (one print per box: the file holds the pair). The manual asks for them when a 2F or 4F module holds more than one box; in single boxes they add locking force.' },
-    manualSupports: { title: 'Manual supports', image: 'manual-supports', manual: [MANUAL, 20],
+    manualSupports: { title: 'Manual supports', image: 'manual-supports', manual: [MANUAL, 21],
       text: 'Triangular braces (Manual Supports folder, as long as the module is deep) that steady tall prints: put one against every part printed standing on its edge, the drawer roofs and the sustainer lids. Lids printed in two parts are lower and get none; the heavyweight roofs stand on their own.' },
-    base: { title: 'Base', manual: [MODS_PDF, 2], adds: 'A base as wide and deep as the tower.',
+    base: { title: 'Base', manual: [MANUAL, 40], adds: 'A base as wide and deep as the tower.',
       choices: {
         none: { label: 'None', text: 'The bottom module stands on the table or floor.' },
         plain: { label: 'Base', text: 'A base plate under the bottom floor; add feet to raise it.' },
-        wheels: { label: 'Base with wheels', image: 'wheels', manual: [MODS_PDF, 2], text: 'Two 142 mm wheels on an M16 axle with 6205ZZ bearings and SCSAW collars; tyres printed in TPU; feet at the front. Tilt and roll like a hand truck.' },
-        casters: { label: 'Base with casters', image: 'casters', manual: [MODS_PDF, 17], text: 'Four casters with M8 threads screwed into the base.' }
+        wheels: { label: 'Base with wheels', image: 'wheels', manual: [MANUAL, 40], text: 'Two 142 mm wheels on an M16 axle with 6205ZZ bearings and SCSAW collars; tyres printed in TPU; feet at the front. Tilt and roll like a hand truck.' },
+        casters: { label: 'Base with casters', image: 'casters', manual: [MANUAL, 55], text: 'Four casters with M8 threads screwed into the base.' }
       } },
-    feet: { title: 'Feet', image: 'feet', manual: [MODS_PDF, 6], text: 'A foot block under the base (2 × M6 90 mm bolts). With wheels it holds the tower upright at the front.' },
-    backbone: { title: 'Backbone', manual: [MODS_PDF, 1], adds: 'Boards along the back, one per floor (two per 4F floor), with M4 60-100 mm bolts; the holes are drilled through.',
+    feet: { title: 'Feet', image: 'feet', manual: [MANUAL, 44], text: 'A foot block under the base (2 × M6 90 mm bolts). With wheels it holds the tower upright at the front.' },
+    backbone: { title: 'Backbone', manual: [MANUAL, 39], adds: 'Boards along the back, one per floor (two per 4F floor), with M4 60-100 mm bolts; the holes are drilled through.',
       text: 'Boards on the back of the tower that tie the modules together. Handles and pegboards attach to them.',
       choices: {
         none: { label: 'None', text: 'Modules only lock onto each other.' },
         wide: { label: 'Wide boards', image: 'backbone-wide', text: 'One board as wide as the tower on every floor.' },
         universal: { label: 'Universal boards', image: 'backbone-universal', text: 'Two narrow boards on the edges of every floor; fit any width.' }
       } },
-    pegboard: { title: 'Pegboard', image: 'pegboard', manual: [MODS_PDF, 15],
+    pegboard: { title: 'Pegboard', image: 'pegboard', manual: [MANUAL, 53],
       text: 'Pegboard panels on the backbone for hanging tools (4 × M4 40 mm bolts each).',
       choices: {
         none: { label: 'None', text: 'No pegboard.' },
         ikea: { label: 'IKEA Skådis', image: 'pegboard', text: 'Panels with the IKEA Skådis hole pattern.' },
         ussa: { label: 'USSA', image: 'pegboard', text: 'Panels for USSA pegboard accessories.' }
       } },
-    pullHandle: { title: 'Pull-out handle', image: 'pullout-handle', manual: [MODS_PDF, 14],
-      text: 'A telescopic handle on two M16 rods along the backbone, locked by two knobs: pull it out to roll the tower on its wheels. The rods are cut to the tower height.' },
-    stationaryHandle: { title: 'Stationary handle', image: 'stationary-handle', manual: [MODS_PDF, 12],
+    pullHandle: { title: 'Pull-out handle', image: 'pullout-handle', manual: [MANUAL, 52],
+      text: 'A telescopic handle on two M16 rods along the backbone, locked by two knobs: pull it out to roll the tower on its wheels. The rods are cut to the tower height. The November 2026 design clamps the rods with bolts in M6 × 8 × 8 heat inserts: S and M handles are a grip and a plate bolted to it, L and XL handles a bar with covers on top and at the front. (The older handles, tapped into the rods, are in the Archive folder.)' },
+    pullInserts: { title: 'Heat inserts in the handle', image: 'pullout-handle', manual: [MANUAL, 52],
+      text: 'L and XL handles come in two files. With heat inserts (the manual\'s picture): two inserts and a front cover at each end. Without: no inserts and no front covers, two small holes at each end instead. S and M handles always take inserts.' },
+    stationaryHandle: { title: 'Stationary handle', image: 'stationary-handle', manual: [MANUAL, 50],
       text: 'A fixed handle on a backbone board (8 × M4 60 mm bolts); it goes on before the board is bolted to the module.' },
-    wallMount: { title: 'Wall mount', image: 'wallmount-hung', manual: [MOUNT_PDF, 1],
+    wallMount: { title: 'Wall mount', image: 'wallmount-hung', manual: [MANUAL, 56],
       text: 'A plate on the back of every module and cleats ("second parts") screwed to the wall: the tower hangs on the wall. One cleat per 1F or 2F mount, two per 4F. The first mount is a template for drilling.' },
-    docs: { title: 'Instructions in the ZIP', text: 'Adds the five assembly PDFs from the archive to the download.' }
+    docs: { title: 'Instructions in the ZIP', text: 'Adds the archive\'s instructions manual (one PDF) to the download.' }
   };
 
   // ── File names ──
@@ -204,22 +223,27 @@ globalThis.VaultKit = (function () {
   // The catalog key of one archive file, or null when it is not a known part
   function classify(originalName) {
     const { dirs, name, ext } = splitPath(originalName);
-    if (ext !== 'stl') return null;
+    // Older versions the archive keeps ("Pull-out Handle/Archive") are not parts
+    if (dirs.includes('archive')) return null;
     const section = dirs.find(d => /drawers|sustainers|modifications/.test(d)) || '';
+    // The split latch exists only as a STEP file
+    if (ext === 'stp' || ext === 'step') return /drawers/.test(section) && name === 'latch (split)' ? 'd:latch:split' : null;
+    if (ext !== 'stl') return null;
     const inDir = (r) => dirs.some(d => r.test(d));
     let m;
     if (/drawers/.test(section)) {
       if ((m = name.match(/^(l|xl)([3-7])² module ([124])f$/))) return `d:module2:${up(m[1])}${m[2]}:${m[3]}F`;
       if ((m = name.match(re(`^${W}([3-7]) module ([124])f$`)))) return `d:module:${up(m[1])}${m[2]}:${m[3]}F`;
-      if ((m = name.match(re(`^${W}([3-7]) box ([124])f(?: part ([12]))?$`)))) return `d:box:${up(m[1])}${m[2]}:${m[3]}F${m[4] ? `:part${m[4]}` : ''}`;
+      // "S3 Box 1F" and the updated "S3 Box 1F Upd" are one part (buildCatalog picks the newer)
+      if ((m = name.match(re(`^${W}([3-7]) box ([124])f(?: part ([12]))?(?: upd)?$`)))) return `d:box:${up(m[1])}${m[2]}:${m[3]}F${m[4] ? `:part${m[4]}` : ''}`;
       if ((m = name.match(/^xl([3-7]) back panel$/))) return `d:backpanel:XL${m[1]}`;
-      // "S3 Baseplate", "S3 Baseplate_With 2 Handles", "M4 Gridfinity Baseplate No_Handles", "XL6 Baseplate Part 1"
-      if ((m = name.match(re(`^${W}([3-7])(?: gridfinity)? baseplate(?:[ _](?:with )?(no|[12])[ _]handles?)?(?: part ([12]))?$`)))) {
-        const handles = m[3] && m[3] !== 'no' ? m[3] : '0';
-        return `d:baseplate:${up(m[1])}${m[2]}:${handles}${m[4] ? `:part${m[4]}` : ''}`;
+      // "S3 Baseplate", "S3 Baseplate_With 2 Handles", "XL6 Baseplate Part 1"
+      if ((m = name.match(re(`^${W}([3-7]) baseplate(?:_with ([12]) handles?)?(?: part ([12]))?$`)))) {
+        return `d:baseplate:${up(m[1])}${m[2]}:${m[3] || '0'}${m[4] ? `:part${m[4]}` : ''}`;
       }
-      // "XL3 Heavyweight Roof Cut": the heavyweight roof cut down to fit a 350 x 320 bed
-      if ((m = name.match(re(`^${W}([3-7]) (bowl|grid|table|under table mount|heawyweight|heavyweight) roof( cut)?$`)))) {
+      // "XL3 Heawyweight Roof (Cut to fit on a plate)" (October: "Heavyweight Roof Cut"): the
+      // heavyweight roof cut down to fit a 350 x 320 bed
+      if ((m = name.match(re(`^${W}([3-7]) (bowl|grid|table|under table mount|heawyweight|heavyweight) roof( cut| \\(cut to fit on a plate\\))?$`)))) {
         const kind = { bowl: 'bowl', grid: 'grid', table: 'table', 'under table mount': 'undertable', heawyweight: 'heavy', heavyweight: 'heavy' }[m[3]];
         if (m[4] && kind !== 'heavy') return null;
         return `d:roof:${up(m[1])}${m[2]}:${kind}${m[4] ? 'cut' : ''}`;
@@ -244,18 +268,23 @@ globalThis.VaultKit = (function () {
         'heawyweight roof insert': 'd:heavyinsert', 'heavyweight roof insert': 'd:heavyinsert',
         'hidden key (turn on supports)': 'd:hiddenkey', 'hidden key part 2 (turn on supports)': 'd:hiddenkey2',
         'key (turn on supports)': 'd:key', 'key cap': 'd:keycap', label: 'd:label', latch: 'd:latch', springs: 'd:springs',
-        'top handle (turn on supports)': 'd:tophandle'
+        'top handle (turn on supports)': 'd:tophandle', 'top handle taller (turn on supports)': 'd:tophandle:tall',
+        // November 2026, not in the manual's pages: a cover in the Grid Dividers folder and two
+        // connectors in the Runners folder
+        'box coverfor bolts': 'd:boltcover', 'box cover for bolts': 'd:boltcover',
+        'xl box connector short': 'd:xlconnector:short', 'xl box connector tall': 'd:xlconnector:tall'
       };
       return universal[name] || null;
     }
     if (/sustainers/.test(section)) {
-      if ((m = name.match(re(`^${W}([3-7]) ([124])f(?: (dividers|flat|sealed))? module$`)))) return `s:module:${up(m[1])}${m[2]}:${m[3]}F:${m[4] || 'plain'}`;
+      // "M3 1F Module_Sustainer" and "M2F Facade_Sustainer" since November 2026
+      if ((m = name.match(re(`^${W}([3-7]) ([124])f(?: (dividers|flat|sealed))? module(?:_sustainer)?$`)))) return `s:module:${up(m[1])}${m[2]}:${m[3]}F:${m[4] || 'plain'}`;
       if ((m = name.match(re(`^${W}([3-7]) roof(?: (whole|part 1|part 2))?$`)))) return `s:roof:${up(m[1])}${m[2]}:${(m[3] || 'whole').replace(' ', '')}`;
       if (name === 'connector for split roof') {
         const fam = dirs.map(d => d.match(re(`^${W}([3-7])$`))).find(Boolean);
         return fam ? `s:roofconnector:${up(fam[1])}${fam[2]}` : null;
       }
-      if ((m = name.match(re(`^${W}([124])f facade$`)))) return `s:facade:${up(m[1])}:${m[2]}F`;
+      if ((m = name.match(re(`^${W}([124])f facade(?:_sustainer)?$`)))) return `s:facade:${up(m[1])}:${m[2]}F`;
       if ((m = name.match(re(`^${W}([124])f$`))) && inDir(/facades/)) return `s:facadeu:${up(m[1])}:${m[2]}F`;
       if ((m = name.match(re(`^${W}([3-7])(?: part ([12]))?(?: gridfinity)? baseplate$`)))) return `s:baseplate:${up(m[1])}${m[2]}:${m[3] ? `part${m[3]}` : 'whole'}`;
       if ((m = name.match(/^(s|m)([124])f divider$/))) return `s:divider:${up(m[1])}:${m[2]}F`;
@@ -279,7 +308,11 @@ globalThis.VaultKit = (function () {
       if ((m = name.match(/^connector for modules ([12])f$/))) return `m:moduleconnector:${m[1]}F`;
       if ((m = name.match(/^handle lock knob part ([12])$/))) return `m:knob:${m[1]}`;
       if ((m = name.match(/^(s|m|l|xl|universal) pull-out handle lock( part 2)?$/))) return `m:pulllock:${m[1] === 'universal' ? 'U' : up(m[1])}${m[2] ? ':2' : ''}`;
-      if ((m = name.match(re(`^${W} pull-out handle$`)))) return `m:pullhandle:${up(m[1])}`;
+      // The November 2026 handles: S / M a grip and a plate, L / XL a bar with or without heat
+      // inserts, the covers of the bar
+      if ((m = name.match(/^(s|m) pull-out handle part ([12])$/))) return `m:pullhandle:${up(m[1])}:part${m[2]}`;
+      if ((m = name.match(/^(l|xl) pull-out handle \((no|with) heat inserts\)$/))) return `m:pullhandle:${up(m[1])}:${m[2] === 'no' ? 'plain' : 'inserts'}`;
+      if ((m = name.match(/^pull-out handle (front|top) covers?$/))) return `m:pullcover:${m[1]}`;
       if ((m = name.match(re(`^${W} stationary handle$`)))) return `m:stathandle:${up(m[1])}`;
       if ((m = name.match(re(`^${W}([3-7]) base(?: (whole|part 1|part 2))?$`)))) return `m:base:${up(m[1])}${m[2]}:${(m[3] || 'whole').replace(' ', '')}`;
       if (name === 'base connector') return 'm:baseconnector';
@@ -294,9 +327,15 @@ globalThis.VaultKit = (function () {
   }
 
   // ── Catalog: key -> file ──
-  // M4 drawers also have an alternative set of baseplates ("M4 Gridfinity Baseplate No_Handles",
-  // 3 mm instead of 4): the names every family uses win, the others can be added by hand
-  const isAlternative = (f) => /^\S+ gridfinity baseplate /.test(splitPath(f.original_name).name) && /drawers/.test(norm(f.original_name));
+  // Two files of one part: the updated drawer box ("S3 Box 1F Upd", 18 November 2026) wins over
+  // the old one (October). The S3 and S4 4F boxes are the other way round: their plain file is the
+  // newer one (18 November, its October version kept as .stlbak), the "Upd" one is of 14 November.
+  const NEWER_PLAIN = new Set(['d:box:S3:4F', 'd:box:S4:4F']);
+  function rank(f, key) {
+    const updated = / upd$/.test(splitPath(f.original_name).name);
+    if (NEWER_PLAIN.has(key)) return updated ? 1 : 2;
+    return updated ? 2 : 1;
+  }
   function buildCatalog(files) {
     const byKey = {};
     const byPath = {};
@@ -306,7 +345,7 @@ globalThis.VaultKit = (function () {
       if (f.deleted_at) continue;
       byPath[f.original_name] = f;
       const key = classify(f.original_name);
-      if (key && (!byKey[key] || (isAlternative(byKey[key]) && !isAlternative(f)))) byKey[key] = f;
+      if (key && (!byKey[key] || rank(f, key) > rank(byKey[key], key))) byKey[key] = f;
       if (key) continue;
       unknown.push(f);
       // The instruction PDFs in the archive root go along with the download
@@ -391,6 +430,8 @@ globalThis.VaultKit = (function () {
     if (!mods.length) return [];
     return ROOFS.filter(r => mods.every(mod => has(cat, `d:roof:${mod.w}${cfg.depth}:${r.id}`))).map(r => r.id);
   }
+  const latchChoices = (cat) => LATCHES.filter(l => has(cat, l === 'split' ? 'd:latch:split' : 'd:latch'));
+  const topHandleChoices = (cat) => TOP_HANDLES.filter(h => has(cat, h === 'tall' ? 'd:tophandle:tall' : 'd:tophandle'));
   // Everything the builder can offer for the configuration, for its selects
   function choices(cat, cfg) {
     const d = cfg.depth;
@@ -406,8 +447,12 @@ globalThis.VaultKit = (function () {
         };
       }),
       roofs: roofChoices(cat, cfg),
+      latches: latchChoices(cat),
+      topHandles: topHandleChoices(cat),
       bases: BASES.filter(b => b === 'none' || has(cat, `m:base:${cfg.width}${d}:whole`) || has(cat, `m:base:${cfg.width}${d}:part1`)),
       backbones: BACKBONES.filter(b => b !== 'wide' || has(cat, `m:backbone:${cfg.width}:1F`)),
+      // L and XL pull-out handles with or without heat inserts
+      pullInserts: has(cat, `m:pullhandle:${cfg.width}:inserts`) && has(cat, `m:pullhandle:${cfg.width}:plain`),
       canSplit: d >= 6
     };
   }
@@ -430,12 +475,14 @@ globalThis.VaultKit = (function () {
       ],
       roof: 'grid',
       key: 'standard',
+      latch: 'standard',
+      topHandle: 'standard',
       split: false,
       manualSupports: false,
       gearedRails: 'auto',
       sustainerFacade: 'family',
       docs: true,
-      mods: { base: 'none', feet: false, backbone: 'none', pullHandle: false, stationaryHandle: false, pegboard: 'none', wallMount: false },
+      mods: { base: 'none', feet: false, backbone: 'none', pullHandle: false, pullInserts: true, stationaryHandle: false, pegboard: 'none', wallMount: false },
       qty: {},
       extra: {}
     };
@@ -455,6 +502,8 @@ globalThis.VaultKit = (function () {
       floors: [],
       roof: src.roof === 'none' ? 'none' : pick(src.roof, ROOFS.map(r => r.id), def.roof),
       key: pick(src.key, ['standard', 'hidden'], def.key),
+      latch: pick(src.latch, latchChoices(cat), latchChoices(cat)[0] || def.latch),
+      topHandle: pick(src.topHandle, topHandleChoices(cat), topHandleChoices(cat)[0] || def.topHandle),
       split: !!src.split,
       manualSupports: !!src.manualSupports,
       gearedRails: pick(src.gearedRails, ['auto', 'all'], def.gearedRails),
@@ -513,6 +562,7 @@ globalThis.VaultKit = (function () {
       feet: !!mods.feet,
       backbone: pick(mods.backbone, BACKBONES, 'none'),
       pullHandle: !!mods.pullHandle,
+      pullInserts: mods.pullInserts !== false,
       stationaryHandle: !!mods.stationaryHandle,
       pegboard: pick(mods.pegboard, PEGBOARDS, 'none'),
       wallMount: !!mods.wallMount
@@ -584,6 +634,11 @@ globalThis.VaultKit = (function () {
       }
       add(`d:facade:${w}:${bh}`, 1, 'Drawer boxes', `${w}${bh} drawer facade`);
       if (w === 'XL' && has(cat, `d:backpanel:XL${d}`)) add(`d:backpanel:XL${d}`, 1, 'Drawer boxes', `XL${d} back panel`);
+      if (w === 'XL') {
+        // Two snap pins on a strip, in the Runners folder since November 2026: the manual does not show them
+        option('d:xlconnector:short', 'Drawer boxes', 'XL box connector, short (not in the manual)');
+        option('d:xlconnector:tall', 'Drawer boxes', 'XL box connector, tall (not in the manual)');
+      }
       add(`d:runnerguide:${rk}`, 2, 'Drawer boxes', `${rk} runner guide`);
       add(`d:runnerslide:${rk}`, 2, 'Drawer boxes', `${rk} runner slide`);
       if (rails) add(`d:rails:${w}`, 1, 'Drawer boxes', `${w} geared rails (top and bottom)`);
@@ -620,6 +675,7 @@ globalThis.VaultKit = (function () {
         option(`d:gridedge:${tall}:rounded`, 'Interiors', `Rounded edge piece (${tall} mm)`);
         option('d:gridpin:loose', 'Interiors', 'Grid divider pin, loose fit');
         option('d:gridpin:tight', 'Interiors', 'Grid divider pin, tight fit');
+        option('d:boltcover', 'Interiors', 'Box cover for bolts (not in the manual)');
       }
     };
 
@@ -687,7 +743,8 @@ globalThis.VaultKit = (function () {
         const first = modSlots[0].slot;
         if (!mod.cols && first.type === 'sustainer') return addSustainer(mod.w, h, first);
         add(drawerModuleKey(mod, d, h), 1, 'Drawer modules', `${mod.w}${mod.cols ? '²' : ''}${d} ${h} drawer module`);
-        add('d:latch', 1, 'Small drawer parts', 'Latch');
+        if (cfg.latch === 'split') add('d:latch:split', 1, 'Small drawer parts', 'Latch, split (STEP file)');
+        else add('d:latch', 1, 'Small drawer parts', 'Latch');
         if (mod.cols && mod.w === 'L') {
           // The middle wall of an L² module: the PDFs do not show these parts
           add(`d:l2acc:${d}:1st`, 1, 'Small drawer parts', `x${d} L² accessory, 1st`, true);
@@ -711,7 +768,12 @@ globalThis.VaultKit = (function () {
       roofMods.forEach(mod => {
         add(`d:roof:${mod.w}${d}:${cfg.roof}`, 1, 'Roof', `${mod.w}${d} ${ROOF_ROWS[cfg.roof]}`);
         if (cfg.manualSupports && STANDING_ROOFS.includes(cfg.roof)) add(`d:support:${d}`, 1, 'Print supports', `x${d} manual support`);
-        if (cfg.roof === 'grid') { add('d:tophandle', 1, 'Roof', 'Top handle'); hw('M6 × 50 mm bolt', 2, 'top handle'); }
+        if (cfg.roof === 'grid') {
+          // The taller handle is 10 mm taller; the manual's M6 × 50 mm are for the standard one
+          const tall = cfg.topHandle === 'tall';
+          add(tall ? 'd:tophandle:tall' : 'd:tophandle', 1, 'Roof', tall ? 'Top handle, taller' : 'Top handle');
+          hw('M6 × 50 mm bolt', 2, 'top handle', tall);
+        }
         if (cfg.roof === 'heavy' || cfg.roof === 'heavycut') { add('d:heavyhandle', 1, 'Roof', 'Heavyweight roof handle'); add('d:heavyinsert', 2, 'Roof', 'Heavyweight roof insert', true); }
       });
       const top = cfg.floors[cfg.floors.length - 1];
@@ -754,14 +816,28 @@ globalThis.VaultKit = (function () {
       });
       hw('M4 bolt, 60-100 mm (fits the module)', 4 * boards, 'backbone boards');
       if (mods.pullHandle) {
-        add(`m:pullhandle:${width}`, 1, 'Backbone & handles', `${width} pull-out handle`);
+        // The November 2026 handle clamps the rods: S / M a grip and a plate with four bolts in
+        // heat inserts; L / XL a bar, a pair of top covers and, with inserts, a front cover and
+        // two inserts at each end (manual page 52)
+        const sm = width === 'S' || width === 'M';
+        const inserts = sm || mods.pullInserts || !has(cat, `m:pullhandle:${width}:plain`);
+        if (sm) {
+          add(`m:pullhandle:${width}:part1`, 1, 'Backbone & handles', `${width} pull-out handle, grip (part 1)`);
+          add(`m:pullhandle:${width}:part2`, 1, 'Backbone & handles', `${width} pull-out handle, plate (part 2)`);
+        } else {
+          add(`m:pullhandle:${width}:${inserts ? 'inserts' : 'plain'}`, 1, 'Backbone & handles', `${width} pull-out handle${inserts ? '' : ', without heat inserts'}`);
+          add('m:pullcover:top', 1, 'Backbone & handles', 'Pull-out handle top covers (pair)');
+          if (inserts) add('m:pullcover:front', 2, 'Backbone & handles', 'Pull-out handle front cover');
+        }
+        if (inserts) hw('M6 × 8 × 8 heat insert', 4, 'pull-out handle');
         if (mods.backbone === 'wide' && has(cat, `m:pulllock:${width}`)) {
           add(`m:pulllock:${width}`, 1, 'Backbone & handles', `${width} pull-out handle lock`);
           if (has(cat, `m:pulllock:${width}:2`)) add(`m:pulllock:${width}:2`, 1, 'Backbone & handles', `${width} pull-out handle lock, part 2`);
         } else add('m:pulllock:U', 2, 'Backbone & handles', 'Universal pull-out handle lock', true);
         add('m:knob:1', 2, 'Backbone & handles', 'Handle lock knob, part 1');
         add('m:knob:2', 2, 'Backbone & handles', 'Handle lock knob, part 2');
-        hw('M6 × 30 mm bolt', 4, 'pull-out handle');
+        // The manual's hardware list still gives the bolts of the older handle (tapped into the rods)
+        hw('M6 × 30 mm bolt', 4, 'pull-out handle', true);
         hw('M6 × 35 mm hex bolt', 2, 'handle lock');
         hw('M6 × 8 × 8 heat insert', 2, 'handle lock knobs');
         hw(`M16 threaded rod, about ${towerHeight(cfg)} mm (tower height, measure before cutting)`, 2, 'pull-out handle', true);
@@ -883,7 +959,7 @@ globalThis.VaultKit = (function () {
   }
 
   return {
-    WIDTHS, DEPTHS, HEIGHTS, LAYOUTS, BOX_SPLITS, ROOFS, DRAWER_INTERIORS, SUSTAINER_INTERIORS, BASES, BACKBONES, PEGBOARDS, GROUPS, TIPS,
+    WIDTHS, DEPTHS, HEIGHTS, LAYOUTS, BOX_SPLITS, ROOFS, DRAWER_INTERIORS, SUSTAINER_INTERIORS, LATCHES, TOP_HANDLES, BASES, BACKBONES, PEGBOARDS, GROUPS, TIPS,
     DIVIDER_SLOTS, SEAL_SLOTS,
     classify, buildCatalog, detect, slotsOf, choices, defaultConfig, newFloor, defaultSlot, normalize, towerHeight,
     computeBom, describe, bomText, encodeConfig, decodeConfig

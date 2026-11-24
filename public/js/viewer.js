@@ -329,6 +329,12 @@ const Viewer = {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             <select id="${containerId}-plate-select" aria-label="Build plate" style="background:transparent;border:none;color:var(--text-primary);font-size:0.75rem;font-weight:600;cursor:pointer;outline:none;padding-right:2px"></select>
           </div>
+          <div class="viewer-pill" id="${containerId}-objects-pill" style="display:none">
+            <button type="button" class="viewer-objects-btn" aria-expanded="false" title="Show or hide the objects and parts of the plate">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;opacity:0.8"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+              Objects <span class="viewer-objects-count"></span>
+            </button>
+          </div>
           ${modelFiles.length > 1 ? `
             <div class="viewer-pill" style="display:inline-flex;align-items:center;gap:5px">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
@@ -397,6 +403,87 @@ const Viewer = {
     const overlayEl = document.createElement('div');
     overlayEl.innerHTML = overlayHtml;
     container.appendChild(overlayEl);
+
+    // The objects of a 3MF on screen (the build items of the plate) and their parts. Each one can
+    // be hidden; a click on a name shows it alone, again everything. Names come from the file
+    // (the project's model_settings.config, else the model): text only.
+    const objectsPill = container.querySelector(`#${containerId}-objects-pill`);
+    const objectsBtn = objectsPill && objectsPill.querySelector('button');
+    const objectsPanel = document.createElement('div');
+    objectsPanel.className = 'viewer-objects-panel';
+    objectsPanel.hidden = true;
+    container.appendChild(objectsPanel);
+    let objectEntries = [];
+    const SUBTYPES = { modifier_part: 'modifier', negative_part: 'negative', support_blocker: 'support blocker', support_enforcer: 'support enforcer' };
+    const syncObjectChecks = () => {
+      objectsPanel.querySelectorAll('input[data-obj]').forEach(input => {
+        const entry = objectEntries[Number(input.dataset.obj)];
+        const target = input.dataset.part === undefined ? entry.item : entry.parts[Number(input.dataset.part)];
+        input.checked = target.visible;
+      });
+    };
+    const renderObjectList = (items) => {
+      objectEntries = (items || []).map(item => {
+        item.visible = true;
+        const parts = [];
+        item.traverse(o => { if (o !== item && o.userData && o.userData.partId !== undefined) { o.visible = true; parts.push(o); } });
+        return { item, parts };
+      });
+      const worth = objectEntries.length > 1 || objectEntries.some(e => e.parts.length > 1);
+      if (objectsPill) objectsPill.style.display = worth ? 'inline-flex' : 'none';
+      objectsPanel.hidden = true;
+      if (objectsBtn) objectsBtn.setAttribute('aria-expanded', 'false');
+      if (!worth) { objectsPanel.innerHTML = ''; return; }
+      if (objectsBtn) objectsBtn.querySelector('.viewer-objects-count').textContent = String(objectEntries.length);
+      // Copies of one object get a number
+      const named = objectEntries.map((e, i) => e.item.userData.label || `Object ${i + 1}`);
+      const total = {};
+      named.forEach(n => { total[n] = (total[n] || 0) + 1; });
+      const nth = {};
+      objectsPanel.innerHTML = `<div class="viewer-objects-head"><span>Objects</span><button type="button" data-all>Show all</button></div>` + objectEntries.map((e, i) => {
+        const n = named[i];
+        nth[n] = (nth[n] || 0) + 1;
+        const title = total[n] > 1 ? `${n} #${nth[n]}` : n;
+        const parts = e.parts.length > 1 ? e.parts.map((p, k) => {
+          const kind = SUBTYPES[p.userData.subtype];
+          return `<div class="viewer-obj is-part"><input type="checkbox" data-obj="${i}" data-part="${k}" checked aria-label="Show ${escapeText(p.userData.label || `Part ${k + 1}`)}"><button type="button" class="viewer-obj-name" data-solo="${i}" data-solo-part="${k}">${escapeText(p.userData.label || `Part ${k + 1}`)}</button>${kind ? `<em>${kind}</em>` : ''}</div>`;
+        }).join('') : '';
+        return `<div class="viewer-obj"><input type="checkbox" data-obj="${i}" checked aria-label="Show ${escapeText(title)}"><button type="button" class="viewer-obj-name" data-solo="${i}">${escapeText(title)}</button></div>${parts}`;
+      }).join('');
+    };
+    if (objectsBtn) {
+      objectsBtn.onclick = () => {
+        objectsPanel.hidden = !objectsPanel.hidden;
+        objectsBtn.setAttribute('aria-expanded', String(!objectsPanel.hidden));
+      };
+    }
+    objectsPanel.addEventListener('change', (e) => {
+      const input = e.target.closest('input[data-obj]');
+      if (!input) return;
+      const entry = objectEntries[Number(input.dataset.obj)];
+      if (input.dataset.part === undefined) entry.item.visible = input.checked;
+      else entry.parts[Number(input.dataset.part)].visible = input.checked;
+    });
+    objectsPanel.addEventListener('click', (e) => {
+      const all = e.target.closest('[data-all]');
+      const solo = e.target.closest('[data-solo]');
+      if (!all && !solo) return;
+      const showAll = () => objectEntries.forEach(en => { en.item.visible = true; en.parts.forEach(p => { p.visible = true; }); });
+      if (all) showAll();
+      else {
+        const i = Number(solo.dataset.solo);
+        const k = solo.dataset.soloPart === undefined ? null : Number(solo.dataset.soloPart);
+        const entry = objectEntries[i];
+        const alone = objectEntries.every((en, j) => en.item.visible === (j === i))
+          && entry.parts.every((p, m) => p.visible === (k === null || m === k));
+        if (alone) showAll();
+        else {
+          objectEntries.forEach((en, j) => { en.item.visible = j === i; });
+          entry.parts.forEach((p, m) => { p.visible = k === null || m === k; });
+        }
+      }
+      syncObjectChecks();
+    });
 
     let targetObject = null;
     let initialCameraDist = 100;
@@ -837,6 +924,7 @@ const Viewer = {
         const value = e.target.value === 'all' ? 'all' : Number(e.target.value);
         if (targetObject) scene.remove(targetObject); // meshes are reused, don't dispose them
         targetObject = buildPlateView(value);
+        renderObjectList(targetObject.children);
         scene.add(targetObject);
         setShadingMode(currentShadingMode);
         setDims(plateState.rawSize);
@@ -864,6 +952,7 @@ const Viewer = {
         plateState = null;
       }
       if (platePill) platePill.style.display = 'none';
+      renderObjectList([]);
       // Big STLs shown from their light copy: said in a pill whose button loads the files themselves
       const shownFiles = selection === 'all' && canShowAllParts ? modelFiles : [modelFiles.find(f => String(f.id) === String(selection)) || modelFiles[0]].filter(Boolean);
       const liteIds = shownFiles.filter(f => Viewer.isLite(f)).map(f => Number(f.id));
@@ -1012,6 +1101,7 @@ const Viewer = {
               fit3MF(loaded.object);
               targetObject = loaded.object;
             }
+            renderObjectList(targetObject.children);
           } else {
             const box = new THREE.Box3().setFromObject(loaded.object);
             const size = new THREE.Vector3();

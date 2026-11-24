@@ -187,7 +187,8 @@
 					printTicket: printTicketParts,
 					texture: texturesParts,
 					plates: parsePlateConfig( zip ),
-					colors: parseColorConfig( zip )
+					colors: parseColorConfig( zip ),
+					names: parseObjectNames( zip )
 				};
 
 			}
@@ -319,6 +320,52 @@
 				}
 
 				return best;
+
+			}
+
+			// 3DLib: the names of the objects and of their parts, and each part's kind (normal_part,
+			// modifier_part, negative_part, support_blocker / _enforcer), from
+			// Metadata/model_settings.config of a BambuStudio / OrcaSlicer project:
+			// { objectId: { name, parts: { partId: { name, subtype } } } }, {} without it
+			function parseObjectNames( zip ) {
+
+				const names = {};
+				const view = zip && zip[ 'Metadata/model_settings.config' ];
+				if ( ! view ) return names;
+
+				try {
+
+					const xml = new DOMParser().parseFromString( THREE.LoaderUtils.decodeText( view ), 'application/xml' );
+					const nameOf = ( node ) => {
+
+						for ( const child of node.children ) {
+
+							if ( child.nodeName === 'metadata' && child.getAttribute( 'key' ) === 'name' ) return child.getAttribute( 'value' ) || '';
+
+						}
+
+						return '';
+
+					};
+
+					for ( const objectNode of xml.documentElement.children ) {
+
+						if ( objectNode.nodeName !== 'object' ) continue;
+						const parts = {};
+
+						for ( const partNode of objectNode.children ) {
+
+							if ( partNode.nodeName === 'part' ) parts[ partNode.getAttribute( 'id' ) ] = { name: nameOf( partNode ), subtype: partNode.getAttribute( 'subtype' ) || 'normal_part' };
+
+						}
+
+						names[ objectNode.getAttribute( 'id' ) ] = { name: nameOf( objectNode ), parts: parts };
+
+					}
+
+				} catch ( e ) { /* the names of the model file only */ }
+
+				return names;
 
 			}
 
@@ -1629,8 +1676,32 @@
 				}
 
 				applyFileColors( group, data3mf.colors );
+				applyNames( group, data3mf.names );
 
 				return group;
+
+			}
+
+			// 3DLib: userData.label of every build item (the project's object name, else the model's)
+			// and of every part inside it (userData.partId: its name and userData.subtype), for the
+			// viewer's list of objects
+			function applyNames( group, names ) {
+
+				group.children.forEach( ( item ) => {
+
+					const object = ( names || {} )[ item.userData.objectId ] || { name: '', parts: {} };
+					item.userData.label = object.name || item.name || '';
+
+					item.traverse( ( o ) => {
+
+						if ( o === item || ! o.userData || o.userData.partId === undefined ) return;
+						const part = object.parts[ o.userData.partId ];
+						o.userData.label = ( part && part.name ) || o.name || '';
+						o.userData.subtype = ( part && part.subtype ) || 'normal_part';
+
+					} );
+
+				} );
 
 			}
 

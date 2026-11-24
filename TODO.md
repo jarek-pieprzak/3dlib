@@ -15,9 +15,6 @@ planned yet; each one gets discussed before work starts.
 - **"Uncategorized" and "Untagged" filters:** find unsorted models in one click and sort them
   with the bulk bar.
 - **Collection badges on the model page:** clickable, next to the category and tags.
-- **3MF object tree:** show and hide single objects and parts in the 3D preview. Colours from
-  Bambu Studio / OrcaSlicer and the plate selector are done; `3MFLoader.js` already knows the
-  objects and parts.
 
 ## Kit configurators
 

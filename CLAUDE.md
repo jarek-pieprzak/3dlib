@@ -399,6 +399,10 @@ page and footer credit GyroidVault; keep that.
   from `model_settings.config`, painted triangles from `paint_color` (split triangles on a colour
   border get the colour covering most of them). The viewer's multicolour swatch ("Colours from
   the file") is on by default for such files and switches the tinted studio lights to white.
+  The "Objects" pill of the 3D Studio lists the build items of the plate on screen and their
+  parts (names and kinds from `model_settings.config`, `applyNames`: `userData.label`,
+  `userData.subtype` modifier / negative / support; else the model's names; copies numbered):
+  a checkbox hides one, a click on a name shows it alone, again everything.
 - Slicer round trip and file history:
   - Every file has a random `files.slicer_token`; "Open in slicer" links end with
     `<ascii name>_3dl-<token>.<ext>` (Bambu decodes the link, so no spaces or %-signs).

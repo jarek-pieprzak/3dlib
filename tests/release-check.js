@@ -700,6 +700,15 @@ async function runStaticAndUiChecks() {
     const sb = UI.slicerButton(UI.slicerLinks({ id: 5, original_name: 'a.stl', file_type: 'stl', slicer_token: 'abcdefgh' }, 1));
     assert(sb.includes('src="/img/slicers/bambustudio.png"') && sb.includes('src="/img/slicers/orcaslicer.png"') && !sb.includes('polygon points="12 2'), 'Slicer icons instead of the star');
     for (const id of Object.keys(App.SLICERS)) assert(fs.existsSync(path.join(ROOT_DIR, 'public/img/slicers', `${id}.png`)), `No icon for ${id}`);
+    // Covers of kits: a viewer cover of the tower's old look is rendered again; an archive gets
+    // the tower unless a cover was chosen (a preview file, an uploaded picture)
+    const look = { COVER_LOOK: 1795559504000 };
+    assert(App.kitCoverOutdated('1795559503999-0123456789abcdef.png', look) && !App.kitCoverOutdated('1795559504001-0123456789abcdef.png', look)
+      && !App.kitCoverOutdated('01. DRAWERS/x.jpg', look) && !App.kitCoverOutdated('1795559503999-0123456789abcdef.png', {}), 'Only viewer covers older than the look are outdated');
+    const wants = (model, user = { id: 1, role: 'admin' }) => App.kitArchiveCoverWanted.call({ currentUser: user, kitLib3d: () => ({}) }, model, 'ussa-vault');
+    assert(wants({ thumbnail: '01. DRAWERS/07. Universal/a.jpg', preview_file_id: null }) && wants({ thumbnail: null })
+      && !wants({ thumbnail: '01. DRAWERS/a.jpg', preview_file_id: 7 }) && !wants({ thumbnail: '1795559503999-0123456789abcdef.jpg' })
+      && !wants({ thumbnail: null }, { id: 2, role: 'user' }) && !wants({ thumbnail: null }, null), 'An archive gets the tower as its cover only when nobody chose one, and only from someone who may change it');
     App.currentUser = userBefore;
     App.printerBeds = null;
     const roofTip = UI.kitTipContent(K.TIPS.roof, { value: 'bowl', set: 'cfg:roof', available: ['none', 'grid', 'bowl'] });
@@ -3126,6 +3135,9 @@ async function runE2ETests() {
       assert(up.status === 200, `Uploading a viewer cover failed (${up.status})`);
       assert((await pending()).some(m => m.id === gear.id && m.reason === 'viewer'), 'A cover rendered by the viewer must be listed for regeneration');
       assert((await apiReq('/api/covers/pending', { session: viewerSession })).status === 403, 'Only an admin may regenerate covers');
+      // Kit archives get their tower / printhead from the configurator, never one of their STLs
+      const kits = ((await apiReq('/api/models?limit=100', { session: adminSession })).data.models || []).filter(m => m.kit_archive);
+      assert(kits.length >= 2 && !(await pending()).some(m => kits.some(k => k.id === m.id)), `Kit archives are not regenerated: ${kits.map(k => k.name)}`);
 
       // A preview rendered for a file in the Folder Explorer is stored, so it is rendered once
       const gearFile = (await apiReq(`/api/models/${gear.id}`, { session: adminSession })).data.files.find(f => f.file_type === '3mf');

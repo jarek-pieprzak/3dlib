@@ -1,7 +1,8 @@
 // Covers rendered by the browser (mounted at /api/covers). The 3D viewer renders a cover and
 // uploads it through POST /api/models/:id/thumbnail, which names it "<ms>-<16 hex>.png"; those
 // covers, and models with no cover at all, can be rendered again from Settings -> Maintenance.
-// Covers taken from 3MF / G-code thumbnails or from images of the project are left alone.
+// Covers taken from 3MF / G-code thumbnails or from images of the project are left alone, and so
+// are kit archives (USSA VAULT, Hero Me): the configurator renders their tower or printhead.
 const express = require('express');
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.get('/pending', authenticate, (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   try {
     const locked = Boolean(protection.passwordHash());
-    const models = all('SELECT id, name, thumbnail, preview_file_id, is_protected FROM models WHERE deleted_at IS NULL ORDER BY sortkey(name)');
+    const models = all('SELECT id, name, thumbnail, preview_file_id, is_protected, kit_archive FROM models WHERE deleted_at IS NULL ORDER BY sortkey(name)');
     const files = all(`SELECT f.id, f.model_id, f.filename, f.library_path, f.file_type, f.is_archive_entry
       FROM files f JOIN models m ON m.id = f.model_id
       WHERE f.deleted_at IS NULL AND m.deleted_at IS NULL AND f.file_type IN ('stl', '3mf')
@@ -30,7 +31,7 @@ router.get('/pending', authenticate, (req, res) => {
     for (const m of models) {
       const reason = !m.thumbnail ? 'missing' : (VIEWER_COVER.test(m.thumbnail) ? 'viewer' : null);
       const candidates = byModel[m.id];
-      if (!reason || !candidates) continue;
+      if (!reason || !candidates || m.kit_archive) continue;
       // Files of a protected model need its password: they cannot be rendered in bulk
       if (locked && Number(m.is_protected) === 1) { skippedProtected++; continue; }
       const file = candidates.find(f => f.id === m.preview_file_id)

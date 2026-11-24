@@ -29,6 +29,9 @@ globalThis.VaultKit3D = (function () {
   const DEPTH_DIVIDERS = { L: 41, XL: 85.5 };
   const XL_SEAL_WALLS = 62.5;
   const RAILS = { S: 121, M: 166, L: 203, XL: 248 }; // geared rail length by box width
+  // Covers rendered before this (ms; commit 9a55f30, 2026-11-24) show the old tower, lighter and
+  // without edges: App.kitCoverOutdated renders them again
+  const COVER_LOOK = 1795559504000;
   // Light grey PLA with orange latches and dark boxes, like the renders in the manual
   const COLORS = {
     module: 0xd9dce1, facade: 0xf2f3f5, sustainer: 0xe7e9ec, dark: 0x2d3036, orange: 0xf06a24, roof: 0xcfd3d9,
@@ -827,5 +830,5 @@ globalThis.VaultKit3D = (function () {
     };
   }
 
-  return { build, targets, cameraFrame, tagMatches, partMeshes, mount, COLORS };
+  return { build, targets, cameraFrame, tagMatches, partMeshes, mount, COLORS, COVER_LOOK };
 })();

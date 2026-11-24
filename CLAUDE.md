@@ -329,7 +329,12 @@ page and footer credit GyroidVault; keep that.
     `kit.mode` 'view' / 'edit') loads the archive's files: locked it shows only the parts list
     (Open in slicer per file, the configuration ZIP) and the preview; "Edit configuration" in the
     header brings the builder (`?edit=1&c=`), Save / Cancel go back. Its cover is the 3D tower
-    (`App.kitRenderCover`, `VaultKit3D` `snapshotParts`).
+    (`App.kitRenderCover`, `VaultKit3D` `snapshotParts`), rendered again when opened if it is
+    older than the tower's present look (`VaultKit3D.COVER_LOOK`, the ms in the upload name;
+    `App.kitCoverOutdated`). A kit archive whose cover nobody chose (no `preview_file_id`, no
+    uploaded picture: only the scan's image) gets the tower / printhead of the default
+    configuration when an admin opens it (`App.kitArchiveCoverWanted`); Regenerate Covers leaves
+    kit archives alone.
   - The tower drawing (`UI.kitDrawing`) has a chain of heights (lift, base, every floor, lip +
     roof) and the whole height with the roof, and a list of them beside it (under it in a
     panel under 560 px: container query). Heights from the archive's files: 48 mm per F in the

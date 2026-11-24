@@ -2283,6 +2283,12 @@ const App = {
     this.kitApply(fromUrl || (stored(`3dl_kit_${model.id}`) || {}).cfg || lib.defaultConfig());
     this.kitBindTips();
     this.kitPreviewFirst();
+    if (this.kitArchiveCoverWanted(model, kitId)) {
+      // The tower (printhead) of the default configuration, not the draft on screen
+      const bom = lib.computeBom(base.cat, lib.defaultConfig());
+      const input = this.kitModelInput({ kitId, bom, cfg: bom.cfg });
+      setTimeout(() => this.kitRenderCover({ id: model.id, input }), 1500);
+    }
     if (!this.currentUser) return;
     try {
       const saved = await API.getKitConfigs(model.id, kitId);
@@ -2326,8 +2332,8 @@ const App = {
       config: { id: model.id, name: model.name, cfg: model.kit_config ? this.parseJson(model.kit_config) : lib.defaultConfig() }
     });
     this.fitPoll(model.id, archive.id);
-    // A configuration without a cover gets the tower
-    if (canEdit && !model.thumbnail) setTimeout(() => this.kitRenderCover(), 1500);
+    // A configuration without a cover, or with one of the tower's old look, gets the tower
+    if (canEdit && (!model.thumbnail || this.kitCoverOutdated(model.thumbnail, this.kitLib3d(kitId)))) setTimeout(() => this.kitRenderCover(), 1500);
     return ready;
   },
 
@@ -2852,24 +2858,43 @@ const App = {
     this.kitApply(cfg || kit.cfg);
   },
 
-  // The cover of a configuration: its tower or printhead in 3D, on a transparent background
-  // like other covers
-  async kitRenderCover() {
+  // A cover the viewer rendered (an upload "<ms>-<16 hex>.png") before the kit's 3D model got its
+  // present look (lib3d.COVER_LOOK)
+  kitCoverOutdated(thumbnail, lib3d) {
+    const m = /^(\d{10,})-[0-9a-f]{16}\.png$/i.exec(String(thumbnail || ''));
+    return Boolean(m && lib3d && lib3d.COVER_LOOK && Number(m[1]) < lib3d.COVER_LOOK);
+  },
+
+  // An archive's cover becomes its tower (printhead) when nobody chose one: no preview file set
+  // and no uploaded cover, only the picture the scan took from the project (or none)
+  kitArchiveCoverWanted(model, kitId) {
+    const user = this.currentUser;
+    if (!user || (user.role !== 'admin' && model.user_id !== user.id) || !this.kitLib3d(kitId) || model.preview_file_id) return false;
+    return !/^\d{10,}-[0-9a-f]{16}\.[a-z0-9]+$/i.test(String(model.thumbnail || ''));
+  },
+
+  // The cover of a configuration (target: none) or of an archive (target: { id, input }): its
+  // tower or printhead in 3D, on a transparent background like other covers
+  async kitRenderCover(target = null) {
     const kit = this.kit;
     const lib3d = kit && this.kitLib3d(kit.kitId);
-    if (!kit || !kit.config || !lib3d || typeof Viewer === 'undefined') return;
+    if (!kit || !lib3d || typeof Viewer === 'undefined') return;
+    if (!target) {
+      if (!kit.config) return;
+      target = { id: kit.config.id, input: this.kitModelInput(kit) };
+    }
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:-10000px;top:0;width:480px;height:320px';
     document.body.appendChild(box);
     // Hero Me: with its real parts, once they are in (at most a few seconds)
     const real = kit.kitId === 'hero-me-gen7' ? { poses: await this.kitHeroPoses(), load: (url) => this.kitLoadStl(url) } : {};
-    const scene = lib3d.mount(box, this.kitModelInput(kit), { background: 0x000000, ...real });
+    const scene = lib3d.mount(box, target.input, { background: 0x000000, ...real });
     try {
       if (!scene || !scene.snapshotParts) return;
       if (scene.loaded) await Promise.race([scene.loaded(), new Promise(r => setTimeout(r, 8000))]);
       const { renderer, scene: s, camera } = scene.snapshotParts();
-      const res = await Viewer.takeSnapshot(kit.config.id, renderer, s, camera);
-      if (res && this.currentModel && this.currentModel.id === kit.config.id) this.currentModel.thumbnail = res.thumbnail || this.currentModel.thumbnail;
+      const res = await Viewer.takeSnapshot(target.id, renderer, s, camera);
+      if (res && this.currentModel && this.currentModel.id === target.id) this.currentModel.thumbnail = res.thumbnail || this.currentModel.thumbnail;
     } catch (e) { /* the page works without a cover */ } finally {
       if (scene) scene.dispose();
       box.remove();

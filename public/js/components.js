@@ -250,7 +250,18 @@ const UI = {
   },
 
   // STL / 3MF files up to this size without a thumbnail are rendered when their row is on screen
+  // (bigger STLs from their light copy)
   ROW_PREVIEW_MAX_BYTES: 20 * 1024 * 1024,
+
+  // A big STL's light copy (the server's simplified mesh, services/meshPreviews.js): what the
+  // 3D Studio and the pictures of rows and cards load instead of the file. Null for other files
+  // (smaller ones, other types, files inside archives, shared pages).
+  previewMeshUrl(f) {
+    const size = Number(f && f.file_size) || 0;
+    if (!f || !f.id || f.file_type !== 'stl' || size <= this.ROW_PREVIEW_MAX_BYTES) return null;
+    if (!/^\/(library-files|uploads)\//.test(String(f.url || ''))) return null;
+    return `/api/files/${Number(f.id)}/preview-mesh?v=${size}`;
+  },
 
   // The icon of a file row: its picture when it has one; with opts.render an STL / 3MF without
   // one is rendered by the viewer once its row is on screen (Viewer.generateThumbnails stores the
@@ -263,6 +274,8 @@ const UI = {
     }
     const url = String(f.url || '');
     const size = Number(f.file_size) || 0;
+    const lite = opts.render ? this.previewMeshUrl(f) : null;
+    if (lite) return this.fileTypeIcon(type, { cls: 'stl-thumb-target', attrs: ` data-stl-url="${this.escapeHtml(lite)}" data-file-id="${Number(f.id)}" data-size="0"` });
     if (opts.render && ['stl', '3mf'].includes(f.file_type) && /^\/library-files\//.test(url) && size > 0 && size <= this.ROW_PREVIEW_MAX_BYTES) {
       return this.fileTypeIcon(type, { cls: 'stl-thumb-target', attrs: ` data-stl-url="${this.escapeHtml(url)}" data-file-id="${Number(f.id)}" data-size="${size}"` });
     }
@@ -923,8 +936,10 @@ const UI = {
     if (file.thumbnailUrl) {
       thumb = `<img src="${this.imgSrc(file.thumbnailUrl, 480)}" alt="${this.escapeHtml(file.name)}" loading="lazy" decoding="async">`;
     } else if (is3D) {
-      // Rendered when the card comes into view and stored as the file's preview (viewer.js)
-      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${this.escapeHtml(file.url)}"${file.id ? ` data-file-id="${file.id}"` : ''} data-size="${Number(file.size) || 0}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
+      // Rendered when the card comes into view and stored as the file's preview (viewer.js); a
+      // big STL from its light copy
+      const lite = this.previewMeshUrl({ id: file.id, file_type: file.type, file_size: file.size, url: file.url });
+      thumb = `<div class="model-card-placeholder stl-thumb-target" data-stl-url="${this.escapeHtml(lite || file.url)}"${file.id ? ` data-file-id="${file.id}"` : ''} data-size="${lite ? 0 : Number(file.size) || 0}" style="background:${this.gradient(file.name)};display:flex;align-items:center;justify-content:center"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`;
     } else if (file.type === 'image') {
       thumb = `<img src="${this.imgSrc(file.url, 480)}" alt="${this.escapeHtml(file.name)}" loading="lazy" decoding="async">`;
     } else if (isGcode) {
@@ -1766,6 +1781,7 @@ const UI = {
               <div class="kit-seg kit-tower-modes" hidden><button type="button" class="kit-seg-btn" data-mode="3d" onclick="App.kitTowerMode('3d')">3D</button><button type="button" class="kit-seg-btn" data-mode="2d" onclick="App.kitTowerMode('2d')">Drawing</button></div>
               <button type="button" class="btn btn-secondary btn-xs kit-open-btn" onclick="App.kitToggleOpen()" title="Open or close every drawer and sustainer" hidden>Open all</button>
               <button type="button" class="btn btn-secondary btn-xs kit-tower-btn" onclick="App.kitShowTower()" hidden>Show the ${kit === 'ussa-vault' ? 'tower' : 'printhead'}</button>
+              <button type="button" class="btn btn-secondary btn-xs kit-expand-btn" onclick="App.kitExpand()" title="Over the whole window (Esc closes)" aria-label="Show bigger" hidden>${this.kitExpandIcon(false)}</button>
             </div>
             <div class="panel-body no-pad">
               <div class="viewer-container" id="stl-viewer-${model.id}">
@@ -1780,6 +1796,13 @@ const UI = {
         </div>
         <datalist id="kit-file-list">${(model.files || []).map(f => `<option value="${this.escapeHtml(f.original_name || '')}">`).join('')}</datalist>
       </div>`;
+  },
+
+  // The tower / printhead over the whole window (expanded: the way back)
+  kitExpandIcon(expanded) {
+    return expanded
+      ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+      : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
   },
 
   // A small drawing of the tower, top floor first: drawers, sustainers, roof and base
@@ -2369,6 +2392,7 @@ const UI = {
       rows.push(`
         <div class="kit-part${p.qty === 0 ? ' is-off' : ''}${track && p.qty > 0 && printedOf(p) >= p.qty ? ' is-printed' : ''}${p.file.id === kit.previewId ? ' is-active' : ''}" data-key="${esc(p.key)}" data-file-id="${Number(p.file.id)}" onclick="App.kitPreview(${Number(p.file.id)})" onmouseenter="App.kitHoverFile(${Number(p.file.id)})" onmouseleave="App.kitHoverFile(null)" title="${esc(path)}">
           ${track && p.qty > 0 ? counter(p) : locked ? `<span class="kit-qty is-static" title="Prints">${p.qty}</span>` : `<input type="number" class="kit-qty" min="0" max="999" value="${p.qty}" aria-label="Prints" onclick="event.stopPropagation()" onchange="App.kitQty(this.closest('.kit-part').dataset.key, this.value)">`}
+          ${this.fileIcon(p.file, { render: true })}
           <div class="kit-part-main">
             <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}${p.optional ? ' <span class="kit-est" title="Not in the manual: set how many you need">optional</span>' : ''}</div>
             <div class="kit-part-path">${esc(path)}</div>

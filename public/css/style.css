@@ -868,6 +868,10 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .viewer-container{position:relative;overflow:hidden;width:100%;height:450px}
 .viewer-overlay-top{position:absolute;top:10px;left:10px;right:10px;display:flex;align-items:center;justify-content:space-between;pointer-events:none;z-index:10;gap:8px}
 .viewer-pill{pointer-events:auto;background:rgba(18,18,30,0.85);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:20px;padding:4px 10px;display:inline-flex;align-items:center;gap:6px;font-size:0.75rem;color:var(--text-secondary);box-shadow:0 4px 12px rgba(0,0,0,0.3)}
+/* A big STL on screen from its light copy (Viewer.isLite): "Full detail" loads the file */
+.viewer-lite-pill{white-space:nowrap}
+.viewer-lite-btn{padding:2px 8px;border:1px solid color-mix(in srgb, var(--accent-cyan) 45%, transparent);border-radius:12px;background:color-mix(in srgb, var(--accent-cyan) 12%, transparent);color:var(--accent-cyan);font-size:.72rem;font-weight:600;cursor:pointer}
+.viewer-lite-btn:hover{background:color-mix(in srgb, var(--accent-cyan) 22%, transparent)}
 .viewer-tool-btn{background:none;border:none;color:var(--text-secondary);padding:5px 8px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;font-weight:600;transition:all var(--transition);line-height:1;white-space:nowrap}
 .viewer-tool-btn:hover{color:var(--text-primary);background:rgba(255,255,255,0.08)}
 .viewer-tool-btn.active{color:var(--accent-cyan);background:rgba(0,212,255,0.12)}
@@ -1791,8 +1795,8 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-parts-panel{container-type:inline-size}
 @container (max-width:460px){
   .kit-part{flex-wrap:wrap;row-gap:2px}
-  .kit-part-main{flex:1 1 calc(100% - 80px)}
-  .kit-part-main+*{margin-left:66px}
+  .kit-part-main{flex:1 1 calc(100% - 126px)}
+  .kit-part-main+*{margin-left:112px}
 }
 /* Wide screens: one window tall like the file view; the builder and the list scroll */
 @media(min-width:1025px) and (min-height:600px){
@@ -1857,7 +1861,14 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-floor.is-focused{animation:kit-floor-flash 1.4s ease-out}
 @keyframes kit-floor-flash{0%,30%{box-shadow:0 0 0 2px var(--accent-cyan)}100%{box-shadow:0 0 0 0 transparent}}
 .kit-preview-panel>.panel-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.kit-tower-btn[hidden]{display:none}
+.kit-tower-btn[hidden],.kit-expand-btn[hidden]{display:none}
+.kit-expand-btn{display:inline-flex;align-items:center;justify-content:center;padding:5px 8px}
+/* The tower or printhead over the whole window (App.kitExpand): above the sidebar, below
+   modals, toasts and tips; the page around it dimmed */
+body.kit-expanded{overflow:hidden}
+.kit-preview-panel.is-expanded{position:fixed;inset:16px;z-index:150;display:flex;flex-direction:column;min-height:0 !important;margin:0;box-shadow:0 0 0 100vmax rgba(0,0,0,.55),0 20px 60px rgba(0,0,0,.45)}
+.kit-preview-panel.is-expanded>.panel-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.kit-preview-panel.is-expanded .viewer-container{flex:1 1 auto;height:auto !important;min-height:0}
 /* The tower drawing (UI.kitDrawing): millimetres, scaled to the panel */
 /* The drawing with its list of dimensions beside it, or under it in a narrow panel */
 .kit-preview-panel .viewer-container{container-type:inline-size}
@@ -1903,6 +1914,14 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-open-btn[hidden]{display:none}
 #kit-edit-btn[hidden]{display:none}
 .kit-preview-panel>.panel-header>.panel-title{margin-right:auto}
+/* A narrow panel (the archive's column at 1440 px): the buttons keep their line, the title
+   ("Tower") gives way and the header comes closer to the edges */
+.kit-preview-panel{container:kitpanel / inline-size}
+.kit-preview-panel>.panel-header>*{flex:none}
+@container kitpanel (max-width: 380px){
+  .kit-preview-panel>.panel-header{padding-left:14px;padding-right:14px;gap:6px}
+  .kit-preview-panel>.panel-header .detail-viewer-title{display:none}
+}
 /* Printer fit check: sizes of 3D files, the bar in the corner of a file list (App.paintFit) */
 .fit-bar{display:flex;flex:none;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:7px 16px;font-size:.78rem;background:var(--bg-input);border-bottom:1px solid var(--border)}
 .fit-bar:empty{display:none}

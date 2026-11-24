@@ -2,6 +2,17 @@
 const Viewer = {
   activeViewers: [],
 
+  // Big STLs load from their light copy (UI.previewMeshUrl: the server's simplified mesh, about
+  // 160 000 triangles) until "Full detail" asks for the file itself (ids kept while the page is
+  // open). partUrl: where a part of the 3D Studio loads from.
+  fullDetail: new Set(),
+  isLite(f) {
+    return Boolean(f && typeof UI !== 'undefined' && UI.previewMeshUrl(f)) && !this.fullDetail.has(Number(f.id));
+  },
+  partUrl(f) {
+    return this.isLite(f) ? UI.previewMeshUrl(f) : `${f.url || '/uploads/' + f.filename}?t=${Date.now()}`;
+  },
+
   cleanup() {
     for (const v of this.activeViewers) {
       if (v.animId) cancelAnimationFrame(v.animId);
@@ -310,6 +321,9 @@ const Viewer = {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <div class="viewer-pill" id="${containerId}-dims" style="display:none;font-weight:600">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg> <span class="dims-text">-- × -- × -- mm</span>
+          </div>
+          <div class="viewer-pill viewer-lite-pill" id="${containerId}-lite" style="display:none" title="A simplified copy of a big file, made by the server: the shape, not every detail">
+            <span>Simplified preview</span><button type="button" class="viewer-lite-btn">Full detail</button>
           </div>
           <div class="viewer-pill" id="${containerId}-plate-pill" style="display:none;align-items:center;gap:5px" title="Build plate">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;opacity:0.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -850,6 +864,17 @@ const Viewer = {
         plateState = null;
       }
       if (platePill) platePill.style.display = 'none';
+      // Big STLs shown from their light copy: said in a pill whose button loads the files themselves
+      const shownFiles = selection === 'all' && canShowAllParts ? modelFiles : [modelFiles.find(f => String(f.id) === String(selection)) || modelFiles[0]].filter(Boolean);
+      const liteIds = shownFiles.filter(f => Viewer.isLite(f)).map(f => Number(f.id));
+      const litePill = container.querySelector(`#${containerId}-lite`);
+      if (litePill) {
+        litePill.style.display = liteIds.length ? 'inline-flex' : 'none';
+        litePill.querySelector('button').onclick = () => {
+          liteIds.forEach(id => Viewer.fullDetail.add(id));
+          renderPartSelection(selection);
+        };
+      }
 
       const dimsEl = container.querySelector(`#${containerId}-dims`);
       const footerEl = container.parentElement.querySelector('.detail-stage-footer');
@@ -863,7 +888,7 @@ const Viewer = {
 
           const loadedParts = await Promise.all(
             modelFiles.map((f, idx) => {
-              const u = `${f.url || '/uploads/'+f.filename}?t=${Date.now()}`;
+              const u = Viewer.partUrl(f);
               const col = partPalette[idx % partPalette.length];
               return loadGeometryPromise(u, f.file_type, col).catch(err => {
                 console.warn('Failed to load part:', f.filename, err);
@@ -971,7 +996,7 @@ const Viewer = {
         } else {
           // Single Part
           const singleFile = modelFiles.find(f => String(f.id) === String(selection)) || modelFiles[0];
-          const singleUrl = singleFile ? `${singleFile.url || '/uploads/'+singleFile.filename}?t=${Date.now()}` : fileUrl;
+          const singleUrl = singleFile ? Viewer.partUrl(singleFile) : fileUrl;
           const singleType = singleFile ? singleFile.file_type : fileType;
 
           const loaded = await loadGeometryPromise(singleUrl, singleType, new THREE.Color(currentColorHex === 'file' ? DEFAULT_COLOR : currentColorHex).getHex());
@@ -1000,8 +1025,9 @@ const Viewer = {
 
           scene.add(targetObject);
 
-          // Update Dimensions
-          setDims(loaded.rawSize);
+          // Update Dimensions (a light copy is a little off: the server's measure of the file)
+          const exact = singleFile && Viewer.isLite(singleFile) && typeof App !== 'undefined' && App.fitSizeOf ? App.fitSizeOf(singleFile).size : null;
+          setDims(exact ? { x: exact[0], y: exact[1], z: exact[2] } : loaded.rawSize);
 
           if (footerEl && singleFile) {
             footerEl.innerHTML = `
@@ -1314,7 +1340,12 @@ const Viewer = {
       if (modelId) {
         API.uploadThumbnail(modelId, new File([blob], `thumb_${modelId}.png`, { type: 'image/png' })).catch(() => {});
       } else if (fileId && App.currentUser && App.currentUser.role !== 'viewer') {
-        API.uploadFileThumbnail(fileId, new File([blob], `preview_${fileId}.png`, { type: 'image/png' })).catch(() => {});
+        // The page's file gets it too, so a list drawn again (the configurator's) shows it
+        API.uploadFileThumbnail(fileId, new File([blob], `preview_${fileId}.png`, { type: 'image/png' })).then(res => {
+          const model = typeof App !== 'undefined' ? App.currentModel : null;
+          const file = model && (model.files || []).find(f => f.id === Number(fileId));
+          if (file && res && res.thumbnail) file.thumbnail = res.thumbnail;
+        }).catch(() => {});
       }
     } catch (e) {
       console.error('Failed to generate thumb for', url, e);

@@ -107,6 +107,18 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
+- Light copies of big STLs (over 20 MB; VAULT has 432 of them, up to 350 MB): the server
+  simplifies the mesh to about 160 000 triangles (`server/utils/meshPreview.js`: vertex
+  clustering with quadrics, two streamed passes, memory follows the target; ~5 s for 350 MB) in
+  a worker thread when first asked for (`server/services/meshPreviews.js`), keeps it gzipped in
+  `<data>/cache/mesh/<file id>-<size>-<mtime>.stl.gz` and sends it with
+  `Content-Encoding: gzip` (`GET /api/files/:id/preview-mesh`, the access rules of `/stream`:
+  `fileAccessError` in `server/routes/files.js`). The hourly sync drops copies of changed or
+  gone files and ones not opened for 90 days. In the browser `UI.previewMeshUrl(file)`: the 3D
+  Studio loads it (`Viewer.partUrl`, no "too large" prompt), shows "Simplified preview · Full
+  detail" and the server's exact size; rows, Folder Explorer cards and the configurators'
+  parts lists ("Files to print" rows have pictures now) are rendered from it and stored as the
+  file's thumbnail. Thin walls (under a cell, ~1-2 mm) can show small dents.
 - Source import (`server/services/sourceImport.js`, `server/utils/sources/`): saving a model with
   a MakerWorld or Printables Source URL (new, or its last copy failed) copies the page into the
   project folder in the background: `README.md` (marker line `<!-- 3dlib-source: ... -->`,
@@ -323,6 +335,15 @@ page and footer credit GyroidVault; keep that.
     panel under 560 px: container query). Heights from the archive's files: 48 mm per F in the
     stack (a printed module is 9 mm taller: its lip), base 52, roofs grid 10, table 14, bowl
     21, under-table 20, heavyweight 87 mm (in their files turned 45°); lifts are estimates.
+  - The 3D tower (`public/js/kits/ussa-vault-3d.js`): every mesh that stands for a file of
+    the parts list carries that row's key or its start (`userData.bom`, `tagMatches`: whole
+    key or up to a colon; hinge and module keys from `VaultKit.sustainerHingeKeys` /
+    `drawerModuleKey`). A row under the pointer lights its parts and turns the rest see-through
+    (`highlightParts`); a part under the pointer marks its rows (`App.kitHoverRows`). Springs,
+    runner stoppers, supports, pins and the like are not drawn. The camera fits the narrower
+    of the view's two angles (`cameraFrame`) and keeps open drawers and lifted floors in view.
+    Light parts have thin edges (layer 1, not picked). The expand button puts the tower,
+    drawing or printhead over the whole window (`App.kitExpand`, Esc).
   - Print progress of a configuration: print history entries with the part's file
     (`print_history.file_id`, a file of the archive). The locked parts list has a counter per
     part (− / n/qty / +, a click on the count opens that part's prints and a form with

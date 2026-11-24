@@ -1,0 +1,137 @@
+// Light copies of big STLs (utils/meshPreview.js) for the 3D Studio and for the pictures of cards
+// and rows. Made in a worker thread when first asked for, one file at a time, and kept gzipped in
+// <data>/cache/mesh/<file id>-<size>-<mtime>.stl.gz: a file changed on disk gets a new copy and
+// its old one goes. The hourly sync drops copies of files that are gone or changed and copies
+// nobody opened for 90 days (prune).
+const path = require('path');
+const fs = require('fs');
+const { Worker } = require('worker_threads');
+const { DATA_DIR, LIBRARY_PATH, UPLOADS_DIR } = require('../config');
+const { all } = require('../database');
+
+// Smaller files are shown and pictured from themselves (UI.ROW_PREVIEW_MAX_BYTES)
+const MIN_BYTES = 20 * 1024 * 1024;
+const CACHE_DIR = path.join(DATA_DIR, 'cache', 'mesh');
+const NAME = /^(\d+)-(\d+)-(\d+)\.stl\.gz$/;
+
+let worker = null;
+let idleTimer = null;
+let current = null; // job being made
+const queue = [];
+const jobs = new Map(); // cache name -> job { name, src, dest, promise, resolve, reject }
+const failed = new Map(); // cache name -> error message (until the file changes or a restart)
+
+function eligible(file) {
+  return Boolean(file) && file.file_type === 'stl' && Number(file.file_size) > MIN_BYTES
+    && !file.is_archive_entry && !String(file.library_path || '').includes('::');
+}
+
+function sourceOf(file) {
+  const src = file.library_path || (file.filename ? path.join(UPLOADS_DIR, file.filename) : null);
+  if (!src) return null;
+  const root = file.library_path ? LIBRARY_PATH : UPLOADS_DIR;
+  const rel = path.relative(root, src);
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? src : null;
+}
+
+function spawn() {
+  worker = new Worker(path.join(__dirname, 'meshPreviewWorker.js'), { resourceLimits: { maxOldGenerationSizeMb: 1024 } });
+  worker.on('message', ({ name, error }) => {
+    const job = current;
+    current = null;
+    if (job && job.name === name) {
+      jobs.delete(name);
+      if (error) { failed.set(name, error); job.reject(new Error(error)); } else job.resolve(job.dest);
+    }
+    setImmediate(next);
+  });
+  // A file that brings the worker down (out of memory) fails; the next one gets a new worker
+  const lost = (why) => {
+    const job = current;
+    current = null;
+    worker = null;
+    if (job) { jobs.delete(job.name); failed.set(job.name, why); job.reject(new Error(why)); }
+    setImmediate(next);
+  };
+  worker.on('error', (e) => lost(`Preview failed: ${e && e.message ? e.message : 'worker error'}`));
+  worker.on('exit', (code) => { if (worker) lost(`Preview failed: worker exited (${code})`); });
+}
+
+function next() {
+  if (current) return;
+  const job = queue.shift();
+  if (!job) {
+    // An idle worker gives its memory back
+    if (worker && !idleTimer) idleTimer = setTimeout(() => { idleTimer = null; if (!current && !queue.length && worker) { const w = worker; worker = null; w.terminate(); } }, 30000);
+    return;
+  }
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  if (!worker) spawn();
+  current = job;
+  worker.postMessage({ name: job.name, src: job.src, dest: job.dest });
+}
+
+// The light copy of a file: resolves to its path in the cache, made first if needed
+function ensure(file) {
+  if (!eligible(file)) return Promise.reject(Object.assign(new Error('No light preview for this file'), { status: 404 }));
+  const src = sourceOf(file);
+  let stat;
+  try { stat = src && fs.statSync(src); } catch (e) { stat = null; }
+  if (!stat) return Promise.reject(Object.assign(new Error('File not found'), { status: 404 }));
+  const name = `${Number(file.id)}-${stat.size}-${Math.floor(stat.mtimeMs)}.stl.gz`;
+  const dest = path.join(CACHE_DIR, name);
+  if (fs.existsSync(dest)) return Promise.resolve(dest);
+  if (failed.has(name)) return Promise.reject(Object.assign(new Error(failed.get(name)), { status: 422 }));
+  if (jobs.has(name)) return jobs.get(name).promise;
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  // Older copies of this file (it changed)
+  for (const old of listCache()) if (old.id === Number(file.id) && old.name !== name) remove(old.name);
+  const job = { name, src, dest };
+  job.promise = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
+  job.promise.catch(() => {});
+  jobs.set(name, job);
+  queue.push(job);
+  next();
+  return job.promise;
+}
+
+function listCache() {
+  let names;
+  try { names = fs.readdirSync(CACHE_DIR); } catch (e) { return []; }
+  return names.map(name => { const m = NAME.exec(name); return m ? { name, id: Number(m[1]), size: Number(m[2]) } : { name, id: null }; });
+}
+
+function remove(name) {
+  try { fs.unlinkSync(path.join(CACHE_DIR, name)); } catch (e) { /* gone */ }
+}
+
+// A copy was opened: it stays (prune drops copies nobody opened for a long time)
+function touch(dest) {
+  const now = new Date();
+  fs.utimes(dest, now, now, () => {});
+}
+
+// Copies of files that are gone or changed, unopened ones, left-over temporary files
+function prune(maxAgeDays = 90) {
+  const entries = listCache();
+  if (!entries.length) return 0;
+  const sizes = new Map(all('SELECT id, file_size FROM files').map(f => [f.id, Number(f.file_size)]));
+  const cutoff = Date.now() - maxAgeDays * 86400000;
+  let removed = 0;
+  for (const e of entries) {
+    if (jobs.has(e.name)) continue;
+    let mtime;
+    try { mtime = fs.statSync(path.join(CACHE_DIR, e.name)).mtimeMs; } catch (err) { continue; }
+    // A temporary file is the worker's until it is renamed
+    const stale = e.id === null ? mtime < Date.now() - 3600000 : sizes.get(e.id) !== e.size || mtime < cutoff;
+    if (stale) { remove(e.name); removed++; }
+  }
+  return removed;
+}
+
+function stop() {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  if (worker) { const w = worker; worker = null; w.terminate(); }
+}
+
+module.exports = { ensure, eligible, touch, prune, stop, MIN_BYTES, CACHE_DIR };

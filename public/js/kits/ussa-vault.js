@@ -377,6 +377,15 @@ globalThis.VaultKit = (function () {
   function drawerModuleKey(mod, d, h) {
     return mod.cols ? `d:module2:${mod.w}${d}:${h}` : `d:module:${mod.w}${d}:${h}`;
   }
+  // The hinge files of a sustainer: bottom hinges, hinge top(s) and rods
+  function sustainerHingeKeys(w, h) {
+    const sm = w === 'S' || w === 'M';
+    return {
+      hinge: sm ? `s:hinge:SM:${h === '1F' ? 1 : 24}` : (w === 'L' && h !== '1F' ? 's:hinge:L:24' : 's:hinge:LXL:1'),
+      top: sm ? `s:hingetop:${w}` : 's:hingetop:LXL',
+      rods: sm ? 's:rods:SM' : 's:rods:LXL'
+    };
+  }
   function sustainerInteriors(cat, w, d, h) {
     const v = (variant) => has(cat, `s:module:${w}${d}:${h}:${variant}`);
     const out = [];
@@ -697,10 +706,10 @@ globalThis.VaultKit = (function () {
       }
       const facades = cfg.sustainerFacade === 'universal' ? [`s:facadeu:${w}:${h}`, `s:facade:${w}:${h}`] : [`s:facade:${w}:${h}`, `s:facadeu:${w}:${h}`];
       add(facades.find(k => has(cat, k)) || facades[0], 1, 'Sustainers', `${w}${h} sustainer facade`);
-      add(sm ? `s:hinge:SM:${h === '1F' ? 1 : 24}` : (w === 'L' && h !== '1F' ? 's:hinge:L:24' : 's:hinge:LXL:1'), 1, 'Sustainer parts', 'Bottom hinges (pair)');
-      if (sm) add(`s:hingetop:${w}`, 1, 'Sustainer parts', `${w} hinge top`);
-      else add('s:hingetop:LXL', 1, 'Sustainer parts', 'L-XL hinge tops (pair)');
-      add(sm ? 's:rods:SM' : 's:rods:LXL', 1, 'Sustainer parts', 'Hinge rods (pair)');
+      const hinges = sustainerHingeKeys(w, h);
+      add(hinges.hinge, 1, 'Sustainer parts', 'Bottom hinges (pair)');
+      add(hinges.top, 1, 'Sustainer parts', sm ? `${w} hinge top` : 'L-XL hinge tops (pair)');
+      add(hinges.rods, 1, 'Sustainer parts', 'Hinge rods (pair)');
       add('s:lockholder', locks, 'Sustainer parts', 'Lock holder');
       add('s:lockinner', locks, 'Sustainer parts', 'Lock inner part');
       add(`s:lockouter:${h === '1F' ? 1 : 24}`, locks, 'Sustainer parts', `Lock outer part ${h === '1F' ? '1F' : '2-4F'}`);
@@ -962,6 +971,7 @@ globalThis.VaultKit = (function () {
     WIDTHS, DEPTHS, HEIGHTS, LAYOUTS, BOX_SPLITS, ROOFS, DRAWER_INTERIORS, SUSTAINER_INTERIORS, LATCHES, TOP_HANDLES, BASES, BACKBONES, PEGBOARDS, GROUPS, TIPS,
     DIVIDER_SLOTS, SEAL_SLOTS,
     classify, buildCatalog, detect, slotsOf, choices, defaultConfig, newFloor, defaultSlot, normalize, towerHeight,
+    drawerModuleKey, sustainerHingeKeys,
     computeBom, describe, bomText, encodeConfig, decodeConfig
   };
 })();

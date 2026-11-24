@@ -278,7 +278,11 @@ async function runStaticAndUiChecks() {
     assert(plate.includes(`/thumbs?w=160&amp;u=${encodeURIComponent('/uploads/17000-abc.png')}`), `A 3MF shows its plate picture: ${plate}`);
     const stl = UI.fileIcon({ id: 3, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 1000 }, { render: true });
     assert(stl.includes('stl-thumb-target') && stl.includes('data-file-id="3"') && stl.includes('data-stl-url="/library-files/P/a.stl"'), `An STL without a picture is rendered on screen: ${stl}`);
-    assert(!UI.fileIcon({ id: 4, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 99 * 1024 * 1024 }, { render: true }).includes('stl-thumb-target'), 'A big STL keeps its icon');
+    // A big STL is pictured from its light copy; a big 3MF keeps its icon
+    const bigStl = UI.fileIcon({ id: 4, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 99 * 1024 * 1024 }, { render: true });
+    assert(bigStl.includes('stl-thumb-target') && bigStl.includes(`data-stl-url="/api/files/4/preview-mesh?v=${99 * 1024 * 1024}"`) && bigStl.includes('data-size="0"'), `A big STL is rendered from its light copy: ${bigStl}`);
+    assert(!UI.fileIcon({ id: 7, file_type: '3mf', original_name: 'a.3mf', url: '/library-files/P/a.3mf', file_size: 99 * 1024 * 1024 }, { render: true }).includes('stl-thumb-target'), 'A big 3MF keeps its icon');
+    assert(!UI.previewMeshUrl({ id: 8, file_type: 'stl', url: '/api/files/8/stream', file_size: 99 * 1024 * 1024 }) && !UI.previewMeshUrl({ id: 9, file_type: 'stl', url: '/library-files/P/s.stl', file_size: 1000 }), 'No light copy inside archives or of small files');
     assert(!UI.fileIcon({ id: 5, file_type: 'stl', original_name: 'a.stl', url: '/library-files/P/a.stl', file_size: 10 }).includes('stl-thumb-target'), 'Only the model page renders previews');
     assert(!UI.fileIcon({ id: 6, file_type: 'image', original_name: 'x.png', url: '/api/files/6/stream' }).includes('<img'), 'An image inside an archive keeps its icon (no small version)');
   });
@@ -798,6 +802,51 @@ async function runStaticAndUiChecks() {
     assert(drawerPart.value > om.size.depth * 0.5 && opened.parts.find(p => p.o.id === '0:0').value < -1.5, 'A drawer slides out, a sustainer lid turns up');
     const topOpen = three.VaultKit3D.targets(om, new Set(['2:0']));
     assert(topOpen.floors.every(v => v === 0) && topOpen.top > 0, 'A sustainer on top lifts only the roof and handles');
+    assert(closed.out === 0 && opened.out === drawerPart.value, `Open drawers reach out at the front: ${closed.out} / ${opened.out}`);
+
+    // The camera sees the whole tower in a panel taller than wide (the sides were cut off) and
+    // keeps open drawers and lifted floors in view
+    const frame = three.VaultKit3D.cameraFrame;
+    const wide = frame(om.size, closed, { fov: 32, aspect: 1.6 });
+    const tall = frame(om.size, closed, { fov: 32, aspect: 0.7 });
+    const hFov = (aspect) => 2 * Math.atan(Math.tan((32 * Math.PI) / 360) * aspect);
+    assert(Math.sin(hFov(0.7) / 2) * tall.dist >= tall.radius && tall.dist > wide.dist, `A tall panel: the camera stands back (${Math.round(tall.dist)} / ${Math.round(wide.dist)} mm)`);
+    assert(Math.abs(Math.sin((32 * Math.PI) / 360) * wide.dist - wide.radius * 1.05) < 1e-6, 'A wide panel: the height decides');
+    const open3 = frame(om.size, opened, { fov: 32, aspect: 1 });
+    const closed3 = frame(om.size, closed, { fov: 32, aspect: 1 });
+    assert(open3.radius > closed3.radius && open3.center[1] > closed3.center[1] && open3.center[2] > 0, 'Open parts: a bigger sphere, its centre higher and to the front');
+
+    // A row of the parts list lights its parts in the tower: every row the tower draws has
+    // meshes, a facade row as many facades as it has prints. Not drawn: springs, runner
+    // stoppers, manual supports, grid pins, bolt covers, XL connectors, the jig, wall cleats.
+    const NOT_DRAWN = /^(d:springs|d:runnerstopper|d:support|d:gridpin|d:boltcover|d:xlconnector|m:jig|m:wallmount2)/;
+    const drawer = (boxes, interior, extra = {}) => ({ type: 'drawer', boxes, interior, ...extra });
+    const sus = (interior) => ({ type: 'sustainer', interior });
+    const tagCfgs = [
+      { ...K.defaultConfig(), width: 'L', depth: 4, roof: 'grid', manualSupports: true,
+        floors: [{ height: '2F', layout: 'S+S', slots: [sus('dividers'), sus('gridfinity')] }, { height: '2F', layout: 'L', slots: [sus('sealed')] },
+          { height: '2F', layout: 'L', slots: [sus('dividers')] }, { height: '2F', layout: 'L2', slots: [drawer('', 'gridfinity'), drawer('', 'empty')] },
+          { height: '2F', layout: 'L', slots: [drawer('1F+1F', 'dividers')] }, { height: '1F', layout: 'L', slots: [drawer('', 'dividers', { low: true })] }],
+        mods: { base: 'wheels', feet: true, backbone: 'universal', pullHandle: true, pullInserts: true, stationaryHandle: true, pegboard: 'ussa', wallMount: true } },
+      { ...K.defaultConfig(), width: 'XL', depth: 6, roof: 'heavycut', split: true, sustainerFacade: 'universal', key: 'hidden', latch: 'split', gearedRails: 'all',
+        floors: [{ height: '1F', layout: 'XL', slots: [sus('sealed')] }, { height: '1F', layout: 'XL', slots: [sus('dividers')] }, { height: '2F', layout: 'S+M', slots: [sus('gridfinity'), drawer('', 'empty')] },
+          { height: '1F', layout: 'XL2', slots: [drawer('', 'empty'), drawer('', 'gridfinity')] }, { height: '1F', layout: 'XL', slots: [drawer('', 'gridfinity')] }],
+        mods: { base: 'plain', feet: false, backbone: 'wide', pullHandle: true, pullInserts: false, stationaryHandle: false, pegboard: 'none', wallMount: false } }
+    ];
+    for (const input of tagCfgs) {
+      const tb = K.computeBom(cat, input);
+      assert(!tb.warnings.length, `3D tags: the test configuration is valid: ${tb.warnings.join(' / ')}`);
+      const tm = three.VaultKit3D.build(tb.cfg);
+      const rows = tb.parts.filter(p => p.qty > 0 && !NOT_DRAWN.test(p.key));
+      const dark = rows.filter(p => !three.VaultKit3D.partMeshes(tm, [p.key]).length).map(p => p.key);
+      assert(rows.length > 30 && !dark.length, `3D: rows without parts in the tower (${tb.cfg.width}): ${dark.join(', ')}`);
+      for (const p of rows.filter(r => /^([ds]:facade|s:lockouter)/.test(r.key))) {
+        const n = three.VaultKit3D.partMeshes(tm, [p.key]).length;
+        assert(n === p.qty, `3D: ${p.key} has ${p.qty} prints and ${n} parts in the tower`);
+      }
+      assert(!three.VaultKit3D.partMeshes(tm, ['d:facade:M:4F', 'd:springs', tb.cfg.mods.base === 'wheels' ? 'm:casters' : 'm:tyre']).length, '3D: rows of other configurations light nothing');
+    }
+    assert(three.VaultKit3D.tagMatches(['d:box:XL6:2F'], 'd:box:XL6:2F:part1') && !three.VaultKit3D.tagMatches(['d:key'], 'd:keycap') && !three.VaultKit3D.tagMatches(['s:roof:L4'], 's:roofconnector:L4'), 'A tag is a whole key or its start up to a colon');
   });
 
   await check('Every onclick / onchange / onsubmit App.* handler in HTML & components.js exists on App', () => {
@@ -3307,6 +3356,92 @@ async function runE2ETests() {
         body: { ids: [m2.data.id, m3.data.id], deleteDisk: true }
       });
       assert(bulkDel.status === 200, `Bulk delete failed: ${JSON.stringify(bulkDel.data)}`);
+    });
+
+    await check('Light copies of big STLs: simplified on the server, cached, gzipped, with the file access rules', async () => {
+      // A 100 mm cube, every face a grid of n × n squares: 12 n² triangles, over 20 MB
+      const cube = (n, size = 100) => {
+        const tris = 12 * n * n;
+        const buf = Buffer.alloc(84 + tris * 50);
+        buf.writeUInt32LE(tris, 80);
+        let o = 84;
+        const put = (a, b, c) => { for (const p of [a, b, c]) for (const v of p) { buf.writeFloatLE(v, o + 12); o += 4; } o += 14; };
+        const step = size / n;
+        for (let axis = 0; axis < 3; axis++) {
+          for (const side of [0, size]) {
+            const at = (u, v) => { const p = [0, 0, 0]; p[axis] = side; p[(axis + 1) % 3] = u * step; p[(axis + 2) % 3] = v * step; return p; };
+            for (let u = 0; u < n; u++) for (let v = 0; v < n; v++) {
+              put(at(u, v), at(u + 1, v), at(u + 1, v + 1));
+              put(at(u, v), at(u + 1, v + 1), at(u, v + 1));
+            }
+          }
+        }
+        return buf;
+      };
+      const big = cube(190);
+      assert(big.length > 20 * 1024 * 1024, `The test cube must be over 20 MB, got ${big.length}`);
+      const dir = path.join(tmpLibDir, 'Big Mesh');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'cube.stl'), big);
+      fs.writeFileSync(path.join(dir, 'small.stl'), 'solid p\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 5 0 0\nvertex 0 5 0\nendloop\nendfacet\nendsolid p\n');
+      const scan = async () => {
+        await apiReq('/api/library/scan', { method: 'POST', session: adminSession });
+        for (let i = 0; i < 300; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          if (!(await apiReq('/api/library/scan/status', { session: adminSession })).data.isScanning) break;
+        }
+      };
+      await scan();
+      const model = ((await apiReq('/api/models?search=Big%20Mesh', { session: adminSession })).data.models || []).find(m => m.name === 'Big Mesh');
+      assert(model, 'The library folder "Big Mesh" must become a model');
+      const files = (await apiReq(`/api/models/${model.id}`, { session: adminSession })).data.files;
+      const cubeFile = files.find(f => f.original_name === 'cube.stl');
+      const small = files.find(f => f.original_name === 'small.stl');
+
+      const fetchMesh = async (id, cookie = adminSession.cookie) => {
+        const res = await fetch(`${baseUrl}/api/files/${id}/preview-mesh`, { headers: { Cookie: cookie } });
+        return { status: res.status, encoding: res.headers.get('content-encoding'), body: Buffer.from(await res.arrayBuffer()) };
+      };
+      const started = Date.now();
+      const first = await fetchMesh(cubeFile.id);
+      assert(first.status === 200 && first.encoding === 'gzip', `The light copy must come gzipped, got ${first.status} ${first.encoding}`);
+      const count = first.body.readUInt32LE(80);
+      assert(first.body.length === 84 + count * 50 && count > 1000 && count < 250000, `A binary STL with far fewer triangles than 433 200, got ${count}`);
+      const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+      for (let t = 0; t < count; t++) for (let k = 0; k < 9; k++) {
+        const v = first.body.readFloatLE(84 + t * 50 + 12 + k * 4);
+        min[k % 3] = Math.min(min[k % 3], v);
+        max[k % 3] = Math.max(max[k % 3], v);
+      }
+      assert(min.every(v => v > -1.5 && v < 1.5) && max.every(v => v > 98.5 && v < 101.5), `The copy keeps the cube's size: ${min} / ${max}`);
+      const cached = fs.readdirSync(path.join(tmpDataDir, 'cache', 'mesh'));
+      assert(cached.length === 1 && cached[0].startsWith(`${cubeFile.id}-${big.length}-`) && cached[0].endsWith('.stl.gz'), `One cached copy: ${cached}`);
+      const firstMs = Date.now() - started;
+      const again = await fetchMesh(cubeFile.id);
+      assert(again.status === 200 && again.body.equals(first.body), 'The second request is the cached copy');
+      assert((await fetchMesh(small.id)).status === 404, 'A small STL has no light copy');
+
+      // A protected model's copy needs the unlock, like its files
+      await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: true } });
+      await apiReq('/api/settings/protection-password', { method: 'PUT', session: adminSession, body: { password: 'tajne123' } });
+      try {
+        assert((await fetchMesh(cubeFile.id)).status === 404, 'The light copy of a locked protected model must be 404');
+        const ok = await apiReq(`/api/models/${model.id}/unlock`, { method: 'POST', session: adminSession, body: { password: 'tajne123' } });
+        const unlockCookie = (ok.setCookie || '').split(';')[0];
+        assert((await fetchMesh(cubeFile.id, `${adminSession.cookie}; ${unlockCookie}`)).status === 200, 'With the unlock cookie the light copy loads');
+      } finally {
+        await apiReq('/api/settings/protection-password', { method: 'PUT', session: adminSession, body: { password: '' } });
+        await apiReq('/api/models/bulk-update', { method: 'POST', session: adminSession, body: { ids: [model.id], is_protected: false } });
+      }
+
+      // The file changes on disk: a new copy, the old one goes
+      const changed = cube(200);
+      fs.writeFileSync(path.join(dir, 'cube.stl'), changed);
+      await scan();
+      const next = await fetchMesh(cubeFile.id);
+      const names = fs.readdirSync(path.join(tmpDataDir, 'cache', 'mesh'));
+      assert(next.status === 200 && names.length === 1 && names[0].startsWith(`${cubeFile.id}-${changed.length}-`), `A changed file gets a new copy instead of the old one: ${names}`);
+      assert(firstMs < 30000, `Making the copy took ${firstMs} ms`);
     });
 
     await check('Source import: a MakerWorld link copies the description, pictures and PDFs into the project folder', async () => {

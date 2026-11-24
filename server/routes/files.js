@@ -29,6 +29,22 @@ function rememberSlicerDownload(req, fileId, data) {
   return hashFileStream(data).then(hash => slicerSaves.recordDownload(fileId, hash)).catch(() => {});
 }
 
+// Who may read a file (stream, download, 3MF, light preview): a protected model's files need
+// its unlock token, share links carry their own access, a private project's files are its
+// owner's (and admins'). Returns { status, error } or null.
+function fileAccessError(req, file, shareSlug) {
+  if (shareSlug) {
+    const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
+    return !share || file.model_id !== share.model_id ? { status: 403, error: 'Invalid or expired share link' } : null;
+  }
+  if (!protection.canOpenModelId(req, file.model_id)) return { status: 404, error: 'File not found' };
+  const privateProjects = all('SELECT p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [file.model_id]);
+  if (privateProjects.length && (!req.user || (req.user.role !== 'admin' && !privateProjects.some(p => p.user_id === req.user.id)))) {
+    return { status: 403, error: 'Access denied to private file' };
+  }
+  return null;
+}
+
 // ─── GET /api/files/:id/stream ────────────────────────────────────────────────
 router.get('/:id/stream', (req, res, next) => {
   const shareSlug = req.query.share;
@@ -37,23 +53,8 @@ router.get('/:id/stream', (req, res, next) => {
       const id = Number(req.params.id);
       const file = get('SELECT * FROM files WHERE id=?', [id]);
       if (!file) return res.status(404).json({ error: 'File not found' });
-      // A protected model's files need its unlock token (share links carry their own access)
-      if (!shareSlug && !protection.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
-
-      if (shareSlug) {
-        const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
-        if (!share || file.model_id !== share.model_id) {
-          return res.status(403).json({ error: 'Invalid or expired share link' });
-        }
-      } else {
-        // Enforce privacy check: if model is in private project(s), ensure user is owner or admin
-        const privateProjects = all('SELECT p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [file.model_id]);
-        if (privateProjects.length > 0) {
-          if (!req.user || (req.user.role !== 'admin' && !privateProjects.some(p => p.user_id === req.user.id))) {
-            return res.status(403).json({ error: 'Access denied to private file' });
-          }
-        }
-      }
+      const denied = fileAccessError(req, file, shareSlug);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
 
       if (file.is_archive_entry && file.library_path && file.library_path.includes('::')) {
         const [zipPath, entryPath] = file.library_path.split('::');
@@ -123,6 +124,37 @@ router.get('/:id/stream', (req, res, next) => {
   }
 });
 
+// ─── GET /api/files/:id/preview-mesh ─────────────────────────────────────────
+// A light copy of a big STL (services/meshPreviews.js) for the 3D Studio and the pictures of
+// cards and rows: made on the first request (a few seconds for a 350 MB file), then from the
+// cache. Sent gzipped (the browser unpacks it), with the access rules of /stream.
+router.get('/:id/preview-mesh', (req, res) => {
+  const shareSlug = req.query.share;
+  const send = async () => {
+    try {
+      const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
+      if (!file) return res.status(404).json({ error: 'File not found' });
+      const denied = fileAccessError(req, file, shareSlug);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
+      const meshPreviews = require('../services/meshPreviews');
+      const dest = await meshPreviews.ensure(file);
+      const size = fs.statSync(dest).size;
+      meshPreviews.touch(dest);
+      res.setHeader('Content-Type', 'model/stl');
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Content-Length', size);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      fs.createReadStream(dest).pipe(res);
+    } catch (e) {
+      if (!e.status) console.error('Preview mesh error:', e);
+      if (!res.headersSent) res.status(e.status || 500).json({ error: e.message || 'Failed to make a preview' });
+    }
+  };
+  if (shareSlug) send();
+  else if (getSettingBool('require_login_to_view')) authenticate(req, res, send);
+  else send();
+});
+
 // ─── GET /api/files/:id/download/:filename? ──────────────────────────────────
 router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
   const shareSlug = req.query.share;
@@ -130,22 +162,8 @@ router.get('/:id/download/:filename?', heavyLimiter, (req, res, next) => {
     try {
       const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
       if (!file) return res.status(404).json({ error: 'File not found' });
-      // A protected model's files need its unlock token (share links carry their own access)
-      if (!shareSlug && !protection.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
-
-      if (shareSlug) {
-        const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
-        if (!share || file.model_id !== share.model_id) {
-          return res.status(403).json({ error: 'Invalid or expired share link' });
-        }
-      } else {
-        const privateProjects = all('SELECT p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [file.model_id]);
-        if (privateProjects.length > 0) {
-          if (!req.user || (req.user.role !== 'admin' && !privateProjects.some(p => p.user_id === req.user.id))) {
-            return res.status(403).json({ error: 'Access denied to private file' });
-          }
-        }
-      }
+      const denied = fileAccessError(req, file, shareSlug);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
 
       if (file.is_archive_entry && file.library_path && file.library_path.includes('::')) {
         const [zipPath, entryPath] = file.library_path.split('::');
@@ -192,22 +210,8 @@ router.get('/:id/3mf/:filename?', heavyLimiter, (req, res) => {
       const { stlToMesh, meshTo3mf } = require('../utils/3mf');
       const file = get('SELECT * FROM files WHERE id=?', [Number(req.params.id)]);
       if (!file) return res.status(404).json({ error: 'File not found' });
-      // A protected model's files need its unlock token (share links carry their own access)
-      if (!shareSlug && !protection.canOpenModelId(req, file.model_id)) return res.status(404).json({ error: 'File not found' });
-
-      if (shareSlug) {
-        const share = get("SELECT * FROM shares WHERE id=? AND (expires_at IS NULL OR expires_at > datetime('now'))", [shareSlug]);
-        if (!share || file.model_id !== share.model_id) {
-          return res.status(403).json({ error: 'Invalid or expired share link' });
-        }
-      } else {
-        const privateProjects = all('SELECT p.user_id FROM projects p JOIN project_models pm ON p.id=pm.project_id WHERE pm.model_id=? AND p.visibility="private"', [file.model_id]);
-        if (privateProjects.length > 0) {
-          if (!req.user || (req.user.role !== 'admin' && !privateProjects.some(p => p.user_id === req.user.id))) {
-            return res.status(403).json({ error: 'Access denied to private file' });
-          }
-        }
-      }
+      const denied = fileAccessError(req, file, shareSlug);
+      if (denied) return res.status(denied.status).json({ error: denied.error });
 
       if (file.file_type !== 'stl' && file.file_type !== '3mf') {
         return res.status(415).json({ error: 'Only STL and 3MF files can be served as 3MF' });

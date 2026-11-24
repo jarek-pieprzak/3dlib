@@ -367,6 +367,7 @@ const App = {
 
     this.toggleMobileSidebar(false);
     this.kitHideTip(true);
+    this.kitExpand(false);
     this.kitDispose3D();
 
     // Leaving an unlocked protected model locks it again: the next visit asks for the password
@@ -2148,6 +2149,7 @@ const App = {
   // opts.trash: the model is in the Trash and opened from there
   async renderModelDetail(id, opts = {}) {
     if (typeof Viewer !== 'undefined') Viewer.cleanup();
+    this.kitExpand(false);
     this.kitDispose3D();
     this.currentModelOpts = opts;
     this.el.innerHTML = '<div style="padding:40px;text-align:center"><div class="skeleton" style="width:200px;height:30px;margin:0 auto 20px"></div><div class="skeleton" style="width:100%;height:200px"></div></div>';
@@ -2192,8 +2194,9 @@ const App = {
       if (firstPreview && !previewCadFile) {
         setTimeout(() => this.previewFile(model.id, firstPreview.id, { initial: true }), 100);
       }
-      // A large 3D file (USSA VAULT has 350 MB STLs) is loaded only on request
-      if (previewCadFile && typeof Viewer !== 'undefined' && Number(previewCadFile.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES) {
+      // A large 3D file (USSA VAULT has 350 MB STLs) is loaded only on request, unless it is an
+      // STL the server makes a light copy of (UI.previewMeshUrl)
+      if (previewCadFile && typeof Viewer !== 'undefined' && Number(previewCadFile.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES && !UI.previewMeshUrl(previewCadFile)) {
         setTimeout(() => this.showLargePreviewPrompt(model.id, previewCadFile), 100);
       } else if (previewCadFile && typeof Viewer !== 'undefined') {
         const stlUrl = `${previewCadFile.url || '/uploads/'+previewCadFile.filename}?t=${Date.now()}`;
@@ -2384,6 +2387,8 @@ const App = {
     const next = el.querySelector('.kit-parts-body');
     if (next) next.scrollTop = top;
     this.paintFit();
+    // Pictures of the parts that have none yet, rendered once on screen and kept (viewer.js)
+    if (typeof Viewer !== 'undefined' && Viewer.generateThumbnails) setTimeout(() => Viewer.generateThumbnails(), 50);
   },
 
   // Changes to a copy of the configuration; the kit checks it against the archive
@@ -2505,7 +2510,7 @@ const App = {
     if (title) title.textContent = '3D Studio';
     document.querySelectorAll('.kit-part.is-active').forEach(el => el.classList.remove('is-active'));
     document.querySelectorAll(`.kit-part[data-file-id="${file.id}"]`).forEach(el => el.classList.add('is-active'));
-    if (!force && UI.previewKind(file) === '3d' && typeof Viewer !== 'undefined' && Number(file.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES) {
+    if (!force && UI.previewKind(file) === '3d' && typeof Viewer !== 'undefined' && Number(file.file_size) > Viewer.MAX_AUTO_PREVIEW_BYTES && !UI.previewMeshUrl(file)) {
       Viewer.cleanup();
       return this.showLargePreviewPrompt(model.id, file, `App.kitPreview(${file.id}, true)`);
     }
@@ -2894,7 +2899,7 @@ const App = {
         this.kitDispose3D();
         kit.scene3d = VaultKit3D.mount(container, kit.cfg, {
           background: typeof Viewer !== 'undefined' ? Viewer.sceneColors().background : undefined,
-          onHover: (fi) => this.kitHoverFloor(fi),
+          onHover: (fi, tags) => { this.kitHoverFloor(fi); this.kitHoverRows(tags); },
           onClick: (fi) => this.kitFocusFloor(fi),
           onOpen: (count, total) => this.kitOpenButton(count, total)
         });
@@ -2911,7 +2916,9 @@ const App = {
     const button = panel && panel.querySelector('.kit-tower-btn');
     const modes = panel && panel.querySelector('.kit-tower-modes');
     const openAll = panel && panel.querySelector('.kit-open-btn');
+    const expand = panel && panel.querySelector('.kit-expand-btn');
     if (openAll) openAll.hidden = !shown3d;
+    if (expand) expand.hidden = false;
     if (title) title.textContent = 'Tower';
     if (button) button.hidden = true;
     if (modes) {
@@ -2963,6 +2970,7 @@ const App = {
     set('.kit-tower-btn', el => { el.hidden = true; });
     set('.kit-tower-modes', el => { el.hidden = true; });
     set('.kit-open-btn', el => { el.hidden = true; });
+    set('.kit-expand-btn', el => { el.hidden = false; });
     this.kitHeadHint();
   },
 
@@ -3005,12 +3013,26 @@ const App = {
 
   // A part of the printhead under the pointer: its rows in the list (null: none)
   kitHoverPart(part) {
+    const ids = new Set(part ? part.files.map(Number) : []);
+    this.kitMarkRows(el => ids.has(Number(el.dataset.fileId)));
+  },
+
+  // A part of the VAULT tower under the pointer: the rows it stands for (tags: its userData.bom)
+  kitHoverRows(tags) {
+    const lib = typeof VaultKit3D !== 'undefined' ? VaultKit3D : null;
+    this.kitMarkRows(el => Boolean(tags && lib && lib.tagMatches(tags, el.dataset.key)));
+  },
+
+  // Rows of the list marked as under the pointer (match: row element -> bool); the first is
+  // scrolled into view
+  kitMarkRows(match) {
     document.querySelectorAll('.kit-part.is-hover').forEach(el => el.classList.remove('is-hover'));
-    if (!part) return;
     let first = null;
-    for (const id of part.files) {
-      document.querySelectorAll(`#kit-parts .kit-part[data-file-id="${Number(id)}"]`).forEach(el => { el.classList.add('is-hover'); first = first || el; });
-    }
+    document.querySelectorAll('#kit-parts .kit-part').forEach(el => {
+      if (!match(el)) return;
+      el.classList.add('is-hover');
+      first = first || el;
+    });
     const body = first && first.closest('.kit-parts-body');
     if (body) {
       const r = first.getBoundingClientRect();
@@ -3019,10 +3041,14 @@ const App = {
     }
   },
 
-  // A row of the list under the pointer: its part lights in the printhead
+  // A row of the list under the pointer: its part lights in the printhead, or its parts in the
+  // VAULT tower (the rest of the tower see-through)
   kitHoverFile(fileId) {
-    const scene = this.kit && this.kit.scene3d;
-    if (scene && scene.highlightFile) scene.highlightFile(fileId);
+    const kit = this.kit;
+    const scene = kit && kit.scene3d;
+    if (!scene) return;
+    if (scene.highlightFile) return scene.highlightFile(fileId);
+    if (scene.highlightParts) scene.highlightParts(fileId === null || fileId === undefined ? [] : kit.bom.parts.filter(p => p.file.id === Number(fileId) && p.qty > 0).map(p => p.key));
   },
 
   // The tower in 3D (a model of simple shapes) or as the drawing with dimensions; remembered
@@ -3051,9 +3077,35 @@ const App = {
     const button = document.querySelector('.kit-preview-panel .kit-tower-btn');
     const modes = document.querySelector('.kit-preview-panel .kit-tower-modes');
     const openAll = document.querySelector('.kit-preview-panel .kit-open-btn');
+    const expand = document.querySelector('.kit-preview-panel .kit-expand-btn');
     if (button) button.hidden = !(this.kit.kitId === 'ussa-vault' || this.kitLib3d(this.kit.kitId));
     if (modes) modes.hidden = true;
     if (openAll) openAll.hidden = true;
+    // A part or a manual page has the 3D Studio's own full screen
+    this.kitExpand(false);
+    if (expand) expand.hidden = true;
+  },
+
+  // The tower or the printhead (3D or the drawing) over the whole window, and back (the button
+  // again, Esc). on: true / false, or none to switch. The 3D scene frames itself again.
+  kitExpand(on) {
+    const panel = document.querySelector('.kit-preview-panel');
+    const next = Boolean(panel) && (on === undefined ? !panel.classList.contains('is-expanded') : Boolean(on));
+    if (panel) panel.classList.toggle('is-expanded', next);
+    document.body.classList.toggle('kit-expanded', next);
+    const button = panel && panel.querySelector('.kit-expand-btn');
+    if (button) {
+      button.innerHTML = UI.kitExpandIcon(next);
+      button.title = next ? 'Back to the page (Esc)' : 'Over the whole window (Esc closes)';
+      button.setAttribute('aria-label', next ? 'Back to the page' : 'Show bigger');
+    }
+    if (next && !this.kitExpandKey) {
+      this.kitExpandKey = (e) => { if (e.key === 'Escape') this.kitExpand(false); };
+      document.addEventListener('keydown', this.kitExpandKey);
+    } else if (!next && this.kitExpandKey) {
+      document.removeEventListener('keydown', this.kitExpandKey);
+      this.kitExpandKey = null;
+    }
   },
 
   // Open every drawer and sustainer of the 3D tower, or close them all
@@ -3087,6 +3139,8 @@ const App = {
   kitFocusFloor(fi) {
     const card = document.querySelector(`.kit-floor[data-fi="${Number(fi)}"]`);
     if (!card) return;
+    // The builder is under the tower over the whole window: back to the page
+    this.kitExpand(false);
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     card.classList.remove('is-focused');
     void card.offsetWidth;

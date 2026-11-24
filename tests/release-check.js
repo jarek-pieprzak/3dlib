@@ -722,6 +722,14 @@ async function runStaticAndUiChecks() {
     assert(dimDrawing.includes('<dt>Bowl roof</dt><dd>21 mm</dd>') && dimDrawing.includes('<dt>Base</dt><dd>52 mm</dd>') && dimDrawing.includes('<dt>Top lip</dt><dd>9 mm</dd>'), 'Roof, base and lip have their heights');
     assert(dimDrawing.includes('<dt>Height</dt><dd>226 mm</dd>') && dimDrawing.includes('>226 mm</text>'), `The height counts the roof: 52 + 96 + 48 + 9 + 21`);
     assert(UI.kitDrawing({ ...dimCfg, mods: { ...dimCfg.mods, base: 'wheels' } }).includes('≈ 266 mm'), 'An estimated lift makes the height approximate');
+    // Labels: one font-size and one class a tag (the browser drops the second one); the lip with a
+    // grid roof (19 mm) is lower than its label, which goes above the chain (52+96+48+9+10 = 215)
+    const gridDrawing = UI.kitDrawing({ ...dimCfg, roof: 'grid' });
+    assert(!/<text[^>]*font-size="[^"]*"[^>]*font-size=/.test(gridDrawing) && !/<text[^>]*class="[^"]*"[^>]*class=/.test(gridDrawing), 'A label tag has one font-size and one class');
+    assert(/<text class="kd-text kd-caption"[^>]*>Front<\/text>/.test(gridDrawing), 'Front and Side are captions');
+    const lipLabel = /<text class="kd-text" x="[^"]*" y="([^"]*)"[^>]*>9\+10<\/text>/.exec(gridDrawing);
+    const bowlLabel = /<text class="kd-text" x="[^"]*" y="([^"]*)"[^>]*text-anchor="end">9\+21<\/text>/.exec(dimDrawing);
+    assert(lipLabel && Number(lipLabel[1]) < -215 && bowlLabel && Number(bowlLabel[1]) > -226, `The short top piece is labelled above the chain, a taller one beside it: ${lipLabel && lipLabel[1]} / ${bowlLabel && bowlLabel[1]}`);
     // Sustainer locks: one in the middle on S and M, two on L and XL
     const susDrawing = UI.kitDrawing({ ...dimCfg, roof: 'none', floors: [{ height: '1F', layout: 'S+S', slots: [{ type: 'sustainer', interior: 'flat' }, { type: 'sustainer', interior: 'flat' }] }, { height: '1F', layout: 'L', slots: [{ type: 'sustainer', interior: 'flat' }] }] });
     assert((susDrawing.match(/<rect class="kd-dark"[^>]*width="18"/g) || []).length === 4, 'Drawing: one lock on each S sustainer, two on the L one');

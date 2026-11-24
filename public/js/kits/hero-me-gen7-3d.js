@@ -554,11 +554,14 @@ globalThis.HeroMe3D = (function () {
     const highlightMat = new THREE.MeshStandardMaterial({ color: COLORS.highlight, roughness: 0.6, metalness: 0.04 });
 
     // Camera from the front right, a little above
-    function fit(size) {
+    // The sphere around the printhead fits the narrower of the view's two angles (a panel taller
+    // than wide cut off its sides); dir: where the camera looks from (first: front right, above)
+    function fit(size, dir = new THREE.Vector3(0.62, 0.36, 1).normalize()) {
       const center = new THREE.Vector3(0, size.height / 2, -8);
       const radius = Math.sqrt(size.width * size.width + size.height * size.height + size.depth * size.depth) / 2;
-      const dist = radius / Math.sin((camera.fov * Math.PI) / 360) * 0.8;
-      const dir = new THREE.Vector3(0.62, 0.36, 1).normalize();
+      const half = (camera.fov * Math.PI) / 360;
+      const angle = Math.min(half, Math.atan(Math.tan(half) * camera.aspect));
+      const dist = radius / Math.sin(angle) * 0.8;
       camera.position.copy(center).addScaledVector(dir, dist);
       camera.near = dist / 50;
       camera.far = dist * 20;
@@ -678,10 +681,14 @@ globalThis.HeroMe3D = (function () {
     renderer.domElement.addEventListener('pointerleave', onLeave);
     renderer.domElement.addEventListener('pointerdown', onDown);
     renderer.domElement.addEventListener('pointerup', onUp);
+    // A panel of another shape (a narrow layout, the whole window) frames the printhead again,
+    // from where the camera looks now
     const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+      const before = camera.aspect;
       renderer.setSize(width(), height());
       camera.aspect = width() / height();
       camera.updateProjectionMatrix();
+      if (model && Math.abs(camera.aspect - before) > before * 0.05) fit(model.size, camera.position.clone().sub(controls.target).normalize());
       render();
     }) : null;
     if (resizeObserver) resizeObserver.observe(container);

@@ -1903,7 +1903,9 @@ const UI = {
     const sx = W + wheelX + 40 + fs * 2;
     const back = sx + D;
     const r = (cls, x, y, w, h, rx = 0) => `<rect class="${cls}" x="${x}" y="${y}" width="${Math.max(0, w)}" height="${Math.max(0, h)}"${rx ? ` rx="${rx}"` : ''}/>`;
-    const text = (x, y, s, anchor = 'middle', extra = '') => `<text class="kd-text" x="${x}" y="${y}" font-size="${fs}" text-anchor="${anchor}"${extra}>${this.escapeHtml(s)}</text>`;
+    // A label; o: { size (fs), cls (more classes), attrs }. A second font-size or class in the
+    // same tag would be dropped by the browser (the first one counts)
+    const text = (x, y, s, anchor = 'middle', o = {}) => `<text class="kd-text${o.cls ? ` ${o.cls}` : ''}" x="${x}" y="${y}" font-size="${o.size || fs}" text-anchor="${anchor}"${o.attrs || ''}>${this.escapeHtml(s)}</text>`;
     const dimH = (x1, x2, y, label) => `<path class="kd-dim" d="M${x1} ${y}H${x2}M${x1} ${y - 8}V${y + 8}M${x2} ${y - 8}V${y + 8}"/>${text((x1 + x2) / 2, y + fs + 4, label)}`;
 
     // A drawer column: one facade with key and label per box; a sustainer: facade, locks (one in
@@ -2040,18 +2042,23 @@ const UI = {
     let at = 0;
     const tick = (y) => `<path class="kd-dim" d="M${cx - 7} ${y}H${cx + 7}"/>`;
     chain += tick(0);
-    for (const p of parts) {
-      chain += tick(at - p.h) + text(cx - 8, at - p.h / 2 + fs * 0.28, p.label, 'end', ` font-size="${Math.round(fs * 0.72)}"`);
+    parts.forEach((p, i) => {
+      // The top piece (lip + roof, 19 mm with a grid roof) is lower than its label: the label
+      // goes above the chain instead of over the ticks
+      const above = i === parts.length - 1 && p.h < fs * 0.85;
+      chain += tick(at - p.h) + (above
+        ? text(cx, at - p.h - fs * 0.45, p.label, 'middle', { size: Math.round(fs * 0.72) })
+        : text(cx - 8, at - p.h / 2 + fs * 0.25, p.label, 'end', { size: Math.round(fs * 0.72) }));
       at -= p.h;
-    }
+    });
     const minY = Math.min(handleTop, roofTop) - fs * 1.5;
     const maxX = back + 100;
     const minX = tx - fs * 1.4;
     const maxY = 30 + fs * 3.2;
     const dims = dimH(0, W, 26, `${W} mm`) + dimH(sx, back, 26, `${D} mm`) + chain +
       `<path class="kd-dim" d="M${tx} 0V${roofTop}M${tx - 8} 0H${tx + 8}M${tx - 8} ${roofTop}H${tx + 8}"/>` +
-      text(tx - fs * 0.45, roofTop / 2, `${lift ? '≈ ' : ''}${total} mm`, 'middle', ` transform="rotate(-90 ${tx - fs * 0.45} ${roofTop / 2})"`) +
-      text(W / 2, 30 + fs * 2.6, 'Front', 'middle', ' class="kd-text kd-caption"') + text(sx + D / 2, 30 + fs * 2.6, 'Side', 'middle', ' class="kd-text kd-caption"');
+      text(tx - fs * 0.45, roofTop / 2, `${lift ? '≈ ' : ''}${total} mm`, 'middle', { attrs: ` transform="rotate(-90 ${tx - fs * 0.45} ${roofTop / 2})"` }) +
+      text(W / 2, 30 + fs * 2.6, 'Front', 'middle', { cls: 'kd-caption' }) + text(sx + D / 2, 30 + fs * 2.6, 'Side', 'middle', { cls: 'kd-caption' });
     // The list next to the drawing, top floor first like the builder
     const item = (name, value, extra = '') => `<div class="kd-item"${extra}><dt>${this.escapeHtml(name)}</dt><dd>${this.escapeHtml(value)}</dd></div>`;
     const list = [

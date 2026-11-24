@@ -123,7 +123,9 @@ page and footer credit GyroidVault; keep that.
   Studio loads it (`Viewer.partUrl`, no "too large" prompt), shows "Simplified preview · Full
   detail" and the server's exact size; rows, Folder Explorer cards and the configurators'
   parts lists ("Files to print" rows have pictures now) are rendered from it and stored as the
-  file's thumbnail. Thin walls (under a cell, ~1-2 mm) can show small dents.
+  file's thumbnail. A configurator asks for the copies of its parts ahead
+  (`App.kitPrefetchMeshes`, `POST /api/files/preview-meshes`, once per file a page): they are
+  made in the background, behind the ones someone opens (the queue's front). Thin walls (under a cell, ~1-2 mm) can show small dents.
 - Source import (`server/services/sourceImport.js`, `server/utils/sources/`): saving a model with
   a MakerWorld or Printables Source URL (new, or its last copy failed) copies the page into the
   project folder in the background: `README.md` (marker line `<!-- 3dlib-source: ... -->`,

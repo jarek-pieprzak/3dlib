@@ -2361,6 +2361,23 @@ const App = {
       const el = this.kitTipAnchorEl();
       if (el) this.kitShowTip(el, true); else this.kitHideTip(true);
     }
+    this.kitPrefetchMeshes();
+  },
+
+  // The light copies of the parts' big STLs are made ahead on the server, so their 3D preview and
+  // row picture come at once: asked once per file while the page is open, a moment after the
+  // configuration stops changing
+  kitPrefetchMeshes() {
+    clearTimeout(this.kitPrefetchTimer);
+    this.kitPrefetchTimer = setTimeout(() => {
+      const kit = this.kit;
+      if (!kit || !this.currentUser || typeof API === 'undefined') return;
+      const asked = this.meshPrefetched || (this.meshPrefetched = new Set());
+      const ids = [...new Set(kit.bom.parts.filter(p => p.qty > 0 && UI.previewMeshUrl(p.file) && !asked.has(p.file.id)).map(p => p.file.id))];
+      if (!ids.length) return;
+      ids.forEach(id => asked.add(id));
+      API.prefetchPreviewMeshes(ids).catch(() => ids.forEach(id => asked.delete(id)));
+    }, 1200);
   },
 
   kitState() {

@@ -250,6 +250,8 @@ const API = {
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Upload failed'); }
     return res.json();
   },
+  // Light copies of big STLs made ahead, in the background (a configuration's parts)
+  prefetchPreviewMeshes(fileIds) { return this.request('/api/files/preview-meshes', { method: 'POST', body: JSON.stringify({ file_ids: fileIds }) }); },
   // A preview rendered in the browser for one 3D file (Folder Explorer), stored on the server
   async uploadFileThumbnail(fileId, file) {
     const form = new FormData();

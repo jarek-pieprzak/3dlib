@@ -74,28 +74,52 @@ function next() {
   worker.postMessage({ name: job.name, src: job.src, dest: job.dest });
 }
 
-// The light copy of a file: resolves to its path in the cache, made first if needed
-function ensure(file) {
-  if (!eligible(file)) return Promise.reject(Object.assign(new Error('No light preview for this file'), { status: 404 }));
+// The copy of a file: { state: 'ready' | 'queued' | 'failed' | 'missing', dest, promise, error }.
+// A new job goes to the front (someone waits for it) or, in the background, to the back; a
+// queued job someone now waits for moves to the front
+function request(file, background) {
+  if (!eligible(file)) return { state: 'missing', error: 'No light preview for this file' };
   const src = sourceOf(file);
   let stat;
   try { stat = src && fs.statSync(src); } catch (e) { stat = null; }
-  if (!stat) return Promise.reject(Object.assign(new Error('File not found'), { status: 404 }));
+  if (!stat) return { state: 'missing', error: 'File not found' };
   const name = `${Number(file.id)}-${stat.size}-${Math.floor(stat.mtimeMs)}-v${VERSION}.stl.gz`;
   const dest = path.join(CACHE_DIR, name);
-  if (fs.existsSync(dest)) return Promise.resolve(dest);
-  if (failed.has(name)) return Promise.reject(Object.assign(new Error(failed.get(name)), { status: 422 }));
-  if (jobs.has(name)) return jobs.get(name).promise;
+  if (fs.existsSync(dest)) return { state: 'ready', dest };
+  if (failed.has(name)) return { state: 'failed', error: failed.get(name) };
+  let job = jobs.get(name);
+  if (job) {
+    const at = queue.indexOf(job);
+    if (!background && at > 0) { queue.splice(at, 1); queue.unshift(job); }
+    return { state: 'queued', promise: job.promise };
+  }
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   // Older copies of this file (it changed)
   for (const old of listCache()) if (old.id === Number(file.id) && old.name !== name) remove(old.name);
-  const job = { name, src, dest };
+  job = { name, src, dest };
   job.promise = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
   job.promise.catch(() => {});
   jobs.set(name, job);
-  queue.push(job);
+  if (background) queue.push(job); else queue.unshift(job);
   next();
-  return job.promise;
+  return { state: 'queued', promise: job.promise };
+}
+
+// The light copy of a file: resolves to its path in the cache, made first if needed (before the
+// copies made ahead)
+function ensure(file) {
+  const r = request(file, false);
+  if (r.state === 'ready') return Promise.resolve(r.dest);
+  if (r.state === 'queued') return r.promise;
+  return Promise.reject(Object.assign(new Error(r.error), { status: r.state === 'failed' ? 422 : 404 }));
+}
+
+// A copy made ahead, in the background (a configuration's parts): 'ready', 'queued' or why not.
+// A ready copy asked for by an open page counts as used (prune keeps it)
+function prefetch(file) {
+  const r = request(file, true);
+  if (r.state === 'ready') touch(r.dest);
+  return r.state;
 }
 
 function listCache() {
@@ -137,4 +161,4 @@ function stop() {
   if (worker) { const w = worker; worker = null; w.terminate(); }
 }
 
-module.exports = { ensure, eligible, touch, prune, stop, MIN_BYTES, CACHE_DIR };
+module.exports = { ensure, prefetch, eligible, touch, prune, stop, MIN_BYTES, CACHE_DIR };

@@ -3519,6 +3519,23 @@ async function runE2ETests() {
       const next = await fetchMesh(cubeFile.id);
       const names = fs.readdirSync(path.join(tmpDataDir, 'cache', 'mesh'));
       assert(next.status === 200 && names.length === 1 && names[0].startsWith(`${cubeFile.id}-${changed.length}-`), `A changed file gets a new copy instead of the old one: ${names}`);
+
+      // Copies made ahead (a configuration's parts): queued in the background, then in the cache
+      fs.writeFileSync(path.join(dir, 'cube2.stl'), cube(195));
+      await scan();
+      const cube2 = (await apiReq(`/api/models/${model.id}`, { session: adminSession })).data.files.find(f => f.original_name === 'cube2.stl');
+      const ahead = await apiReq('/api/files/preview-meshes', { method: 'POST', session: adminSession, body: { file_ids: [cube2.id, cubeFile.id, small.id, 999999] } });
+      assert(ahead.status === 200 && ahead.data.queued === 1 && ahead.data.ready === 1, `One copy queued, one ready, the small and unknown files skipped: ${JSON.stringify(ahead.data)}`);
+      let made = false;
+      for (let i = 0; i < 300 && !made; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        made = fs.readdirSync(path.join(tmpDataDir, 'cache', 'mesh')).some(n => n.startsWith(`${cube2.id}-`) && n.endsWith('.stl.gz'));
+      }
+      assert(made, 'The copy asked for ahead lands in the cache');
+      const again2 = await apiReq('/api/files/preview-meshes', { method: 'POST', session: adminSession, body: { file_ids: [cube2.id] } });
+      assert(again2.data.ready === 1 && again2.data.queued === 0, `Asked again it is ready: ${JSON.stringify(again2.data)}`);
+      assert([401, 403].includes((await apiReq('/api/files/preview-meshes', { method: 'POST', body: { file_ids: [cube2.id] } })).status), 'Only a logged-in user asks for copies ahead');
+      assert((await apiReq('/api/files/preview-meshes', { method: 'POST', session: adminSession, body: { file_ids: 'x' } })).status === 400, 'file_ids must be a list');
       assert(firstMs < 30000, `Making the copy took ${firstMs} ms`);
     });
 

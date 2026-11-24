@@ -124,6 +124,32 @@ router.get('/:id/stream', (req, res, next) => {
   }
 });
 
+// ─── POST /api/files/preview-meshes ──────────────────────────────────────────
+// Light copies made ahead, in the background, for files a page is about to show (the parts of a
+// configuration): { file_ids } -> { queued, ready }. A copy someone opens goes first; files the
+// user may not read, small ones and other types are skipped.
+router.post('/preview-meshes', authenticate, (req, res) => {
+  try {
+    const raw = req.body && req.body.file_ids;
+    if (!Array.isArray(raw)) return res.status(400).json({ error: 'file_ids array required' });
+    const ids = [...new Set(raw.map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 200);
+    const meshPreviews = require('../services/meshPreviews');
+    let queued = 0;
+    let ready = 0;
+    for (const id of ids) {
+      const file = get('SELECT * FROM files WHERE id=? AND deleted_at IS NULL', [id]);
+      if (!file || fileAccessError(req, file, null) || !meshPreviews.eligible(file)) continue;
+      const state = meshPreviews.prefetch(file);
+      if (state === 'ready') ready++;
+      if (state === 'queued') queued++;
+    }
+    res.json({ queued, ready });
+  } catch (e) {
+    console.error('Preview mesh prefetch error:', e);
+    res.status(500).json({ error: 'Failed to queue the previews' });
+  }
+});
+
 // ─── GET /api/files/:id/preview-mesh ─────────────────────────────────────────
 // A light copy of a big STL (services/meshPreviews.js) for the 3D Studio and the pictures of
 // cards and rows: made on the first request (a few seconds for a 350 MB file), then from the

@@ -1361,6 +1361,64 @@ async function runStaticAndUiChecks() {
     }
   });
 
+  await check('Light copies of big STLs: every body keeps its own grid, so small parts next to a big one stay', async () => {
+    const os = require('os');
+    const { simplify } = require(path.join(ROOT_DIR, 'server/utils/meshPreview'));
+    // A 300 mm box of 120 000 triangles with a 2 mm cube and three 1.5 mm cubes beside it. At a
+    // target of 20 000 triangles one grid for all has 7.7 mm cells: the cubes would vanish
+    const box = (x0, size, n) => {
+      const out = [];
+      const step = size / n;
+      for (let axis = 0; axis < 3; axis++) {
+        for (const side of [0, size]) {
+          const at = (u, v) => { const p = [x0, 0, 0]; p[axis] += side; p[(axis + 1) % 3] += u * step; p[(axis + 2) % 3] += v * step; return p; };
+          for (let u = 0; u < n; u++) for (let v = 0; v < n; v++) {
+            const a = at(u, v), b = at(u + 1, v), c = at(u + 1, v + 1), d = at(u, v + 1);
+            if (side === 0) out.push([a, c, b], [a, d, c]); else out.push([a, b, c], [a, c, d]);
+          }
+        }
+      }
+      return out;
+    };
+    const tris = [...box(0, 300, 100), ...box(310, 2, 4), ...box(320, 1.5, 3), ...box(325, 1.5, 3), ...box(330, 1.5, 3)];
+    const buf = Buffer.alloc(84 + tris.length * 50);
+    buf.writeUInt32LE(tris.length, 80);
+    tris.forEach((t, i) => t.flat().forEach((v, k) => buf.writeFloatLE(v, 84 + i * 50 + 12 + k * 4)));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), '3dlib-mesh-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'bodies.stl'), buf);
+      const r = await simplify(path.join(dir, 'bodies.stl'), 20000);
+      const xs = (x0, x1) => {
+        let n = 0;
+        let lo = Infinity, hi = -Infinity;
+        for (let f = 0; f < r.kept; f++) {
+          const xsOf = [0, 1, 2].map(v => r.stl.readFloatLE(84 + f * 50 + 12 + v * 12));
+          if (xsOf.every(x => x >= x0 && x <= x1)) { n++; lo = Math.min(lo, ...xsOf); hi = Math.max(hi, ...xsOf); }
+        }
+        return { n, lo, hi };
+      };
+      const main = xs(-1, 301);
+      assert(r.bodies === 5 && main.n > 1000 && main.n < 60000, `Five bodies, the big one simplified: ${r.bodies} bodies, ${main.n} of 120 000 triangles`);
+      const small = [xs(309, 313), xs(319, 322), xs(324, 327), xs(329, 332)];
+      assert(small[0].n === 192 && small[0].lo === 310 && small[0].hi === 312 && small.slice(1).every(s => s.n === 108 && s.hi - s.lo === 1.5),
+        `Every small cube stays as it is: ${JSON.stringify(small)}`);
+
+      // Round coordinates (every 0.5 mm: float bits ending in zeros) must not pile corners into a
+      // few hash slots (that took half a minute for 480 000 triangles)
+      const round = box(0, 100, 200);
+      const rbuf = Buffer.alloc(84 + round.length * 50);
+      rbuf.writeUInt32LE(round.length, 80);
+      round.forEach((t, i) => t.flat().forEach((v, k) => rbuf.writeFloatLE(v, 84 + i * 50 + 12 + k * 4)));
+      fs.writeFileSync(path.join(dir, 'round.stl'), rbuf);
+      const started = Date.now();
+      const rr = await simplify(path.join(dir, 'round.stl'));
+      const ms = Date.now() - started;
+      assert(rr.bodies === 1 && rr.kept < 200000 && ms < 10000, `A cube on a 0.5 mm grid: ${rr.kept} triangles in ${ms} ms`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   await check('Printer fit: sizes of STL / OBJ / 3MF files, parts checked straight, turned and on the diagonal', async () => {
     const os = require('os');
     const { measure } = require(path.join(ROOT_DIR, 'server/utils/meshSize'));

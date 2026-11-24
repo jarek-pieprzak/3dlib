@@ -109,9 +109,14 @@ page and footer credit GyroidVault; keep that.
 
 - Light copies of big STLs (over 20 MB; VAULT has 432 of them, up to 350 MB): the server
   simplifies the mesh to about 160 000 triangles (`server/utils/meshPreview.js`: vertex
-  clustering with quadrics, two streamed passes, memory follows the target; ~5 s for 350 MB) in
+  clustering with quadrics; every body of the file (corners shared by exact coordinates,
+  union-find) gets its own grid, a small one at least 24 cells across or kept whole, so small
+  parts never vanish or melt into a big one; files up to 10 M triangles in memory, ~6 s and
+  ~370 MB for 350 MB; bigger ones streamed with one grid; corner hashing mixes every bit, round
+  coordinates once made it quadratic) in
   a worker thread when first asked for (`server/services/meshPreviews.js`), keeps it gzipped in
-  `<data>/cache/mesh/<file id>-<size>-<mtime>.stl.gz` and sends it with
+  `<data>/cache/mesh/<file id>-<size>-<mtime>-v<VERSION>.stl.gz` (raise `VERSION` in
+  `meshPreviews.js` when the simplification changes) and sends it with
   `Content-Encoding: gzip` (`GET /api/files/:id/preview-mesh`, the access rules of `/stream`:
   `fileAccessError` in `server/routes/files.js`). The hourly sync drops copies of changed or
   gone files and ones not opened for 90 days. In the browser `UI.previewMeshUrl(file)`: the 3D

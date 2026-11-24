@@ -1,8 +1,8 @@
 // Light copies of big STLs (utils/meshPreview.js) for the 3D Studio and for the pictures of cards
 // and rows. Made in a worker thread when first asked for, one file at a time, and kept gzipped in
-// <data>/cache/mesh/<file id>-<size>-<mtime>.stl.gz: a file changed on disk gets a new copy and
-// its old one goes. The hourly sync drops copies of files that are gone or changed and copies
-// nobody opened for 90 days (prune).
+// <data>/cache/mesh/<file id>-<size>-<mtime>-v<VERSION>.stl.gz: a file changed on disk gets a
+// new copy and its old one goes. The hourly sync drops copies of files that are gone or changed,
+// of another VERSION, and copies nobody opened for 90 days (prune).
 const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads');
@@ -12,7 +12,10 @@ const { all } = require('../database');
 // Smaller files are shown and pictured from themselves (UI.ROW_PREVIEW_MAX_BYTES)
 const MIN_BYTES = 20 * 1024 * 1024;
 const CACHE_DIR = path.join(DATA_DIR, 'cache', 'mesh');
-const NAME = /^(\d+)-(\d+)-(\d+)\.stl\.gz$/;
+// Raised when the simplification changes: copies of another version are made again, and the
+// hourly prune drops the old ones (their names do not match)
+const VERSION = 2;
+const NAME = /^(\d+)-(\d+)-(\d+)-v(\d+)\.stl\.gz$/;
 
 let worker = null;
 let idleTimer = null;
@@ -78,7 +81,7 @@ function ensure(file) {
   let stat;
   try { stat = src && fs.statSync(src); } catch (e) { stat = null; }
   if (!stat) return Promise.reject(Object.assign(new Error('File not found'), { status: 404 }));
-  const name = `${Number(file.id)}-${stat.size}-${Math.floor(stat.mtimeMs)}.stl.gz`;
+  const name = `${Number(file.id)}-${stat.size}-${Math.floor(stat.mtimeMs)}-v${VERSION}.stl.gz`;
   const dest = path.join(CACHE_DIR, name);
   if (fs.existsSync(dest)) return Promise.resolve(dest);
   if (failed.has(name)) return Promise.reject(Object.assign(new Error(failed.get(name)), { status: 422 }));
@@ -98,7 +101,7 @@ function ensure(file) {
 function listCache() {
   let names;
   try { names = fs.readdirSync(CACHE_DIR); } catch (e) { return []; }
-  return names.map(name => { const m = NAME.exec(name); return m ? { name, id: Number(m[1]), size: Number(m[2]) } : { name, id: null }; });
+  return names.map(name => { const m = NAME.exec(name); return m ? { name, id: Number(m[1]), size: Number(m[2]), version: Number(m[4]) } : { name, id: null }; });
 }
 
 function remove(name) {
@@ -123,7 +126,7 @@ function prune(maxAgeDays = 90) {
     let mtime;
     try { mtime = fs.statSync(path.join(CACHE_DIR, e.name)).mtimeMs; } catch (err) { continue; }
     // A temporary file is the worker's until it is renamed
-    const stale = e.id === null ? mtime < Date.now() - 3600000 : sizes.get(e.id) !== e.size || mtime < cutoff;
+    const stale = e.id === null ? mtime < Date.now() - 3600000 : e.version !== VERSION || sizes.get(e.id) !== e.size || mtime < cutoff;
     if (stale) { remove(e.name); removed++; }
   }
   return removed;

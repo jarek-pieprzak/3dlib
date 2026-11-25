@@ -107,6 +107,9 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
+- "Uncategorized" and "Untagged" in the model list's category and tag filters
+  (`/api/models?category=none` / `tag=none`: no category or one that is gone; no tag), to sort
+  them with the bulk bar.
 - Filament estimate of a configurator's parts list: the background measuring
   (`services/dimensions.js`, `meshSize.measureMesh`) keeps an STL's volume and surface too
   (`files.dim_vol` mm³, `dim_area` mm²; STLs measured before were measured again once;
@@ -422,6 +425,18 @@ page and footer credit GyroidVault; keep that.
     replaces the library file `slicer_quiet_minutes` (default 5) after the last save. Copied,
     never moved. An STL saved as 3MF adds `<name>.3mf` next to it as the main file; a loose
     root file first becomes a folder of its name. Unmatched saves wait on `#/slicer-saves`.
+    The sidebar counts unmatched and failed saves for admins (`GET /api/slicer-saves/count`,
+    `App.refreshSlicerBadge`, every minute; a dot on the menu button of a narrow window).
+  - A 3MF from MakerWorld (opened there in Bambu Studio: no token) that matches no file by name:
+    `sources/fileOrigin.js` reads the head of its `3D/3dmodel.model` (`DesignerUserId`,
+    `DesignProfileId`, `DesignModelId`, `Title`, `Designer`); `makerworld.designOfFile` finds
+    the design among the designer's published ones (public list, by profile id or the cover's
+    model id), once per content (`slicer_saves.origin`, an unreachable MakerWorld again after an
+    hour). After the quiet time it joins the model whose Source is that page as a new file
+    (`slicer_saves.model_id`; a file of its name there gets a new version), else it becomes a
+    new model of the page (`newSourceModel`: named after the page in the owner's language, the
+    save is its main file, the page is copied in; owner: the admin with a Bambu Lab login
+    first). Not found on MakerWorld: it waits, saying where it is from.
   - Copies of one file (`x_3dl-t.3mf`, `x_3dl-t(2).3mf`: Bambu adds "(2)" when the old copy is
     still there) are imported oldest first; `files.slicer_saved_at` keeps an older save from
     replacing a newer one ("superseded"). Spent copies (download / imported / superseded) go at

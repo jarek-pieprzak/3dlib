@@ -287,6 +287,13 @@ async function initDatabase() {
       created_at DATETIME DEFAULT (datetime('now'))
     )
   `);
+  // A save that matches no file but came from a MakerWorld page: origin = what its 3MF says and
+  // the page it was found on (JSON, per content hash); model_id = the model it joins as a new file
+  {
+    const sCols = all('PRAGMA table_info(slicer_saves)');
+    if (!sCols.some(c => c.name === 'origin')) db.run('ALTER TABLE slicer_saves ADD COLUMN origin TEXT');
+    if (!sCols.some(c => c.name === 'model_id')) db.run('ALTER TABLE slicer_saves ADD COLUMN model_id INTEGER');
+  }
 
   // Migration: Ensure user_id columns exist
   try {

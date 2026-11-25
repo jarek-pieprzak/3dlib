@@ -12,8 +12,6 @@ planned yet; each one gets discussed before work starts.
   the Dashboard.
 - **Card density:** compact / comfortable / large cards, and switches for what a card shows
   (format badges, size, file count).
-- **"Uncategorized" and "Untagged" filters:** find unsorted models in one click and sort them
-  with the bulk bar.
 - **Collection badges on the model page:** clickable, next to the category and tags.
 
 ## Kit configurators

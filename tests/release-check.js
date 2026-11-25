@@ -223,6 +223,9 @@ async function runStaticAndUiChecks() {
       ['UI.slicerSavesPage', () => UI.slicerSavesPage({ quiet_minutes: 5, cleanup_days: 7, now: Date.now(), saves: [
         { id: 1, name: 'gear_3dl-abcdefgh.3mf', clean_name: 'gear.3mf', status: 'pending', file_size: 10, mtime_ms: Date.now(), model_id: 1, model_name: 'Box', file_name: 'gear.3mf' },
         { id: 2, name: 'Mystery_part.3mf', clean_name: 'Mystery part.3mf', status: 'unmatched', file_size: 10, mtime_ms: Date.now() },
+        { id: 7, name: 'Lost.3mf', clean_name: 'Lost.3mf', status: 'unmatched', file_size: 10, mtime_ms: Date.now(), message: '<b>x</b>', origin: { site: 'MakerWorld', title: '<b>x</b>', designer: '<b>x</b>', url: null } },
+        { id: 8, name: 'rack.3mf', clean_name: 'rack.3mf', status: 'pending', file_size: 10, mtime_ms: Date.now(), into_model_id: 3, model_id: 3, model_name: '<b>x</b>', origin: { site: 'MakerWorld', title: '<b>x</b>', designer: '<b>x</b>', url: 'https://makerworld.com/en/models/1' } },
+        { id: 9, name: 'new.3mf', clean_name: 'new.3mf', status: 'pending', file_size: 10, mtime_ms: Date.now(), origin: { site: 'MakerWorld', title: '<b>x</b>', designer: '', url: 'https://makerworld.com/en/models/2' } },
         { id: 3, name: 'x.3mf', clean_name: 'x.3mf', status: 'imported', file_size: 10, mtime_ms: Date.now(), message: 'New version of x.3mf', imported_model_id: 1, imported_model_name: 'Box', imported_name: 'x.3mf' },
         { id: 4, name: 'y.3mf', clean_name: 'y.3mf', status: 'error', file_size: 10, mtime_ms: Date.now(), message: 'Read-only' },
         { id: 5, name: 'z.stl', clean_name: 'z.stl', status: 'download', file_size: 10, mtime_ms: Date.now() },
@@ -1641,6 +1644,19 @@ async function runE2ETests() {
     // In the language the request asks for (MakerWorld translates its texts itself)
     if (req.url === '/makerworld.com/api/v1/design-service/design/5151') return json(200, req.headers['x-bbl-language'] === 'pl' ? { ...mwDesign, titleTranslated: 'Pudełko z zębatkami', summaryTranslated: '<p>Zębatki w pudełku.</p>', tagsTranslated: ['zębatki'] } : mwDesign);
     if (req.url === '/makerworld.com/api/v1/design-service/design/403') return send(403, '<title>Just a moment...</title>', 'text/html');
+    // A designer's published designs (a MakerWorld 3MF names its designer and print profile, not
+    // the design): uid 8 has 120, at most 50 a page, the drying rack (6262) among the last; 9 none
+    if (req.url.startsWith('/makerworld.com/api/v1/design-service/published/')) {
+      const u = new URL(`http://x${req.url}`);
+      const designs = u.pathname.split('/')[6] !== '8' ? [] : Array.from({ length: 120 }, (_, i) => (i === 110
+        ? { id: 6262, title: '水切り台', coverUrl: 'https://makerworld.bblmw.com/makerworld/model/US6262drain/design/c.jpg', instances: [{ id: 2, profileId: 62001 }] }
+        : { id: 7000 + i, title: `Thing ${i}`, coverUrl: `https://makerworld.bblmw.com/makerworld/model/USthing${i}/design/c.jpg`, instances: [{ id: 3000 + i, profileId: 70000 + i }] }));
+      const offset = Number(u.searchParams.get('offset')) || 0;
+      return json(200, { total: designs.length, hits: designs.slice(offset, offset + Math.min(50, Number(u.searchParams.get('limit')) || 20)) });
+    }
+    if (req.url === '/makerworld.com/api/v1/design-service/design/6262') {
+      return json(200, { id: 6262, title: '水切り台', titleTranslated: 'Drying rack', designCreator: { uid: 8, name: 'Kote' }, summary: '<p>For small things.</p>', tags: ['kitchen'] });
+    }
     if (req.url.startsWith('/makerworld.com/api/v1/design-service/instance/') || req.url.startsWith('/makerworld.com/api/v1/design-service/design/5151/model')) {
       if (req.headers.authorization !== 'Bearer mw-token' || fakeFiles.mwRefused) return json(403, { error: 'Please log in' });
       if (req.url === '/makerworld.com/api/v1/design-service/instance/951/f3mf?type=download') return json(200, { name: 'Gear Box Full.3mf', url: 'https://makerworld.bblmw.com/f/951.3mf' });
@@ -2183,6 +2199,11 @@ async function runE2ETests() {
         body: { ids: [createdModelId], category_id: categoryId, add_tags: ['NEW:gridfinity', 'NEW:modular'] }
       });
       assert(bulkCatRes.status === 200, `Bulk update category/tags failed: ${JSON.stringify(bulkCatRes.data)}`);
+      // Uncategorized / Untagged: the models still to sort
+      const ids = async (q) => ((await apiReq(`/api/models?limit=200&${q}`, { session: adminSession })).data.models || []).map(m => m.id);
+      const [uncategorized, untagged, all] = [await ids('category=none'), await ids('tag=none'), await ids('')];
+      assert(!uncategorized.includes(createdModelId) && !untagged.includes(createdModelId) && all.includes(createdModelId), 'A model with a category and tags is neither uncategorized nor untagged');
+      assert(uncategorized.length > 0 && untagged.length > 0 && uncategorized.every(id => all.includes(id)), `Other models are still to sort: ${uncategorized.length} uncategorized, ${untagged.length} untagged`);
 
       const projRes = await apiReq('/api/projects', {
         method: 'POST',
@@ -2926,9 +2947,82 @@ async function runE2ETests() {
       put('.slicer-saves/Mystery_part.3mf', mesh(40));
       s = (await saves()).find(x => x.name === 'Mystery_part.3mf');
       assert(s.status === 'unmatched' && s.clean_name === 'Mystery part.3mf', `A save without a match must wait, got ${s.status}`);
+      // The sidebar counts it (admins only)
+      let count = await apiReq('/api/slicer-saves/count', { session: adminSession });
+      assert(count.status === 200 && count.data.unmatched === 1 && count.data.failed === 0, `The waiting save must be counted, got ${JSON.stringify(count.data)}`);
+      assert((await apiReq('/api/slicer-saves/count', { session: viewerSession })).status === 403, 'Only admins see the count of slicer saves');
       const created = await apiReq(`/api/slicer-saves/${s.id}/assign`, { method: 'POST', session: adminSession, body: { new_model: true } });
       assert(created.status === 200 && fs.existsSync(lib('Mystery part/Mystery part.3mf')) && await byName('Mystery part'), `Assigning a new model failed: ${JSON.stringify(created.data)}`);
+      count = await apiReq('/api/slicer-saves/count', { session: adminSession });
+      assert(count.data.unmatched === 0, `An assigned save is no longer counted, got ${JSON.stringify(count.data)}`);
       await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
+    });
+
+    await check('Slicer saves from MakerWorld: a 3MF that matches no file becomes a model of its page, or joins the model with that Source', async () => {
+      const AdmZip = require('adm-zip');
+      const { meshTo3mf } = require(path.join(ROOT_DIR, 'server/utils/3mf'));
+      const { metadataOf, makerWorldOf } = require(path.join(ROOT_DIR, 'server/utils/sources/fileOrigin'));
+      // What Bambu Studio keeps at the top of 3dmodel.model of a project from MakerWorld
+      const meta = metadataOf('<model><metadata name="Title">水切り台 &amp; stand</metadata><metadata name="Designer">Kote</metadata><metadata name="DesignerUserId">8</metadata>'
+        + '<metadata name="DesignProfileId">62001</metadata><metadata name="DesignModelId">US6262drain</metadata><metadata name="Empty"/><resources><metadata name="Title">not this</metadata></resources></model>');
+      assert(meta.Title === '水切り台 & stand' && meta.Empty === '' && makerWorldOf(meta).profileId === 62001 && makerWorldOf(meta).designerUid === 8, `MakerWorld metadata: ${JSON.stringify(meta)}`);
+      assert(makerWorldOf({ Title: 'x', Application: 'BambuStudio' }) === null, 'A 3MF without the MakerWorld metadata came from nowhere known');
+
+      const mwSave = (n, { uid = 8, profile = 62001, modelId = 'US6262drain' } = {}) => {
+        const z = new AdmZip(meshTo3mf({ verts: [[0, 0, 0], [n, 0, 0], [0, n, 0]], tris: [[0, 1, 2]] }));
+        const model = z.readAsText('3D/3dmodel.model').replace('<resources>', `<metadata name="Application">BambuStudio-02.07.01.62</metadata><metadata name="Title">水切り台</metadata>`
+          + `<metadata name="Designer">Kote</metadata><metadata name="DesignerUserId">${uid}</metadata><metadata name="DesignProfileId">${profile}</metadata>`
+          + `<metadata name="DesignModelId">${modelId}</metadata>\n <resources>`);
+        z.updateFile('3D/3dmodel.model', Buffer.from(model, 'utf8'));
+        return z.toBuffer();
+      };
+      const lib = (rel) => path.join(tmpLibDir, ...rel.split('/'));
+      const put = (rel, data) => { fs.mkdirSync(path.dirname(lib(rel)), { recursive: true }); fs.writeFileSync(lib(rel), data); };
+      const saves = async () => {
+        assert((await apiReq('/api/slicer-saves/scan', { method: 'POST', session: adminSession })).status === 200, 'Checking .slicer-saves failed');
+        return (await apiReq('/api/slicer-saves', { session: adminSession })).data.saves;
+      };
+      const listings = () => makerWorldHits.filter(u => u.includes('/design-service/published/')).length;
+
+      // Nothing in the library has this page: after the quiet time a new model of the page,
+      // named in the owner's language, with the save as its main file and the page copied in
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '0' } });
+      put('.slicer-saves/podstawka do odsączania.3mf', mwSave(70));
+      let s = (await saves()).find(x => x.name === 'podstawka do odsączania.3mf');
+      assert(s && s.status === 'imported' && /^New model Drying rack from MakerWorld/.test(s.message), `A MakerWorld save must become a model of its page, got ${s && s.status}: ${s && s.message}`);
+      assert(s.origin && s.origin.url === 'https://makerworld.com/en/models/6262' && s.origin.designer === 'Kote', `The page it came from: ${JSON.stringify(s.origin)}`);
+      assert(listings() === 3, `The designer's 120 designs come 50 a page: 3 requests, got ${listings()}`);
+      const rack = (await apiReq(`/api/models/${s.imported_model_id}`, { session: adminSession })).data;
+      assert(rack.name === 'Drying rack' && rack.source_url === 'https://makerworld.com/en/models/6262' && fs.existsSync(lib('Drying rack/podstawka do odsączania.3mf')),
+        `The new model: ${JSON.stringify({ name: rack.name, source: rack.source_url })}`);
+      assert(rack.preview_file_id === s.imported_file_id, 'The save is the main file of the new model');
+      for (let i = 0; i < 100 && !fs.existsSync(lib('Drying rack/README.md')); i++) await new Promise(r => setTimeout(r, 100));
+      assert(/For small things/.test(fs.readFileSync(lib('Drying rack/README.md'), 'utf8')), 'The page is copied into the new model');
+      await saves();
+      assert(listings() === 3, 'MakerWorld is asked once per content of a save');
+
+      // Another save from that page, with another name: a new file of that model (once quiet)
+      await apiReq('/api/settings/system', { method: 'POST', session: adminSession, body: { slicer_quiet_minutes: '5' } });
+      put('.slicer-saves/drainer_v2.3mf', mwSave(71));
+      s = (await saves()).find(x => x.name === 'drainer_v2.3mf');
+      assert(s && s.status === 'pending' && s.into_model_id === rack.id && s.model_name === 'Drying rack', `A save of a page that is a model's Source waits to join it: ${JSON.stringify(s)}`);
+      const imp = await apiReq(`/api/slicer-saves/${s.id}/import`, { method: 'POST', session: adminSession });
+      assert(imp.status === 200 && fs.existsSync(lib('Drying rack/drainer v2.3mf')), `Import now adds it to the model: ${JSON.stringify(imp.data)}`);
+      assert(((await apiReq('/api/models?search=Drying', { session: adminSession })).data.models || []).filter(m => m.name.startsWith('Drying rack')).length === 1, 'No second model of the page');
+
+      // Saved again: the file of that name in the model gets a new version
+      put('.slicer-saves/drainer_v2.3mf', mwSave(72));
+      s = (await saves()).find(x => x.name === 'drainer_v2.3mf');
+      assert(s.status === 'pending' && s.file_name === 'drainer v2.3mf', `A save of a file it added replaces that file: ${JSON.stringify(s)}`);
+
+      // MakerWorld does not know the file's design: it waits for a decision, saying where it is from
+      put('.slicer-saves/Lost.3mf', mwSave(73, { uid: 9, profile: 1, modelId: 'USlost123' }));
+      s = (await saves()).find(x => x.name === 'Lost.3mf');
+      assert(s.status === 'unmatched' && s.origin && s.origin.title === '水切り台' && !s.origin.url && /Not among the models of Kote on MakerWorld/.test(s.message),
+        `An unknown MakerWorld design waits: ${JSON.stringify(s)}`);
+      for (const x of await saves()) {
+        if (['podstawka do odsączania.3mf', 'drainer_v2.3mf', 'Lost.3mf'].includes(x.name)) await apiReq(`/api/slicer-saves/${x.id}`, { method: 'DELETE', session: adminSession });
+      }
     });
 
     await check('Slicer saves of one file ("x_3dl-t.3mf", "x_3dl-t(2).3mf"): newest wins, older copies are cleaned up', async () => {

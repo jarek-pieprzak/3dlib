@@ -77,8 +77,11 @@ router.get('/', (req, res) => {
       )`);
       params.push(s, s, s, s, s);
     }
-    if (category) { conds.push("m.category_id=?"); params.push(Number(category)); }
-    if (tag) { conds.push("m.id IN (SELECT model_id FROM model_tags WHERE tag_id=?)"); params.push(Number(tag)); }
+    // category=none / tag=none: the models still to sort (no category, or one that is gone; no tag)
+    if (category === 'none') conds.push('(m.category_id IS NULL OR m.category_id NOT IN (SELECT id FROM categories))');
+    else if (category) { conds.push("m.category_id=?"); params.push(Number(category)); }
+    if (tag === 'none') conds.push('m.id NOT IN (SELECT model_id FROM model_tags)');
+    else if (tag) { conds.push("m.id IN (SELECT model_id FROM model_tags WHERE tag_id=?)"); params.push(Number(tag)); }
     if (format && format !== 'all') {
       conds.push("m.id IN (SELECT DISTINCT model_id FROM files WHERE file_type=? AND deleted_at IS NULL)");
       params.push(format.toLowerCase());

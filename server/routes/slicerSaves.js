@@ -31,18 +31,34 @@ function fail(res, e) {
 
 // ─── GET /api/slicer-saves ───────────────────────────────────────────────────
 router.get('/', authenticate, requireAdmin, (req, res) => {
-  const rows = all(`SELECT s.*, f.original_name as file_name, f.model_id, m.name as model_name,
-      fi.original_name as imported_name, fi.model_id as imported_model_id, mi.name as imported_model_name
+  // model_id: the model of the file the save replaces, or the one it joins as a new file (into_*)
+  const rows = all(`SELECT s.*, f.original_name as file_name, COALESCE(f.model_id, s.model_id) as model_id, COALESCE(m.name, mt.name) as model_name,
+      s.model_id as into_model_id, fi.original_name as imported_name, fi.model_id as imported_model_id, mi.name as imported_model_name
     FROM slicer_saves s
     LEFT JOIN files f ON f.id = s.file_id LEFT JOIN models m ON m.id = f.model_id
+    LEFT JOIN models mt ON mt.id = s.model_id
     LEFT JOIN files fi ON fi.id = s.imported_file_id LEFT JOIN models mi ON mi.id = fi.model_id
     ORDER BY s.mtime_ms DESC`);
+  // Where a save came from (a MakerWorld page), as the page shows it
+  const originOf = (r) => {
+    let o = null;
+    try { o = r.origin ? JSON.parse(r.origin) : null; } catch (e) { o = null; }
+    return o && o.site && o.hash === r.hash ? { site: o.site, title: o.title || '', designer: o.designer || '', url: o.url || null } : null;
+  };
   res.json({
     quiet_minutes: slicerSaves.quietMinutes(),
     cleanup_days: slicerSaves.cleanupDays(),
     now: Date.now(),
-    saves: rows.map(r => ({ ...r, clean_name: slicerSaves.cleanName(r.name), url: `/api/slicer-saves/${r.id}/file/${encodeURIComponent(r.name)}` }))
+    saves: rows.map(r => ({ ...r, origin: originOf(r), clean_name: slicerSaves.cleanName(r.name), url: `/api/slicer-saves/${r.id}/file/${encodeURIComponent(r.name)}` }))
   });
+});
+
+// ─── GET /api/slicer-saves/count: saves waiting for the admin (the sidebar's badge) ─
+// unmatched: no library file to go to ("Needs a decision"); failed: the import failed
+router.get('/count', authenticate, requireAdmin, (req, res) => {
+  const r = get(`SELECT SUM(CASE WHEN status = 'unmatched' THEN 1 ELSE 0 END) AS unmatched,
+    SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS failed FROM slicer_saves`);
+  res.json({ unmatched: Number(r && r.unmatched) || 0, failed: Number(r && r.failed) || 0 });
 });
 
 // ─── POST /api/slicer-saves/scan: check the folder now ───────────────────────

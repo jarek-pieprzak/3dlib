@@ -595,7 +595,14 @@ const UI = {
         </div>
         <div class="trash-actions">${actions}</div>
       </div>`;
-    const preview = (s) => /\.(3mf|stl|obj)$/i.test(s.name) ? `<button type="button" class="btn btn-ghost btn-xs" onclick="App.previewSlicerSave(${s.id})">Preview</button>` : '';
+    // " · from MakerWorld: <page title> by <designer>" (what the 3MF says, linked to the page found)
+    const from = (s) => {
+      const o = s.origin;
+      if (!o || !o.site) return '';
+      const title = this.escapeHtml(o.title || 'its page');
+      return ` · from ${this.escapeHtml(o.site)}: ${o.url ? `<a href="${this.escapeHtml(o.url)}" target="_blank" rel="noopener">${title}</a>` : title}${o.designer ? ` by ${this.escapeHtml(o.designer)}` : ''}`;
+    };
+    const preview = (s) => /\.(3mf|stl|obj)$/i.test(s.name) ?`<button type="button" class="btn btn-ghost btn-xs" onclick="App.previewSlicerSave(${s.id})">Preview</button>` : '';
     const discard = (s) => `<button type="button" class="file-action-btn delete" title="Delete this saved file" onclick="App.deleteSlicerSave(${s.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
     const section = (title, hint, items) => items.length ? `
       <div class="glass-panel trash-section">
@@ -606,14 +613,17 @@ const UI = {
     const quietMs = data.quiet_minutes * 60000;
     const pending = by('pending').map(s => {
       const left = Math.max(1, Math.ceil((quietMs - (data.now - s.mtime_ms)) / 60000));
-      return row(s, `for ${modelLink(s.model_id, s.model_name, s.file_name)} · imports in ${left} min`,
+      const where = s.file_id ? `for ${modelLink(s.model_id, s.model_name, s.file_name)}`
+        : s.into_model_id ? `a new file in ${modelLink(s.into_model_id, s.model_name)}`
+          : 'a new model';
+      return row(s, `${where}${from(s)} · imports in ${left} min`,
         `${preview(s)}<button type="button" class="btn btn-primary btn-xs" onclick="App.importSlicerSave(${s.id})">Import now</button>`);
     });
     const errors = by('error').map(s => row(s, `<span style="color:var(--error)">${this.escapeHtml(s.message || 'Import failed')}</span>`,
       `<button type="button" class="btn btn-secondary btn-xs" onclick="App.importSlicerSave(${s.id})">Retry</button>${discard(s)}`));
-    const unmatched = by('unmatched').map(s => row(s, 'no matching file',
+    const unmatched = by('unmatched').map(s => row(s, `no matching file${from(s)}${s.origin && s.message ? ` · ${this.escapeHtml(s.message)}` : ''}`,
       `${preview(s)}<button type="button" class="btn btn-primary btn-xs" onclick="App.showAssignSlicerSave(${s.id})">Assign...</button>${discard(s)}`));
-    const imported = by('imported').map(s => row(s, `${this.escapeHtml(s.message || 'Imported')} · ${modelLink(s.imported_model_id, s.imported_model_name, s.imported_name)}`, ''));
+    const imported = by('imported').map(s => row(s, `${this.escapeHtml(s.message || 'Imported')} · ${modelLink(s.imported_model_id, s.imported_model_name, s.imported_name)}${from(s)}`, ''));
     const superseded = by('superseded').map(s => row(s, `${this.escapeHtml(s.message || '')} · ${modelLink(s.model_id, s.model_name, s.file_name)}`, `${preview(s)}<button type="button" class="btn btn-secondary btn-xs" onclick="App.showAssignSlicerSave(${s.id})">Assign...</button>${discard(s)}`));
     const downloads = by('download').map(s => row(s, `opened from ${modelLink(s.model_id, s.model_name, s.file_name) || 'the library'}, not changed`, ''));
     const empty = !saves.length;
@@ -623,7 +633,8 @@ const UI = {
         <div>
           <h1 class="page-title">Slicer saves</h1>
           <div class="page-subtitle">Projects your slicer saves to the library's <code>.slicer-saves</code> folder. A changed file replaces the file it was opened from
-            ${data.quiet_minutes > 0 ? `${data.quiet_minutes} minute${data.quiet_minutes === 1 ? '' : 's'} after the last save` : 'right away'}; the old content stays in its History.</div>
+            ${data.quiet_minutes > 0 ? `${data.quiet_minutes} minute${data.quiet_minutes === 1 ? '' : 's'} after the last save` : 'right away'}; the old content stays in its History.
+            A 3MF from MakerWorld goes into the model whose Source is its page, or becomes a new model of that page.</div>
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" onclick="App.checkSlicerSaves()">Check now</button>
@@ -2751,10 +2762,10 @@ const UI = {
           <input type="text" placeholder="Search models, tags, categories..." id="search-input" oninput="App.handleSearch(this.value)">
         </div>
         <select class="filter-select" id="filter-category" onchange="App.handleFilter()">
-          <option value="">All Categories</option>${catOpts}
+          <option value="">All Categories</option><option value="none">Uncategorized</option>${catOpts}
         </select>
         <select class="filter-select" id="filter-tag" onchange="App.handleFilter()">
-          <option value="">All Tags</option>${tagOpts}
+          <option value="">All Tags</option><option value="none">Untagged</option>${tagOpts}
         </select>
         <select class="filter-select" id="filter-user" onchange="App.handleFilter()">
           <option value="">All Users</option>${userOpts}

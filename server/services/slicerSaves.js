@@ -7,6 +7,10 @@
 //    content goes to the file's history (.versions). A 3MF saved from an STL becomes
 //    "<name>.3mf" next to it and the model's main file. A file of a read-only project (the
 //    archive of a kit) is never replaced: the save joins its history as a version;
+//  * a 3MF that matches no file but came from MakerWorld (its metadata name the designer and the
+//    print profile; the designer's models on MakerWorld give the page) joins the model whose
+//    Source is that page as a new file, or becomes a new model with that Source: named after the
+//    page, its description and pictures copied in (services/sourceImport.js);
 //  * a file that matches nothing waits on the "Slicer saves" page to be assigned by hand.
 // Files are copied, never moved, so a slicer that keeps the project open can save again.
 // Downloads and imported files are deleted slicer_cleanup_days (default 1) after the last save,
@@ -23,10 +27,15 @@ const { fold } = require('../utils/names');
 const { getFileType } = require('../utils/library');
 const projectFiles = require('../utils/projectFiles');
 const fileVersions = require('../utils/fileVersions');
+const fileOrigin = require('../utils/sources/fileOrigin');
+const makerworld = require('../utils/sources/makerworld');
+const { sourceOf } = require('../utils/sources');
+const sourceHttp = require('../utils/sources/http');
 
 const SAVES_DIR = path.join(LIBRARY_PATH, '.slicer-saves');
 const SAVE_EXTS = ['.3mf', '.stl', '.step', '.stp', '.obj', '.gcode', '.bgcode'];
 const INTERVAL_MS = 30000;
+const ORIGIN_RETRY_MS = 3600000; // MakerWorld could not be asked: again after an hour
 
 function numberSetting(key, def) {
   const row = get('SELECT value FROM system_settings WHERE key = ?', [key]);
@@ -118,6 +127,93 @@ async function importSave(savePath, target) {
   return { fileId: added.id, message: `Added ${added.original_name}` };
 }
 
+// Where a 3MF that matches no file came from: { site, title, designer, url } when its metadata say
+// MakerWorld (url: the page, found among the designer's models; error / missing when it was not).
+// Read and looked up once per content (slicer_saves.origin); MakerWorld out of reach: again after
+// an hour. null for a file from nowhere known.
+async function originOf(rec, p, hash) {
+  let o = null;
+  try { o = rec.origin ? JSON.parse(rec.origin) : null; } catch (e) { o = null; }
+  if (o && o.hash === hash && (!o.error || Date.now() - (o.checked_at || 0) < ORIGIN_RETRY_MS)) return o.site ? o : null;
+  let meta = {};
+  try { meta = await fileOrigin.readMetadata(p); } catch (e) { /* not a readable 3MF */ }
+  const mw = fileOrigin.makerWorldOf(meta);
+  o = { hash, checked_at: Date.now() };
+  if (mw) {
+    Object.assign(o, { site: mw.site, title: mw.title, designer: mw.designer });
+    try {
+      const id = await makerworld.designOfFile(mw, sourceHttp);
+      if (id) o.url = makerworld.pageUrl(id);
+      else o.missing = true;
+    } catch (e) {
+      o.error = `MakerWorld could not be asked where it is from (${e.message})`;
+    }
+  }
+  run('UPDATE slicer_saves SET origin = ? WHERE id = ?', [JSON.stringify(o), rec.id], true);
+  return o.site ? o : null;
+}
+
+// The model whose Source is that page (the newest, when Check for updates made versions of it)
+function modelOfSource(url) {
+  const page = sourceOf(url);
+  if (!page) return null;
+  return all("SELECT * FROM models WHERE deleted_at IS NULL AND kit_source_id IS NULL AND source_url IS NOT NULL AND source_url != '' ORDER BY id DESC")
+    .find(m => {
+      const s = sourceOf(m.source_url);
+      return s && s.source === page.source && s.id === page.id;
+    }) || null;
+}
+
+// A file of the model with that name (a save of a file added from .slicer-saves before)
+function fileNamed(model, name) {
+  const f = get(`SELECT id FROM files WHERE model_id = ? AND deleted_at IS NULL AND library_path IS NOT NULL
+    AND library_path NOT LIKE '%::%' AND ulower(filename) = ulower(?)`, [model.id, name]);
+  return activeFile(f && f.id);
+}
+
+// A save as a new file in a model's folder ("Xmas_tree_150.3mf" -> "Xmas tree 150.3mf")
+function importInto(model, src, name) {
+  projectFiles.assertNotScanning();
+  const folder = projectFiles.ensureProjectFolder(model);
+  const file = addFile(model, src, path.join(folder, cleanName(name)));
+  return { fileId: file.id, modelId: model.id, message: `Added ${file.original_name}` };
+}
+
+// The admin a model made from a save belongs to: one with a Bambu Lab login first, so the copy of
+// a MakerWorld page gets its model files too
+function ownerId() {
+  const u = get(`SELECT id FROM users WHERE role = 'admin'
+    ORDER BY CASE WHEN bambu_token IS NOT NULL AND bambu_token != '' THEN 0 ELSE 1 END, id LIMIT 1`);
+  return u ? u.id : null;
+}
+
+// A new project in the library root for a save from a site's page: named after the page in its
+// owner's language (else the title in the file), Source = the page. The save is its main file;
+// the page is copied in like for a model made from a link (README, pictures, documents; the
+// site's model files with the owner's Bambu Lab login).
+async function newSourceModel(src, name, origin) {
+  projectFiles.assertNotScanning();
+  const sourceImport = require('./sourceImport');
+  const userId = ownerId();
+  let title = '';
+  try { title = ((await sourceImport.titleOf(origin.url, userId)) || {}).title || ''; } catch (e) { /* the file's own title */ }
+  const base = String(title || origin.title || cleanName(name).replace(/\.[^.]+$/, ''))
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 120) || `${origin.site} model`;
+  for (let n = 1; n < 100; n++) {
+    const stem = n === 1 ? base : `${base} (${n})`;
+    const folder = path.join(LIBRARY_PATH, stem);
+    if (projectFiles.validateName(stem) || projectFiles.exists(folder)
+      || get('SELECT id FROM models WHERE ulower(name) = ulower(?) OR ulower(library_path) = ulower(?)', [stem, folder])) continue;
+    fs.mkdirSync(folder);
+    const r = run('INSERT INTO models (name, library_path, user_id, source_url) VALUES (?, ?, ?, ?)', [stem, folder, userId, origin.url], true);
+    const model = get('SELECT * FROM models WHERE id = ?', [r.lastId]);
+    const file = addFile(model, src, path.join(folder, cleanName(name)), { makeMain: true });
+    sourceImport.maybeStart(model, null, userId);
+    return { fileId: file.id, modelId: model.id, message: `New model ${stem} from ${origin.site}` };
+  }
+  throw new projectFiles.FsError(409, `No free name for a model "${base}"`);
+}
+
 // Passes run one after another: a pass asked for while one runs (the timer, "Import now")
 // waits for it instead of being dropped
 let queue = Promise.resolve();
@@ -178,24 +274,37 @@ async function processOnce({ importNow = [] } = {}) {
       run('UPDATE slicer_saves SET file_size = ?, mtime_ms = ?, hash = ? WHERE id = ?', [st.size, mtime, hash, rec.id], true);
     }
 
-    const target = matchSave(name);
+    const imported = hash === rec.imported_hash;
+    const download = !imported && !!get('SELECT hash FROM slicer_downloads WHERE hash = ?', [hash]);
+    let target = matchSave(name);
+    // A 3MF from MakerWorld that matches no file: the model with that page as its Source (its
+    // file of this name is the one the save replaces), else a new model from the page
+    let origin = null;
+    let into = null;
+    if (!target && !imported && !download && path.extname(name).toLowerCase() === '.3mf') {
+      origin = await originOf(rec, p, hash);
+      into = origin && origin.url ? modelOfSource(origin.url) : null;
+      target = into ? fileNamed(into, cleanName(name)) : null;
+      if (target) into = null;
+    }
     const destination = target && destinationOf(target, path.extname(name).toLowerCase());
     let status;
     let message = null;
-    if (hash === rec.imported_hash) {
+    if (imported) {
       status = 'imported';
       message = rec.message;
-    } else if (get('SELECT hash FROM slicer_downloads WHERE hash = ?', [hash])) {
+    } else if (download) {
       status = 'download';
-    } else if (!target) {
+    } else if (!target && !(origin && origin.url)) {
       status = 'unmatched';
+      if (origin) message = origin.error || `Not among the models of ${origin.designer || 'its designer'} on ${origin.site}`;
     } else if (destination && destination.slicer_saved_at && mtime < destination.slicer_saved_at) {
       // A newer save of this file is in the library already: do not go back to this one
       status = 'superseded';
       message = 'A newer save of this file is already in the library';
     } else if (Date.now() - st.mtimeMs >= quietMinutes() * 60000 || importNow.includes(rec.id)) {
       try {
-        const r = await importSave(p, target);
+        const r = target ? await importSave(p, target) : into ? importInto(into, p, name) : await newSourceModel(p, name, origin);
         run("UPDATE slicer_saves SET imported_hash = ?, imported_file_id = ?, imported_at = datetime('now') WHERE id = ?", [hash, r.fileId, rec.id], true);
         run('UPDATE files SET slicer_saved_at = ? WHERE id = ?', [mtime, r.fileId], true);
         status = 'imported';
@@ -208,7 +317,8 @@ async function processOnce({ importNow = [] } = {}) {
     } else {
       status = 'pending';
     }
-    run('UPDATE slicer_saves SET status = ?, file_id = ?, message = ? WHERE id = ?', [status, target ? target.id : null, message, rec.id], true);
+    run('UPDATE slicer_saves SET status = ?, file_id = ?, model_id = ?, message = ? WHERE id = ?',
+      [status, target ? target.id : null, into ? into.id : null, message, rec.id], true);
   }
 
   // Spent copies go: older copies of a file saved again at once (the slicer names a new download
@@ -266,11 +376,9 @@ function addToModel(rec, modelId) {
   projectFiles.assertNotScanning();
   const model = get('SELECT * FROM models WHERE id = ? AND deleted_at IS NULL', [Number(modelId)]);
   if (!model) throw new projectFiles.FsError(404, 'Model not found');
-  const folder = projectFiles.ensureProjectFolder(model);
-  const file = addFile(model, savePath(rec), path.join(folder, cleanName(rec.name)));
-  const message = `Added ${file.original_name}`;
-  run("UPDATE slicer_saves SET status = 'imported', imported_hash = hash, imported_file_id = ?, imported_at = datetime('now'), message = ? WHERE id = ?", [file.id, message, rec.id]);
-  return { fileId: file.id, modelId: model.id, message };
+  const r = importInto(model, savePath(rec), rec.name);
+  run("UPDATE slicer_saves SET status = 'imported', imported_hash = hash, imported_file_id = ?, imported_at = datetime('now'), message = ? WHERE id = ?", [r.fileId, r.message, rec.id]);
+  return r;
 }
 
 // A new project folder in the library root, named after the save

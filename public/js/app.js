@@ -101,6 +101,9 @@ const App = {
     this.renderSidebarCollections();
     this.loadVersion();
     this.updateUserNav();
+    // The Slicer saves count: every minute while the tab is on screen, and when it comes back
+    setInterval(() => { if (!document.hidden) this.refreshSlicerBadge(); }, 60000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.refreshSlicerBadge(); });
     this.updateThemeIcon();
     this.initPrinters();
     // My printers for the fit check (the picker in the top bar)
@@ -1495,6 +1498,7 @@ const App = {
     if (trashLink) trashLink.style.display = this.currentUser && this.currentUser.role !== 'viewer' ? '' : 'none';
     const slicerLink = document.getElementById('nav-slicer-saves');
     if (slicerLink) slicerLink.style.display = this.currentUser && this.currentUser.role === 'admin' ? '' : 'none';
+    this.refreshSlicerBadge();
 
     if (this.currentUser) {
       if (avatar) avatar.textContent = (this.currentUser.username || 'U').charAt(0).toUpperCase();
@@ -5035,8 +5039,38 @@ const App = {
       const data = await API.getSlicerSaves();
       this.slicerSaves = data.saves || [];
       this.el.innerHTML = UI.slicerSavesPage(data);
+      const count = (status) => this.slicerSaves.filter(s => s.status === status).length;
+      this.paintSlicerBadge({ unmatched: count('unmatched'), failed: count('error') });
     } catch (e) {
       this.el.innerHTML = `<div class="empty-state"><div class="empty-state-text">${UI.escapeHtml(e.message || 'Failed to load slicer saves')}</div></div>`;
+    }
+  },
+
+  // The count beside "Slicer saves" in the sidebar: saves that match no library file ("Needs a
+  // decision") or failed to import. Admins only; on login, every minute and from the page itself.
+  async refreshSlicerBadge() {
+    if (!this.currentUser || this.currentUser.role !== 'admin') return this.paintSlicerBadge(null);
+    try { this.paintSlicerBadge(await API.getSlicerSavesCount()); } catch (e) { /* keep the last count */ }
+  },
+
+  paintSlicerBadge(counts) {
+    const unmatched = (counts && counts.unmatched) || 0;
+    const failed = (counts && counts.failed) || 0;
+    const n = unmatched + failed;
+    const parts = [unmatched && `${unmatched} need${unmatched === 1 ? 's' : ''} a decision`, failed && `${failed} failed`].filter(Boolean);
+    const badge = document.getElementById('nav-slicer-saves-badge');
+    if (badge) {
+      badge.hidden = !n;
+      badge.textContent = n > 99 ? '99+' : String(n);
+      badge.classList.toggle('is-error', failed > 0);
+    }
+    const link = document.getElementById('nav-slicer-saves');
+    if (link) link.title = n ? `Slicer saves: ${parts.join(', ')}` : 'Slicer saves';
+    const menu = document.querySelector('.mobile-menu-btn');
+    if (menu) {
+      menu.classList.toggle('has-badge', n > 0);
+      menu.classList.toggle('is-error', failed > 0);
+      menu.title = n ? `Menu · Slicer saves: ${parts.join(', ')}` : '';
     }
   },
 

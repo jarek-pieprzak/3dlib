@@ -181,4 +181,22 @@ async function load(id, http, { token, lang = 'en' } = {}) {
   return { ...page, files, archiveEntries: files.some(f => f.unzip) ? rawFilesOf(design) : [], filesNote: refused && !files.length ? 'login_refused' : undefined };
 }
 
-module.exports = { site: 'MakerWorld', usesBambuLogin: true, idOf, pageUrl, isAsset, load, pageOf, hardwareOf, apiUrl, linkOf, rawFilesOf };
+// The design a MakerWorld 3MF came from (sources/fileOrigin.js makerWorldOf). The file names its
+// designer and print profile, not the design's number; the designer's published designs (public,
+// 100 a page) list each design's profiles (instances[].profileId) and its cover, on a path with
+// the file's DesignModelId. -> the design's number, or null when none of them is it.
+async function designOfFile(origin, http) {
+  let offset = 0;
+  for (let page = 0; page < 30; page++) {
+    const j = await http.json(`${SITE}/api/v1/design-service/published/${origin.designerUid}/design?offset=${offset}&limit=100`);
+    const hits = j && Array.isArray(j.hits) ? j.hits : [];
+    const hit = hits.find(h => h && ((origin.profileId && (h.instances || []).some(i => i && Number(i.profileId) === origin.profileId))
+      || (origin.modelId && String(h.coverUrl || '').includes(`/model/${origin.modelId}/`))));
+    if (hit && Number(hit.id) > 0) return Number(hit.id);
+    offset += hits.length;
+    if (!hits.length || offset >= (Number(j.total) || 0)) return null;
+  }
+  return null;
+}
+
+module.exports = { site: 'MakerWorld', usesBambuLogin: true, idOf, pageUrl, isAsset, load, pageOf, hardwareOf, apiUrl, linkOf, rawFilesOf, designOfFile };

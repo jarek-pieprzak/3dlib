@@ -380,6 +380,17 @@ input,select,textarea{font-family:var(--font)}
 .sidebar.collapsed .sidebar-user-card .sidebar-actions{display:none}
 .sidebar.collapsed .sidebar-printer-card{padding:6px 0;display:flex;justify-content:center}
 
+/* Slicer saves waiting for a decision (App.paintSlicerBadge): amber, red when an import failed.
+   On the icon rail it sits on the icon; a narrow window's menu button gets a dot. */
+.nav-badge{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--warning);color:#1a1205;font-size:.7rem;font-weight:700;font-style:normal;line-height:18px;text-align:center}
+.nav-badge.is-error{background:var(--error);color:#fff}
+.nav-badge[hidden]{display:none}
+.sidebar.collapsed .sidebar-nav-item{position:relative}
+.sidebar.collapsed .nav-badge{position:absolute;top:2px;right:0;min-width:16px;height:16px;padding:0 4px;font-size:.625rem;line-height:16px}
+.mobile-menu-btn{position:relative}
+.mobile-menu-btn.has-badge::after{content:'';position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:var(--warning);box-shadow:0 0 0 2px var(--bg-primary)}
+.mobile-menu-btn.has-badge.is-error::after{background:var(--error)}
+
 /* ─── Main Content Wrapper ──────────────────────────────────────────────── */
 .app-main-wrapper{flex:1;margin-left:240px;display:flex;flex-direction:column;min-width:0;min-height:100vh;transition:margin-left var(--transition)}
 .sidebar-collapsed .app-main-wrapper{margin-left:64px}

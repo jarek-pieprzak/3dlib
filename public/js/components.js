@@ -2406,7 +2406,7 @@ const UI = {
           <div class="kit-part-main">
             <div class="kit-part-label">${esc(p.label)}${p.estimate ? ' <span class="kit-est" title="Estimated: the manual does not give this quantity">estimate</span>' : ''}${p.optional ? ' <span class="kit-est" title="Not in the manual: set how many you need">optional</span>' : ''}</div>
             <div class="kit-part-path">${esc(path)}</div>
-            <div class="kit-part-meta">${this.formatSize(p.file.file_size)}${this.MEASURABLE.includes(p.file.file_type) ? ` <span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span>` : ''}</div>
+            <div class="kit-part-meta">${this.formatSize(p.file.file_size)}${this.MEASURABLE.includes(p.file.file_type) ? ` <span class="fit-dim" data-dim-file="${Number(p.file.id)}"></span><span class="kit-filament" data-filament-file="${Number(p.file.id)}"></span>` : ''}</div>
           </div>
           ${p.auto !== undefined && !locked ? `<button type="button" class="kit-reset" title="Back to the computed ${p.auto}" onclick="event.stopPropagation(); App.kitQty(this.closest('.kit-part').dataset.key, '')">↺ ${p.auto}</button>` : ''}
           ${locked ? slicer(p.file) : ''}
@@ -2425,6 +2425,7 @@ const UI = {
         <div>
           <div class="kit-parts-title">Files to print</div>
           <div class="kit-parts-sub">${t.files} files · ${t.prints} prints · ${this.formatSize(t.bytes)} to download</div>
+          ${t.files ? `<div class="kit-filament-line"><span class="kit-filament-total" data-filament-total></span>${this.filamentSettings(kit.filament)}</div>` : ''}
         </div>
         <div class="kit-parts-actions">
           <button type="button" class="btn btn-secondary btn-sm" onclick="App.kitCopyList()">Copy list</button>
@@ -2459,6 +2460,24 @@ const UI = {
         ${locked ? (bom.cfg.docs ? `<div class="kit-muted kit-docs-note">The ${manuals.length} instruction files are in the ZIP.</div>` : '')
           : `<span class="kit-check-wrap"><label class="kit-check"><input type="checkbox"${bom.cfg.docs ? ' checked' : ''} onchange="App.kitSet('docs', this.checked)">Add the ${manuals.length} instruction ${manuals.every(f => /\.pdf$/i.test(f.original_name)) ? 'PDFs' : 'files'} to the ZIP</label>${this.kitTip('docs')}</span>`}` : ''}
       </div>`;
+  },
+
+  // The filament of the estimates (App.filamentSettings): kind, infill, price per kg, currency
+  filamentSettings(s) {
+    const f = s || { type: 'PLA', infill: 15, price: null, currency: '' };
+    const densities = typeof PrintFit !== 'undefined' ? PrintFit.FILAMENTS : { PLA: 1.24 };
+    const kinds = Object.keys(densities);
+    return `
+      <details class="kit-filament-settings">
+        <summary title="The filament, infill and price of the estimate">Change</summary>
+        <div class="kit-filament-form" onclick="event.stopPropagation()">
+          <label>Filament <select class="form-select" onchange="App.setFilament('type', this.value)">${kinds.map(k => `<option value="${k}"${k === f.type ? ' selected' : ''}>${k} (${densities[k]} g/cm³)</option>`).join('')}</select></label>
+          <label>Infill <input type="number" class="form-input" min="0" max="100" step="5" value="${Number(f.infill)}" onchange="App.setFilament('infill', this.value)"> %</label>
+          <label>Price <input type="number" class="form-input" min="0" step="1" value="${f.price || ''}" placeholder="per kg" onchange="App.setFilament('price', this.value)"></label>
+          <label>Currency <input type="text" class="form-input" maxlength="6" value="${this.escapeHtml(f.currency || '')}" placeholder="zł" onchange="App.setFilament('currency', this.value)"></label>
+          <p>Walls from the surface (0.9 mm), the rest at the infill; supports, brims and purge not counted.</p>
+        </div>
+      </details>`;
   },
 
   kitNameForm({ value = '', submitLabel }) {

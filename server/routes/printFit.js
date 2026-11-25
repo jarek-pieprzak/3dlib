@@ -40,7 +40,8 @@ router.put('/printer-beds', authenticate, (req, res) => {
 });
 
 // ─── GET /api/models/:id/sizes ────────────────────────────────────────────────
-// { sizes: { <file id>: [x, y, z] }, errors: { <file id>: message }, pending } for the model's 3D
+// { sizes: { <file id>: [x, y, z] }, volumes: { <file id>: [mm³, mm²] } (STL), errors: { <file id>:
+// message }, pending } for the model's 3D
 // files; its files waiting to be measured go first in the queue (?first=: these before the others)
 router.get('/models/:id/sizes', (req, res) => {
   try {
@@ -50,12 +51,14 @@ router.get('/models/:id/sizes', (req, res) => {
     const first = String(req.query.first || '').split(',').map(Number).filter(Number.isInteger).slice(0, 2000);
     const pending = dimensions.prioritize(model.id, first);
     const sizes = {};
+    const volumes = {};
     const errors = {};
-    for (const f of all('SELECT id, dim_x, dim_y, dim_z, dim_error FROM files WHERE model_id = ? AND deleted_at IS NULL AND dim_bytes IS NOT NULL', [model.id])) {
+    for (const f of all('SELECT id, dim_x, dim_y, dim_z, dim_error, dim_vol, dim_area FROM files WHERE model_id = ? AND deleted_at IS NULL AND dim_bytes IS NOT NULL', [model.id])) {
       if (f.dim_error) errors[f.id] = f.dim_error;
       else if (f.dim_x !== null) sizes[f.id] = [f.dim_x, f.dim_y, f.dim_z];
+      if (f.dim_vol !== null && f.dim_area !== null && !f.dim_error) volumes[f.id] = [f.dim_vol, f.dim_area];
     }
-    res.json({ sizes, errors, pending });
+    res.json({ sizes, volumes, errors, pending });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Failed to read the sizes' }); }
 });
 

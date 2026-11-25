@@ -1,7 +1,9 @@
 // Sizes of 3D files (utils/meshSize.js): measured one at a time in a worker thread, so a big file
 // never blocks the server, and kept in files.dim_x / dim_y / dim_z (mm, as placed in the file).
 // dim_bytes is the file size they belong to: a file that changed is measured again; dim_error
-// keeps a failure until the file changes. Models someone has open go first (prioritize).
+// keeps a failure until the file changes. Models someone has open go first (prioritize). STL
+// files get their volume and surface too (dim_vol, dim_area: the filament a print takes); ones
+// measured before that are measured again.
 const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads');
@@ -9,7 +11,8 @@ const { get, all, run, saveDb, UPLOADS_DIR } = require('../database');
 const { MEASURABLE } = require('../utils/meshSize');
 
 const PENDING = `deleted_at IS NULL AND COALESCE(is_archive_entry, 0) = 0 AND COALESCE(library_path, '') NOT LIKE '%::%'
-  AND file_type IN (${MEASURABLE.map(t => `'${t}'`).join(',')}) AND (dim_bytes IS NULL OR dim_bytes != file_size)`;
+  AND file_type IN (${MEASURABLE.map(t => `'${t}'`).join(',')})
+  AND (dim_bytes IS NULL OR dim_bytes != file_size OR (file_type = 'stl' AND dim_vol IS NULL AND dim_error IS NULL))`;
 
 let worker = null;
 let current = null; // { id, size } being measured
@@ -23,17 +26,17 @@ function filePath(f) {
   return f.filename ? path.join(UPLOADS_DIR, f.filename) : null;
 }
 
-function store(id, bytes, size, error) {
-  run('UPDATE files SET dim_x=?, dim_y=?, dim_z=?, dim_bytes=?, dim_error=? WHERE id=?',
-    [size ? size[0] : null, size ? size[1] : null, size ? size[2] : null, bytes, error || null, id], true);
+function store(id, bytes, size, error, volume = null, area = null) {
+  run('UPDATE files SET dim_x=?, dim_y=?, dim_z=?, dim_bytes=?, dim_error=?, dim_vol=?, dim_area=? WHERE id=?',
+    [size ? size[0] : null, size ? size[1] : null, size ? size[2] : null, bytes, error || null, volume, area, id], true);
   // Many small files are measured in a row: save the database once in a while, not every time
   if (!saveTimer) saveTimer = setTimeout(() => { saveTimer = null; saveDb(); }, 5000);
 }
 
 function spawn() {
   worker = new Worker(path.join(__dirname, 'dimensionsWorker.js'), { resourceLimits: { maxOldGenerationSizeMb: 1536 } });
-  worker.on('message', ({ id, size, error }) => {
-    if (current && current.id === id) store(id, current.bytes, size || null, error);
+  worker.on('message', ({ id, size, error, volume, area }) => {
+    if (current && current.id === id) store(id, current.bytes, size || null, error, Number.isFinite(volume) ? volume : null, Number.isFinite(area) ? area : null);
     current = null;
     setImmediate(kick);
   });

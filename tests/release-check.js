@@ -601,6 +601,7 @@ async function runStaticAndUiChecks() {
     const page = UI.modelDetail(vault, false, { kit: 'ussa-vault', view: 'configure' });
     const filesView = UI.modelDetail(vault, false, { kit: 'ussa-vault', view: 'files' });
     assert(builder.includes('Floor 4') && builder.includes('App.kitSlot(3, 1') && builder.includes('kit-tower'), 'The builder must list every floor with its slots');
+    assert(parts.includes('data-filament-total') && parts.includes(`data-filament-file="${bom.parts[0].file.id}"`) && parts.includes("App.setFilament('infill', this.value)"), 'The parts list has the filament estimate and its settings');
     assert(!builder.includes('<b>Garage</b>') && builder.includes('&lt;b&gt;Garage&lt;/b&gt;'), 'Saved configuration names must be escaped');
     const latch = bom.parts.find(p => p.key === 'd:latch');
     assert(latch.qty === 9 && latch.auto === 5, `Latches: 9 by hand, 5 computed, got ${latch.qty} / ${latch.auto}`);
@@ -1495,6 +1496,20 @@ async function runStaticAndUiChecks() {
       let failed = false;
       try { await measure(path.join(dir, 'c.obj'), 'gcode'); } catch (e) { failed = true; }
       assert(failed, 'Other file types are not measured');
+      // A closed 30 × 20 × 10 box: its volume and surface, from a binary and a text STL
+      const { measureMesh } = require(path.join(ROOT_DIR, 'server/utils/meshSize'));
+      const corners = [[0, 0, 0], [30, 0, 0], [30, 20, 0], [0, 20, 0], [0, 0, 10], [30, 0, 10], [30, 20, 10], [0, 20, 10]];
+      const faces = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+      const boxBin = Buffer.alloc(84 + faces.length * 50);
+      boxBin.writeUInt32LE(faces.length, 80);
+      faces.forEach((t, i) => t.forEach((v, k) => corners[v].forEach((c, j) => boxBin.writeFloatLE(c, 84 + i * 50 + 12 + k * 12 + j * 4))));
+      fs.writeFileSync(path.join(dir, 'box.stl'), boxBin);
+      fs.writeFileSync(path.join(dir, 'box-text.stl'), `solid b\n${faces.map(t => `facet normal 0 0 0\nouter loop\n${t.map(v => `vertex ${corners[v].join(' ')}`).join('\n')}\nendloop\nendfacet`).join('\n')}\nendsolid b\n`);
+      for (const name of ['box.stl', 'box-text.stl']) {
+        const m = await measureMesh(path.join(dir, name), 'stl');
+        assert(Math.abs(m.volume - 6000) < 1e-6 && Math.abs(m.area - 2200) < 1e-6 && m.size.join() === '30,20,10', `${name}: volume and surface of a closed box, got ${JSON.stringify(m)}`);
+      }
+      assert((await measureMesh(path.join(dir, 'c.obj'), 'obj')).volume === null, 'Other types have no volume');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1503,6 +1518,11 @@ async function runStaticAndUiChecks() {
     vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(path.join(ROOT_DIR, 'public/js/printfit.js'), 'utf8'), ctx);
     const PF = ctx.PrintFit;
+    // Filament: walls from the surface (0.9 mm), the rest at the infill; a thin part is all wall
+    const cube = PF.filament(8000, 2400, { type: 'PLA', infill: 15 });
+    assert(Math.abs(cube.mm3 - (2160 + 5840 * 0.15)) < 1e-9 && Math.abs(cube.grams - cube.mm3 / 1000 * 1.24) < 1e-9, `A 20 mm cube: ${JSON.stringify(cube)}`);
+    assert(Math.abs(PF.filament(1000, 2000, { type: 'PETG', infill: 15 }).grams - 1.27) < 1e-9 && PF.filament(0, 10) === null, 'A thin part is solid; no volume, no estimate');
+    assert(PF.gramsText(54.2) === '54 g' && PF.gramsText(2310) === '2.31 kg' && PF.gramsText(4.25) === '4.3 g', 'Grams and kilograms');
     const p1s = { id: 'p1s', name: 'P1S', x: 256, y: 256, z: 256, margin: 0 };
     const u1 = { id: 'u1', name: 'U1', x: 270, y: 270, z: 270, margin: 0 };
     const l3 = [268.2, 268.2, 146.1]; // the L3 module, already on the diagonal in its file
@@ -3402,6 +3422,8 @@ async function runE2ETests() {
       const big = files.find(f => f.original_name === 'Sub Folder/big.stl');
       assert(sizes.data.pending === 0, `All files measured, ${sizes.data.pending} still waiting`);
       assert(JSON.stringify(sizes.data.sizes[part.id]) === '[5,5,0]', `part.stl is 5 × 5 × 0 mm, got ${JSON.stringify(sizes.data.sizes[part.id])}`);
+      // An STL gives its volume and surface too (one flat triangle: no volume, 12.5 mm²)
+      assert(JSON.stringify(sizes.data.volumes[part.id]) === '[0,12.5]', `part.stl volume and surface, got ${JSON.stringify(sizes.data.volumes && sizes.data.volumes[part.id])}`);
       assert(sizes.data.errors[big.id] || sizes.data.sizes[big.id], 'Random bytes as an STL are measured or marked as failed, never left waiting');
       assert(part.dim_x === 5 && part.dim_bytes === part.file_size, 'The model page gets the size with its files');
 

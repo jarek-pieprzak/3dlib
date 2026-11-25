@@ -2389,7 +2389,7 @@ const App = {
       printed = {};
       for (const p of this.currentModel.prints || []) if (p.file_id && p.successful) printed[p.file_id] = (printed[p.file_id] || 0) + 1;
     }
-    return { ...kit, loggedIn: Boolean(this.currentUser), dirty, printed };
+    return { ...kit, loggedIn: Boolean(this.currentUser), dirty, printed, filament: this.filamentSettings() };
   },
 
   // The builder and the list scroll on their own: keep where they were when they are redrawn
@@ -3430,6 +3430,74 @@ const App = {
   },
 
   // Size and error of a file of the open model: the latest answer of the server, else the model
+  // An STL's volume and surface as the server measured them: [mm³, mm²] or null
+  fitVolumeOf(file) {
+    const data = this.fitData && this.currentModel && this.fitData.modelId === this.currentModel.id ? this.fitData : null;
+    if (data && data.volumes && data.volumes[file.id]) return data.volumes[file.id];
+    if (file.dim_vol !== null && file.dim_vol !== undefined && file.dim_area !== null && file.dim_area !== undefined && file.dim_bytes === file.file_size) return [file.dim_vol, file.dim_area];
+    return null;
+  },
+
+  // The filament of the estimates (PrintFit.filament): its kind, infill %, price per kg and
+  // currency, kept in this browser
+  filamentSettings() {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('3dl_filament') || '{}') || {}; } catch (e) { saved = {}; }
+    const type = typeof PrintFit !== 'undefined' && PrintFit.FILAMENTS[saved.type] ? saved.type : 'PLA';
+    const infill = Number.isFinite(Number(saved.infill)) && saved.infill !== '' && saved.infill !== null ? Math.min(100, Math.max(0, Number(saved.infill))) : 15;
+    const price = Number(saved.price) > 0 ? Number(saved.price) : null;
+    return { type, infill, price, currency: String(saved.currency || '').slice(0, 6) };
+  },
+
+  // The filament estimates on the page: a print of each row, and the whole parts list in its head
+  // (what is left when its prints are counted); files not measured yet or of another type than
+  // STL are said, not guessed
+  paintFilament(byId) {
+    if (typeof PrintFit === 'undefined' || !PrintFit.filament) return;
+    const opts = this.filamentSettings();
+    const estimate = (f) => { const v = f && this.fitVolumeOf(f); return v ? PrintFit.filament(v[0], v[1], opts) : null; };
+    document.querySelectorAll('[data-filament-file]').forEach(el => {
+      const est = estimate(byId.get(Number(el.dataset.filamentFile)));
+      el.textContent = est ? `≈ ${PrintFit.gramsText(est.grams)}` : '';
+      el.title = est ? `About ${PrintFit.gramsText(est.grams)} of ${opts.type} a print at ${opts.infill}% infill (${est.meters.toFixed(1)} m); supports not counted` : '';
+    });
+    const totals = document.querySelectorAll('[data-filament-total]');
+    if (!totals.length || !this.kit) return;
+    const printed = (this.kitState().printed) || null;
+    let grams = 0;
+    let meters = 0;
+    let left = 0;
+    let waiting = 0;
+    let other = 0;
+    for (const p of this.kit.bom.parts) {
+      if (!(p.qty > 0) || !UI.MEASURABLE.includes(p.file.file_type)) continue;
+      const f = byId.get(p.file.id) || p.file;
+      const est = estimate(f);
+      if (!est) { if (f.file_type === 'stl') waiting++; else other++; continue; }
+      grams += est.grams * p.qty;
+      meters += est.meters * p.qty;
+      if (printed) left += est.grams * Math.max(0, p.qty - Math.min(p.qty, printed[p.file.id] || 0));
+    }
+    const bits = [];
+    if (grams > 0) {
+      bits.push(`≈ ${PrintFit.gramsText(grams)} ${opts.type}`, `${Math.round(meters)} m`);
+      if (opts.price) bits.push(`≈ ${Math.round((grams / 1000) * opts.price)}${opts.currency ? ` ${opts.currency}` : ''}`);
+      if (printed && left < grams - 0.5) bits.push(`${PrintFit.gramsText(left)} left to print`);
+    }
+    if (waiting) bits.push(`${waiting} part${waiting === 1 ? '' : 's'} still being measured`);
+    if (other) bits.push(`${other} without an estimate (not STL)`);
+    totals.forEach(el => {
+      el.textContent = bits.length ? `Filament: ${bits.join(' · ')}` : '';
+      el.title = `An estimate: walls from the surface, ${opts.infill}% infill inside; supports and purge not counted`;
+    });
+  },
+
+  setFilament(field, value) {
+    const next = { ...this.filamentSettings(), [field]: value };
+    try { localStorage.setItem('3dl_filament', JSON.stringify(next)); } catch (e) { /* the defaults then */ }
+    this.paintFit();
+  },
+
   fitSizeOf(file) {
     const data = this.fitData && this.currentModel && this.fitData.modelId === this.currentModel.id ? this.fitData : null;
     if (data && data.errors[file.id]) return { error: data.errors[file.id] };
@@ -3453,6 +3521,7 @@ const App = {
       const s = this.fitSizeOf(f);
       el.innerHTML = UI.fitDim(s.size, s.error, beds, chosen);
     });
+    this.paintFilament(byId);
     document.querySelectorAll('[data-fit-bar]').forEach(bar => {
       const measurable = (f) => UI.MEASURABLE.includes(f.file_type);
       const files = bar.dataset.fitBar === 'parts' && this.kit
@@ -3481,7 +3550,7 @@ const App = {
       const first = this.kit && this.kit.modelId === modelId ? this.kit.bom.parts.filter(p => p.qty > 0).map(p => p.file.id) : [];
       const data = await API.getModelSizes(sourceId, first);
       if (!this.currentModel || this.currentModel.id !== modelId) return;
-      this.fitData = { modelId, sizes: data.sizes || {}, errors: data.errors || {} };
+      this.fitData = { modelId, sizes: data.sizes || {}, volumes: data.volumes || {}, errors: data.errors || {} };
       this.paintFit();
       if (data.pending > 0 && location.hash.startsWith(`#/models/${modelId}`)) {
         this.fitPollTimer = setTimeout(() => this.fitPoll(modelId, sourceId), 4000);

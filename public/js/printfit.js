@@ -73,5 +73,26 @@ globalThis.PrintFit = (function () {
     fit && fit.angle ? `turned ${fit.angle}°` : ''
   ].filter(Boolean).join(', ');
 
-  return { fits, fitting, summarize, sizeText, howText };
+  // ── Filament a print takes, an estimate from the part's volume and surface (the server
+  // measures STL files) ──
+  // Walls, top and bottom: the surface times WALL mm (two 0.45 mm perimeters; top and bottom
+  // shells about as thick), never more than the whole volume; the rest of the volume filled by
+  // infill %. Supports, brims and purge are not counted. Densities in g/cm³.
+  const FILAMENTS = { PLA: 1.24, PETG: 1.27, ABS: 1.04, ASA: 1.07, TPU: 1.21, PA: 1.14, PC: 1.2 };
+  const WALL = 0.9;
+  const DIAMETER = 1.75;
+  // vol mm³, area mm², opts { type, infill (%) } -> { mm3, grams, meters } or null
+  function filament(vol, area, opts = {}) {
+    if (!(vol > 0) || !(area >= 0)) return null;
+    const infill = Math.min(100, Math.max(0, Number(opts.infill ?? 15))) / 100;
+    const shell = Math.min(vol, area * WALL);
+    const mm3 = shell + (vol - shell) * infill;
+    const density = FILAMENTS[opts.type] || FILAMENTS.PLA;
+    return { mm3, grams: (mm3 / 1000) * density, meters: mm3 / (Math.PI * (DIAMETER / 2) ** 2) / 1000 };
+  }
+
+  // "54 g", "2.31 kg"
+  const gramsText = (g) => (g >= 1000 ? `${(g / 1000).toFixed(g >= 10000 ? 1 : 2)} kg` : `${g >= 100 ? Math.round(g) : g.toFixed(g >= 10 ? 0 : 1)} g`);
+
+  return { fits, fitting, summarize, sizeText, howText, filament, gramsText, FILAMENTS };
 })();

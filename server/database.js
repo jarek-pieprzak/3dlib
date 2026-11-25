@@ -363,7 +363,8 @@ async function initDatabase() {
     if (!all("PRAGMA table_info(files)").some(c => c.name === 'slicer_saved_at')) db.run('ALTER TABLE files ADD COLUMN slicer_saved_at INTEGER');
     // Size of a 3D file in mm as placed in it (services/dimensions.js); dim_bytes: the file size it
     // was measured at, so a changed file is measured again
-    for (const col of ['dim_x REAL', 'dim_y REAL', 'dim_z REAL', 'dim_bytes INTEGER', 'dim_error TEXT']) {
+    // dim_vol / dim_area: an STL's volume (mm³) and surface (mm²), for the filament it takes
+    for (const col of ['dim_x REAL', 'dim_y REAL', 'dim_z REAL', 'dim_bytes INTEGER', 'dim_error TEXT', 'dim_vol REAL', 'dim_area REAL']) {
       if (!all("PRAGMA table_info(files)").some(c => c.name === col.split(' ')[0])) db.run(`ALTER TABLE files ADD COLUMN ${col}`);
     }
     // 3MF sizes measured from the corners of each object's box were too big for parts turned on

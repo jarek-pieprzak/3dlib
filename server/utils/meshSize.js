@@ -5,7 +5,10 @@
 //        projects keep objects in 3D/Objects/*.model). With several items (plates): the largest
 //        size per axis over the items, each one's footprint long side first.
 //   STEP / STP: tessellated by OpenCascade (occt-import-js), in memory: STEP files are small.
-// measure(path, type) resolves to [x, y, z] or throws.
+// STL files give their volume (mm³, the signed volumes of the triangles' tetrahedra) and surface
+// area (mm²) as well, for the filament a print takes (PrintFit.filament).
+// measure(path, type) resolves to [x, y, z]; measureMesh(path, type) to { size, volume, area }
+// (volume and area null for other types); both throw when there is nothing to measure.
 const fs = require('fs');
 
 class Box {
@@ -25,23 +28,66 @@ class Box {
 
 const CHUNK = 4 * 1024 * 1024;
 
-async function measureBinaryStl(path, size) {
-  const box = new Box();
+// Triangles into the box, the volume and the area
+class Solid {
+  constructor() { this.box = new Box(); this.volume = 0; this.area = 0; }
+  add(t) {
+    for (let k = 0; k < 9; k++) if (!Number.isFinite(t[k])) return;
+    this.box.add(t[0], t[1], t[2]); this.box.add(t[3], t[4], t[5]); this.box.add(t[6], t[7], t[8]);
+    this.volume += (t[0] * (t[4] * t[8] - t[5] * t[7]) - t[1] * (t[3] * t[8] - t[5] * t[6]) + t[2] * (t[3] * t[7] - t[4] * t[6])) / 6;
+    const ax = t[3] - t[0], ay = t[4] - t[1], az = t[5] - t[2], bx = t[6] - t[0], by = t[7] - t[1], bz = t[8] - t[2];
+    const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+    this.area += Math.sqrt(cx * cx + cy * cy + cz * cz) / 2;
+  }
+  // An open or inside-out mesh: the volume as a size, never more than its box
+  result() {
+    const size = this.box.size();
+    return { size, volume: Math.min(Math.abs(this.volume), size[0] * size[1] * size[2]), area: this.area };
+  }
+}
+
+async function meshBinaryStl(path) {
+  const solid = new Solid();
+  const t = new Float64Array(9);
   let carry = Buffer.alloc(0);
   let skip = 84;
   for await (const chunk of fs.createReadStream(path, { highWaterMark: CHUNK })) {
-    let buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+    const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
     let o = 0;
     if (skip) { const s = Math.min(skip, buf.length); o = s; skip -= s; }
     for (; o + 50 <= buf.length; o += 50) {
-      for (let v = 0; v < 3; v++) {
-        const p = o + 12 + v * 12;
-        box.add(buf.readFloatLE(p), buf.readFloatLE(p + 4), buf.readFloatLE(p + 8));
-      }
+      for (let k = 0; k < 9; k++) t[k] = buf.readFloatLE(o + 12 + k * 4);
+      solid.add(t);
     }
     carry = buf.subarray(o);
   }
-  return box.size();
+  return solid.result();
+}
+
+// Text STL: three "vertex x y z" lines a facet
+async function meshTextStl(path) {
+  const solid = new Solid();
+  const t = new Float64Array(9);
+  const re = /^\s*vertex\s+(\S+)\s+(\S+)\s+(\S+)/gm;
+  let k = 0;
+  let rest = '';
+  const take = (text) => {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text))) {
+      t[k] = Number(m[1]); t[k + 1] = Number(m[2]); t[k + 2] = Number(m[3]);
+      k += 3;
+      if (k === 9) { k = 0; solid.add(t); }
+    }
+  };
+  for await (const chunk of fs.createReadStream(path, { encoding: 'latin1', highWaterMark: CHUNK })) {
+    const text = rest + chunk;
+    const end = text.lastIndexOf('\n');
+    rest = end < 0 ? text : text.slice(end + 1);
+    if (end >= 0) take(text.slice(0, end));
+  }
+  take(rest);
+  return solid.result();
 }
 
 // Text formats line by line: STL "vertex x y z", OBJ "v x y z"
@@ -63,13 +109,13 @@ async function measureLines(path, re) {
   return box.size();
 }
 
-async function measureStl(path) {
+async function meshStl(path) {
   const size = fs.statSync(path).size;
   const fd = fs.openSync(path, 'r');
   const head = Buffer.alloc(84);
   try { fs.readSync(fd, head, 0, 84, 0); } finally { fs.closeSync(fd); }
-  if (size >= 84 && 84 + head.readUInt32LE(80) * 50 === size) return measureBinaryStl(path, size);
-  return measureLines(path, /^\s*vertex\s+(\S+)\s+(\S+)\s+(\S+)/gm);
+  if (size >= 84 && 84 + head.readUInt32LE(80) * 50 === size) return meshBinaryStl(path);
+  return meshTextStl(path);
 }
 
 // ── 3MF ──
@@ -209,13 +255,19 @@ async function measureStep(path) {
 
 const MEASURABLE = ['stl', 'obj', '3mf', 'step'];
 
-async function measure(path, type) {
+async function measureMesh(path, type) {
   const t = String(type || '').toLowerCase();
-  if (t === 'stl') return measureStl(path);
-  if (t === 'obj') return measureLines(path, /^v\s+(\S+)\s+(\S+)\s+(\S+)/gm);
-  if (t === '3mf') return measure3mf(path);
-  if (t === 'step' || t === 'stp') return measureStep(path);
-  throw new Error(`Cannot measure ${t} files`);
+  if (t === 'stl') return meshStl(path);
+  let size;
+  if (t === 'obj') size = await measureLines(path, /^v\s+(\S+)\s+(\S+)\s+(\S+)/gm);
+  else if (t === '3mf') size = await measure3mf(path);
+  else if (t === 'step' || t === 'stp') size = await measureStep(path);
+  else throw new Error(`Cannot measure ${t} files`);
+  return { size, volume: null, area: null };
 }
 
-module.exports = { measure, MEASURABLE };
+async function measure(path, type) {
+  return (await measureMesh(path, type)).size;
+}
+
+module.exports = { measure, measureMesh, MEASURABLE };

@@ -1687,6 +1687,19 @@ svg.slicer-icon{width:14px;height:14px;border-radius:0}
 .kit-layout.is-locked{grid-template-columns:minmax(0, 1fr)}
 .kit-layout.is-locked .kit-builder-panel{display:none}
 .kit-part-meta{display:flex;align-items:center;flex-wrap:wrap;gap:0 6px;font-size:.7rem;color:var(--text-muted);white-space:nowrap}
+/* Filament estimates (App.paintFilament): a print on the row, the whole list in its head */
+.kit-filament:empty{display:none}
+.kit-filament{color:var(--text-secondary)}
+.kit-filament-line{position:relative;display:flex;align-items:center;flex-wrap:wrap;gap:2px 8px;margin-top:3px;font-size:.74rem;color:var(--text-secondary)}
+.kit-filament-total:empty{display:none}
+.kit-filament-total:empty+.kit-filament-settings>summary::before{content:'Filament estimate · '}
+.kit-filament-settings{position:static}
+.kit-filament-settings>summary{list-style:none;cursor:pointer;color:var(--accent-cyan);font-weight:600}
+.kit-filament-settings>summary::-webkit-details-marker{display:none}
+.kit-filament-form{position:absolute;z-index:20;top:calc(100% + 6px);left:0;display:grid;gap:8px;width:240px;padding:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+.kit-filament-form label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.78rem;color:var(--text-secondary)}
+.kit-filament-form .form-select,.kit-filament-form .form-input{width:120px;padding:4px 8px;font-size:.78rem}
+.kit-filament-form p{margin:0;font-size:.7rem;color:var(--text-muted)}
 /* In a narrow list the size, the measures and the printer flag go to the next line whole */
 .kit-part-meta .fit-dim{display:contents}
 @media(min-width:1025px){

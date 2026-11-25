@@ -107,6 +107,15 @@ page and footer credit GyroidVault; keep that.
 
 ## What the fork adds (newest first)
 
+- Filament estimate of a configurator's parts list: the background measuring
+  (`services/dimensions.js`, `meshSize.measureMesh`) keeps an STL's volume and surface too
+  (`files.dim_vol` mm³, `dim_area` mm²; STLs measured before were measured again once;
+  `/api/models/:id/sizes` gives `volumes`). `PrintFit.filament(vol, area, { type, infill })`:
+  walls = surface × 0.9 mm (at most the volume), the rest at the infill, times the density
+  (`PrintFit.FILAMENTS`); supports, brims and purge are not counted. Rows show grams a print,
+  the head the whole list (`App.paintFilament`: kg, metres, cost with a price, what is left
+  to print on a configuration, parts still measured or not STL). Filament, infill, price and
+  currency: "Change" in the head, kept in localStorage `3dl_filament` (`App.filamentSettings`).
 - Light copies of big STLs (over 20 MB; VAULT has 432 of them, up to 350 MB): the server
   simplifies the mesh to about 160 000 triangles (`server/utils/meshPreview.js`: vertex
   clustering with quadrics; every body of the file (corners shared by exact coordinates,

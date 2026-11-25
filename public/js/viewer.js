@@ -414,6 +414,8 @@ const Viewer = {
     objectsPanel.hidden = true;
     container.appendChild(objectsPanel);
     let objectEntries = [];
+    // The camera framing (frameCamera, defined further down): one object alone fills the view
+    const objectsView = { frame: null };
     const SUBTYPES = { modifier_part: 'modifier', negative_part: 'negative', support_blocker: 'support blocker', support_enforcer: 'support enforcer' };
     const syncObjectChecks = () => {
       objectsPanel.querySelectorAll('input[data-obj]').forEach(input => {
@@ -481,7 +483,9 @@ const Viewer = {
           objectEntries.forEach((en, j) => { en.item.visible = j === i; });
           entry.parts.forEach((p, m) => { p.visible = k === null || m === k; });
         }
+        if (objectsView.frame) objectsView.frame(!alone);
       }
+      if (all && objectsView.frame) objectsView.frame(false);
       syncObjectChecks();
     });
 
@@ -898,9 +902,15 @@ const Viewer = {
     };
 
     // Point the camera at the current target object
-    const frameCamera = () => {
+    // onlyVisible: around what the objects list left on screen (one object shown alone)
+    const frameCamera = (onlyVisible = false) => {
       if (!targetObject) return;
-      const finalBox = new THREE.Box3().setFromObject(targetObject);
+      const finalBox = new THREE.Box3();
+      if (onlyVisible) {
+        targetObject.updateMatrixWorld(true);
+        targetObject.traverseVisible(o => { if (o.isMesh) finalBox.expandByObject(o); });
+      }
+      if (finalBox.isEmpty()) finalBox.setFromObject(targetObject);
       finalBox.getCenter(modelCenter);
       const finalSize = new THREE.Vector3();
       finalBox.getSize(finalSize);
@@ -917,6 +927,7 @@ const Viewer = {
 
       if (viewer) viewer.targetObject = targetObject;
     };
+    objectsView.frame = frameCamera;
 
     if (plateSelectEl) {
       plateSelectEl.onchange = (e) => {

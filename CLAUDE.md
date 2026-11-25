@@ -411,7 +411,8 @@ page and footer credit GyroidVault; keep that.
   The "Objects" pill of the 3D Studio lists the build items of the plate on screen and their
   parts (names and kinds from `model_settings.config`, `applyNames`: `userData.label`,
   `userData.subtype` modifier / negative / support; else the model's names; copies numbered):
-  a checkbox hides one, a click on a name shows it alone, again everything.
+  a checkbox hides one, a click on a name shows it alone and frames the camera on it
+  (`frameCamera(true)`: the visible meshes), again everything.
 - Slicer round trip and file history:
   - Every file has a random `files.slicer_token`; "Open in slicer" links end with
     `<ascii name>_3dl-<token>.<ext>` (Bambu decodes the link, so no spaces or %-signs).
